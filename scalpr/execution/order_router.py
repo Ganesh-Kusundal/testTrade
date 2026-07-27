@@ -29,6 +29,11 @@ class CircuitBreakerTripped(Exception):
     pass
 
 
+class PersistenceError(Exception):
+    """Raised when order persistence fails after broker submission."""
+    pass
+
+
 class OrderRouter:
     """
     Mandatory order submission router that enforces risk gates.
@@ -77,6 +82,7 @@ class OrderRouter:
         Raises:
             CircuitBreakerTripped: If circuit breaker limits exceeded
             RiskCheckFailed: If pre-trade risk check fails
+            PersistenceError: If order persistence fails after broker submission
         """
         # 1. Check circuit breaker (system-wide safety)
         if not self.circuit_breaker.check_limits(
@@ -141,8 +147,10 @@ class OrderRouter:
                 if fill:
                     self.order_manager.process_fill(fill)
             except Exception as e:
-                logger.error(f"Failed to persist order/fill: {e}")
-                # Don't fail the order submission if persistence fails
+                logger.error(f"CRITICAL: Persistence failed after order placed: {e}")
+                raise PersistenceError(
+                    f"Order {order.order_id} placed at broker but persistence failed: {e}"
+                ) from e
         
         # Publish OrderPlaced event
         if self.event_bus:
