@@ -9,12 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
-from enum import Enum
-
-
-class OrderSide(str, Enum):
-    BUY = "BUY"
-    SELL = "SELL"
+from scalpr.domain.order import OrderSide
 
 
 @dataclass(frozen=True)
