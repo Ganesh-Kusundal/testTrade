@@ -18,9 +18,17 @@ def _load_dotenv() -> None:
 
 
 def _create_gateway():
-    """Create and configure the broker gateway."""
-    from scalpr.brokers.gateway import Gateway
-    return Gateway()
+    """Create and configure the broker gateway.
+
+    Returns None if gateway cannot connect (e.g. missing credentials).
+    Routers handle a None gateway gracefully.
+    """
+    try:
+        from scalpr.brokers.gateway import Gateway
+        return Gateway()
+    except Exception as e:
+        logger.warning("Gateway creation failed — API will start without broker: %s", e)
+        return None
 
 
 def _create_feed(gateway):
