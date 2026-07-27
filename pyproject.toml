@@ -52,7 +52,7 @@ include = ["scalpr*", "brokers*", "cli*", "analytics*", "datalake*", "config*", 
 # ─── pytest ────────────────────────────────────────────────
 [tool.pytest.ini_options]
 minversion = "7.0"
-testpaths = ["tests", "brokers", "analytics", "cli", "datalake"]
+testpaths = ["tests"]
 markers = [
     "unit: module-owned unit tests",
     "contract: broker/module contract tests",
@@ -91,7 +91,7 @@ python_functions = ["test_*"]
 
 # ─── coverage ─────────────────────────────────────────────
 [tool.coverage.run]
-source = ["brokers", "analytics", "cli", "datalake", "tests/chaos"]
+source = ["scalpr"]
 omit = [
     "*/tests/*",
     "*/__init__.py",
@@ -111,7 +111,7 @@ show_missing = true
 
 # Mutation testing configuration (mutmut)
 [tool.mutmut]
-paths_to_mutate = "brokers,analytics,datalake,domain"
+paths_to_mutate = "scalpr"
 mutation_operators = [
     "uop",
     "aod",
@@ -187,44 +187,42 @@ skip-magic-trailing-comma = false
 # See docs/CODING_STANDARDS.md for the full guide.
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
-# Domain types must come from brokers.common, not broker-specific packages
-"brokers.dhan.domain.Quote" = {msg = "Import Quote from brokers.common.core.domain, not from brokers.dhan.domain"}
-"brokers.dhan.domain.Balance" = {msg = "Import Balance from brokers.common.core.domain, not from brokers.dhan.domain"}
-"brokers.dhan.domain.DepthLevel" = {msg = "Import DepthLevel from brokers.common.core.domain, not from brokers.dhan.domain"}
-"brokers.dhan.domain.MarketDepth" = {msg = "Import MarketDepth from brokers.common.core.domain, not from brokers.dhan.domain"}
-# Lower layers cannot import from CLI
-"cli" = {msg = "Lower layers (datalake, analytics, brokers) cannot import from cli. Use entry points or events instead."}
-# Cross-broker imports are forbidden
-"brokers.dhan" = {msg = "Cannot import from brokers.dhan in brokers.common or other broker packages"}
-"brokers.upstox" = {msg = "Cannot import from brokers.upstox in brokers.common or other broker packages"}
+"scalpr.brokers.dhan.Quote" = {msg = "Import Quote from scalpr.brokers.contracts, not from broker-specific packages"}
+"scalpr.brokers.dhan.Balance" = {msg = "Import Funds from scalpr.brokers.contracts"}
 
 # ─── Import Linter Contracts ──────────────────────────────
 # Enforce architectural layer boundaries (REF-012).
 # Run: lint-imports --config pyproject.toml
 
 [tool.importlinter]
-root_packages = ["domain", "brokers", "analytics", "datalake", "cli"]
+root_packages = ["scalpr"]
 
 [[tool.importlinter.contracts]]
 name = "Domain independence"
 type = "forbidden"
-source_modules = ["domain"]
-forbidden_modules = ["brokers", "analytics", "datalake", "cli"]
+source_modules = ["scalpr.domain"]
+forbidden_modules = ["scalpr.brokers", "scalpr.api", "scalpr.cli", "scalpr.oms"]
 
 [[tool.importlinter.contracts]]
-name = "Analytics broker-adapter isolation"
+name = "Risk cannot import API"
 type = "forbidden"
-source_modules = ["analytics"]
-forbidden_modules = ["brokers.dhan", "brokers.upstox", "brokers.paper"]
+source_modules = ["scalpr.risk"]
+forbidden_modules = ["scalpr.api", "scalpr.cli"]
 
 [[tool.importlinter.contracts]]
-name = "Broker common isolation"
+name = "OMS cannot import API"
 type = "forbidden"
-source_modules = ["brokers.common"]
-forbidden_modules = ["brokers.dhan", "brokers.upstox"]
+source_modules = ["scalpr.oms"]
+forbidden_modules = ["scalpr.api", "scalpr.cli"]
 
 [[tool.importlinter.contracts]]
-name = "Analytics OMS isolation"
+name = "Strategy cannot import API"
 type = "forbidden"
-source_modules = ["analytics"]
-forbidden_modules = ["brokers.common.oms"]
+source_modules = ["scalpr.strategy"]
+forbidden_modules = ["scalpr.api", "scalpr.cli"]
+
+[[tool.importlinter.contracts]]
+name = "Broker Dhan isolation"
+type = "forbidden"
+source_modules = ["scalpr.brokers.dhan"]
+forbidden_modules = ["scalpr.api", "scalpr.cli"]
