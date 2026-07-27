@@ -46,15 +46,24 @@ class AppContext:
     executor: object
 
 
-def wire(gateway, watchlist: list[str], db_path: str = "data/oms.db") -> AppContext:
+def wire(
+    gateway,
+    watchlist: list[str],
+    db_path: str = "data/oms.db",
+    events_db_path: str = "data/events.db",
+) -> AppContext:
     """Build the trading object graph: risk gates, OMS, router, strategies.
 
     Args:
         gateway: IBrokerGateway port (has get_positions/get_margins/place_order).
         watchlist: Symbols to run one ScalprAmtStrategy each.
         db_path: SQLite path for OMS persistence.
+        events_db_path: SQLite path for the domain event audit log.
     """
+    from datetime import datetime, timezone
+
     from scalpr.execution.order_router import OrderRouter
+    from scalpr.observability.event_store import EventStore
     from scalpr.oms.order_manager import OrderManager
     from scalpr.oms.persistence import OmsRepository
     from scalpr.risk.circuit_breaker import CircuitBreaker
@@ -63,11 +72,16 @@ def wire(gateway, watchlist: list[str], db_path: str = "data/oms.db") -> AppCont
     from scalpr.strategy.scalpr_amt import ScalprAmtStrategy
 
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+    session_id = datetime.now(timezone.utc).strftime("live-%Y%m%d")
     order_router = OrderRouter(
         gateway=gateway,
         risk_gate=PreTradeRiskGate(),
         circuit_breaker=CircuitBreaker(),
-        order_manager=OrderManager(OmsRepository(db_path)),
+        order_manager=OrderManager(
+            OmsRepository(db_path),
+            event_store=EventStore(db_path=events_db_path),
+            session_id=session_id,
+        ),
     )
     executor = StrategyExecutor()
     for symbol in watchlist:

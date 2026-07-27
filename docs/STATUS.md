@@ -21,7 +21,8 @@ No test/script link → the claim doesn't exist.
 | API contract tests (health truthful, fail-closed 5xx, route contract) uploaded to TestSprite cloud | `testsprite_tests/*.py`, project Trade_XV2_AMT_Scalper (`testsprite test list --project dea56fca-...`); verified locally against uvicorn on 8787 |
 | `/health/live` + `/health/ready` probes (live always 200; ready 503 w/ JSON shape when gateway down) | `tests/unit/api/test_routers_fail_closed.py::TestProbes`; all 4 TradeX V2 TestSprite cloud tests pass locally |
 | DH-906 "Invalid Token" (HTTP 400) triggers forced token refresh + retry, same as 401 | `tests/unit/brokers/dhan/test_http_client_refresh.py::test_dh906_400_triggers_refresh_and_retry_succeeds`; stale token → 200 # captured live 2026-07-27 |
+| EventStore wired into production: OrderManager appends OrderPlaced/OrderUpdated/FillReceived per session (`live-YYYYMMDD`); store failure never breaks order flow | `tests/unit/oms/test_event_store_wiring.py` |
 
 ## Known-unwired / deferred
 
-- EventStore/replay is NOT wired into production (leadership decision pending: wire or delete).
+- `/replay/*` routes are honest `not_implemented` stubs — replay engine over the now-populated event log is future work.
