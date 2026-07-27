@@ -6,19 +6,25 @@ from decimal import Decimal
 
 
 class GateState:
-    """Represents the market state evaluated by the Gates."""
+    """Represents the market state evaluated by the Gates.
+
+    Fail-safe defaults: all gate flags default to False (blocked).
+    Callers MUST explicitly set each gate to True when the condition is satisfied.
+    The only exception is `under_daily_cap` which defaults to True because the
+    strategy tracks this counter internally and it starts in a safe state.
+    """
     def __init__(
         self,
         symbol: str,
         price: Decimal,
-        cvd_falling: bool,
-        is_at_lvn: bool,
-        market_open: bool = True,
-        trend_aligned: bool = True,
-        vol_spike: bool = True,
-        atr_ok: bool = True,
-        spread_ok: bool = True,
-        oi_ok: bool = True,
+        cvd_falling: bool = False,
+        is_at_lvn: bool = False,
+        market_open: bool = False,
+        trend_aligned: bool = False,
+        vol_spike: bool = False,
+        atr_ok: bool = False,
+        spread_ok: bool = False,
+        oi_ok: bool = False,
         under_daily_cap: bool = True,
         timestamp: datetime | None = None,
     ):

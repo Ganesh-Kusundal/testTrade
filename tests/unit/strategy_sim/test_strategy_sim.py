@@ -25,12 +25,23 @@ from scalpr.oms.paper_oms import PaperOms
 
 def test_gate_fsm_gate_03_logic():
     """GateFSM Gate 03 blocks falling CVD when not at LVN, but passes when at LVN."""
-    # CASE 1: CVD falling, not at LVN => BLOCKED
+    # Common gate flags — all other gates explicitly satisfied to isolate Gate_03
+    _passing_gates = dict(
+        market_open=True,
+        trend_aligned=True,
+        vol_spike=True,
+        atr_ok=True,
+        spread_ok=True,
+        oi_ok=True,
+    )
+
+    # CASE 1: CVD falling, not at LVN => BLOCKED at Gate_03
     state_block = GateState(
         symbol="RELIANCE",
         price=Decimal("2500.00"),
         cvd_falling=True,
         is_at_lvn=False,
+        **_passing_gates,
     )
     passed, reason, results = GateFSM.evaluate(state_block)
     assert not passed
@@ -43,6 +54,7 @@ def test_gate_fsm_gate_03_logic():
         price=Decimal("2500.00"),
         cvd_falling=True,
         is_at_lvn=True,
+        **_passing_gates,
     )
     passed2, reason2, results2 = GateFSM.evaluate(state_pass)
     assert passed2
