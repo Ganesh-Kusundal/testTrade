@@ -9,6 +9,7 @@ from enum import Enum
 class Exchange(str, Enum):
     NSE = "NSE"
     MCX = "MCX"
+    NSE_FNO = "NSE_FNO"  # F&O segment
 
 
 class Segment(str, Enum):

@@ -53,6 +53,8 @@ class DhanMapper:
             # Exchange segment mapping
             if order.exchange == Exchange.NSE:
                 segment = "NSE_EQ"
+            elif order.exchange == Exchange.NSE_FNO:
+                segment = "NSE_FNO"
             elif order.exchange == Exchange.MCX:
                 segment = "MCX_COMM"  # Fixed: was "MCXCOMM" (missing underscore)
             else:
