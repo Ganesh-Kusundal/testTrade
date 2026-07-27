@@ -434,10 +434,14 @@ class DhanWebSocketClient:
     
     def _on_error(self, feed, error: Any) -> None:
         """SDK callback: error occurred."""
-        import sys
-        print(f"SDK ERROR CALLBACK: {error!r}", file=sys.stderr)
-        print(f"Error type: {type(error)}", file=sys.stderr)
-        logger.error("sdk_error", extra={"error": str(error), "error_repr": repr(error)})
+        logger.error(
+            "sdk_error",
+            extra={
+                "error": str(error),
+                "error_repr": repr(error),
+                "error_type": type(error).__name__,
+            },
+        )
     
     # ── Tick Parsing ─────────────────────────────────────────────────────────
     
