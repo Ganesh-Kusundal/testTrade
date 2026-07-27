@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 from decimal import Decimal
 
+from scalpr.brokers.dhan.exceptions import BrokerError
 from scalpr.brokers.dhan.http_client import DhanHttpClient
 from scalpr.brokers.dhan.mapper import DhanMapper
 from scalpr.brokers.dhan.resolver import SymbolResolver
@@ -47,14 +48,18 @@ class PortfolioAdapter:
         """Fetch active (intraday/F&O) positions with P&L.
 
         Returns:
-            List of Position domain objects. Empty list if no positions
-            or API returns empty/error response.
+            List of Position domain objects. Empty list only when the
+            broker truthfully reports no positions.
+
+        Raises:
+            BrokerError: On API failure — an outage must never look like
+            an empty book (C3 fail-closed).
         """
         try:
             data = self._client.get("/positions")
         except Exception as exc:
             logger.warning("get_positions_failed", extra={"error": str(exc)})
-            return []
+            raise BrokerError(f"positions fetch failed: {exc}") from exc
 
         raw_positions = self._extract_list(data)
         return [self._map_position(p) for p in raw_positions if self._is_open(p)]
@@ -63,14 +68,17 @@ class PortfolioAdapter:
         """Fetch long-term holdings (delivery positions).
 
         Returns:
-            List of Position domain objects for holdings. Empty list if
-            no holdings or API returns empty/error response.
+            List of Position domain objects for holdings. Empty list only
+            when the broker truthfully reports no holdings.
+
+        Raises:
+            BrokerError: On API failure (C3 fail-closed).
         """
         try:
             data = self._client.get("/holdings")
         except Exception as exc:
             logger.warning("get_holdings_failed", extra={"error": str(exc)})
-            return []
+            raise BrokerError(f"holdings fetch failed: {exc}") from exc
 
         raw_holdings = self._extract_list(data)
         return [self._map_holding(h) for h in raw_holdings]
@@ -86,13 +94,14 @@ class PortfolioAdapter:
             - collateral (Decimal): Collateral/margin from holdings
             - realtime (bool): Whether data is real-time or delayed
 
-            Empty dict on API failure.
+        Raises:
+            BrokerError: On API failure (C3 fail-closed).
         """
         try:
             data = self._client.get("/fundlimit")
         except Exception as exc:
             logger.warning("get_fund_limits_failed", extra={"error": str(exc)})
-            return {}
+            raise BrokerError(f"fund limits fetch failed: {exc}") from exc
 
         return self._map_fund_limits(data)
 
@@ -203,6 +212,7 @@ class PortfolioAdapter:
         Dhan API returns fund limits with various field names.
         We normalise to a consistent SCALPR format.
         """
+        # Note: "availabelMargin" is a known Dhan API typo (missing "i") kept for backward compat
         available = Decimal(str(
             data.get("availableBalance", data.get("availabelMargin",
             data.get("availablemargin", "0")))

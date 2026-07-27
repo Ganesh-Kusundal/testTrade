@@ -22,6 +22,7 @@ from typing import Any
 from scalpr.brokers.broker_port import IBrokerGateway
 from scalpr.brokers.dhan.connection import DhanConnection
 from scalpr.brokers.dhan.exceptions import BrokerError
+from scalpr.brokers.dhan.segments import SEGMENT_TO_EXCHANGE
 from scalpr.domain.fill import Fill
 from scalpr.domain.instrument import Exchange
 from scalpr.domain.order import Order, OrderSide, OrderState, OrderType
@@ -413,18 +414,23 @@ class DhanGateway(IBrokerGateway):
         type_map: dict[str, OrderType] = {
             "LIMIT": OrderType.LIMIT,
             "MARKET": OrderType.MARKET,
-            "STOP LOSS": OrderType.STOP_LOSS,
-            "STOP LOSS MARKET": OrderType.STOP_LOSS_MARKET,
             "SL": OrderType.STOP_LOSS,
             "SL-M": OrderType.STOP_LOSS_MARKET,
+            "STOPLIMIT": OrderType.STOP_LOSS,
+            "STOPMARKET": OrderType.STOP_LOSS_MARKET,
+            "STOP LOSS": OrderType.STOP_LOSS,
+            "STOP LOSS MARKET": OrderType.STOP_LOSS_MARKET,
         }
         order_type = type_map.get(type_str, OrderType.LIMIT)
 
         # Map exchange segment to Exchange
         exchange_segment = raw.get("exchange_segment", "NSE_EQ")
+        exchange_segment_upper = exchange_segment.upper()
         exchange = Exchange.NSE  # Default
-        if "MCX" in exchange_segment.upper():
+        if "MCX" in exchange_segment_upper:
             exchange = Exchange.MCX
+        elif "BSE" in exchange_segment_upper:
+            exchange = Exchange.BSE
 
         return Order(
             order_id=raw.get("order_id", ""),
@@ -473,6 +479,7 @@ class DhanGateway(IBrokerGateway):
             quantity=raw.get("quantity", 0),
             price=raw.get("price", Decimal("0")),
             timestamp=timestamp,
+            exchange=SEGMENT_TO_EXCHANGE.get(raw.get("exchange_segment", ""), ""),
         )
 
     # ------------------------------------------------------------------

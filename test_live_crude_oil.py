@@ -8,7 +8,10 @@ from datetime import datetime
 
 load_dotenv(".env")
 
+from scalpr.brokers.dhan.loader import InstrumentLoader
+from scalpr.brokers.dhan.resolver import SymbolResolver
 from scalpr.brokers.dhan.ws_client import DhanWebSocketClient
+from scalpr.domain.instrument import Exchange, Segment
 from scalpr.domain.tick import Tick
 
 
@@ -34,9 +37,19 @@ def main():
     print(f"Token: {access_token[:20]}...")
     print()
     
-    # Crude Oil on MCX - security_id 119773
-    # Using direct security_id since we may not have resolver configured
-    crude_oil_symbol = "119773"  # MCX Crude Oil security_id
+    # Canonical symbol only — the broker resolver owns the security_id mapping.
+    # Pick the front-month CRUDEOIL future from the loaded instrument master.
+    resolver = SymbolResolver()
+    resolver.load_from_rows(InstrumentLoader.load_cached())
+    crude_futures = [
+        i for i in resolver.all_instruments()
+        if i.exchange is Exchange.MCX and i.segment is Segment.FUTURES
+        and i.symbol.upper().startswith("CRUDEOIL-") and i.expiry
+    ]
+    if not crude_futures:
+        print("ERROR: No CRUDEOIL futures resolvable from instrument master")
+        sys.exit(1)
+    crude_oil_symbol = min(crude_futures, key=lambda i: i.expiry).symbol
     exchange = "MCX"
     
     print(f"Subscribing to: {crude_oil_symbol} ({exchange})")
@@ -48,6 +61,7 @@ def main():
         access_token=access_token,
         client_id=client_id,
         mode="quote",  # Get quote data (LTP, bid, ask, volume)
+        resolver=resolver,
     )
     
     # Register tick callback
@@ -122,7 +136,7 @@ def main():
                 print("Possible reasons:")
                 print("  1. Market is closed (MCX hours: 9:00 AM - 11:30 PM IST)")
                 print("  2. Token expired (check DHAN_ACCESS_TOKEN in .env)")
-                print("  3. Security ID incorrect (Crude Oil = 119773)")
+                print(f"  3. Contract not trading yet ({crude_oil_symbol})")
                 print("  4. No market activity for this instrument")
                 return False
         

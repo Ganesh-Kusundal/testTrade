@@ -16,3 +16,11 @@ repos:
       - id: check-yaml
       - id: check-toml
       - id: debug-statements
+  - repo: local
+    hooks:
+      - id: import-linter
+        name: import-linter
+        entry: lint-imports --config pyproject.toml
+        language: system
+        pass_filenames: false
+        files: '^scalpr/.*\.py$'

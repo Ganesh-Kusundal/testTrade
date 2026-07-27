@@ -28,7 +28,7 @@ from decimal import Decimal
 from typing import Any
 
 from scalpr.brokers.dhan.exceptions import AuthenticationError, MarketDataError
-from scalpr.brokers.dhan.segments import EXCHANGE_TO_SEGMENT, NUMERIC_TO_SEGMENT
+from scalpr.brokers.dhan.segments import EXCHANGE_TO_SEGMENT, NUMERIC_TO_SEGMENT, SEGMENT_TO_NUMERIC
 from scalpr.domain.tick import Tick
 
 logger = logging.getLogger(__name__)
@@ -117,8 +117,6 @@ def _exchange_to_segment_int(exchange: str) -> int:
     - NSE_FNO = 2
     """
     segment_str = EXCHANGE_TO_SEGMENT.get(exchange.upper(), "NSE_EQ")
-    # Reverse lookup from segment string to numeric code
-    SEGMENT_TO_NUMERIC = {v: k for k, v in NUMERIC_TO_SEGMENT.items()}
     return SEGMENT_TO_NUMERIC.get(segment_str, 1)  # Default to NSE_EQ=1
 
 
@@ -174,8 +172,10 @@ class DhanWebSocketClient:
         self._stop_event = threading.Event()
         
         # Subscription tracking (SDK pattern: maintain list for reconnection)
-        self._instruments: list[tuple] = []  # SDK format: (exch_int, security_id_int, mode_int)
+        self._instruments: list[tuple] = []  # SDK format: (exch_int, security_id_str, mode_int)
         self._subscribed_instruments: set[tuple] = set()  # For dedup
+        self._subscription_keys: set[tuple[str, str]] = set()  # (symbol, exchange) mirror for introspection
+        self._symbol_by_sid: dict[str, str] = {}  # SDK payloads carry only security_id
         self._sub_lock = threading.Lock()
         
         # Callbacks
@@ -265,6 +265,8 @@ class DhanWebSocketClient:
         self._feed = None
         self._instruments.clear()
         self._subscribed_instruments.clear()
+        self._subscription_keys.clear()
+        self._symbol_by_sid.clear()
         self._cumulative_vols.clear()
         
         logger.info("disconnected")
@@ -290,37 +292,48 @@ class DhanWebSocketClient:
         """
         sub_mode = mode or self._mode
         
-        # Convert to SDK format: (exchange_int, security_id_int, mode_int)
+        # Convert to SDK v2 format: (exchange_int, security_id_str, mode_int).
+        # SecurityId MUST be a string in the JSON packet — ints are silently
+        # accepted by the server but stream nothing (verified live 2026-07-27).
         new_instruments = []
         for symbol, exchange in symbols:
-            exch_int = _exchange_to_segment_int(exchange)
             mode_int = _get_sdk_mode_int(sub_mode)
             
-            # Resolve security_id via resolver (preferred) or fallback to int(symbol)
+            # Resolve security_id + wire segment via resolver (preferred)
             if self._resolver is not None:
                 try:
                     inst = self._resolver.resolve(symbol, exchange)
-                    security_id_int = int(inst.security_id)
+                    security_id = str(inst.security_id)
+                    # Segment belongs to the instrument, not the exchange:
+                    # NIFTY on NSE is IDX_I=0, not NSE_EQ=1.
+                    wire = self._resolver.wire_segment_of(symbol, exchange)
+                    exch_int = SEGMENT_TO_NUMERIC.get(wire, _exchange_to_segment_int(exchange))
+                    # Indices have no depth: Dhan streams nothing for Full on
+                    # IDX_I (verified live 2026-07-27) — downgrade to quote.
+                    if wire == "IDX_I" and sub_mode == "full":
+                        mode_int = _get_sdk_mode_int("quote")
                 except Exception as exc:
                     logger.warning("security_id_resolution_failed", extra={
                         "symbol": symbol, "exchange": exchange, "error": str(exc)
                     })
                     continue
             else:
-                # Fallback: try parsing symbol as int (backward compat for direct security_id usage)
-                try:
-                    security_id_int = int(symbol)
-                except (ValueError, TypeError):
+                # Fallback: symbol IS the security_id (backward compat)
+                if not symbol.isdigit():
                     logger.warning("invalid_security_id_no_resolver", extra={"symbol": symbol})
                     continue
+                security_id = symbol
+                exch_int = _exchange_to_segment_int(exchange)
             
-            sdk_instr = (exch_int, security_id_int, mode_int)
+            sdk_instr = (exch_int, security_id, mode_int)
             
             # Dedup (Trade_XV2 pattern)
             with self._sub_lock:
                 if sdk_instr not in self._subscribed_instruments:
                     self._instruments.append(sdk_instr)
                     self._subscribed_instruments.add(sdk_instr)
+                    self._subscription_keys.add((symbol, exchange))
+                    self._symbol_by_sid[security_id] = symbol
                     new_instruments.append(sdk_instr)
         
         if not new_instruments:
@@ -356,24 +369,55 @@ class DhanWebSocketClient:
         if not self._connected or self._feed is None:
             return False
         
-        # SDK unsubscribe
-        try:
-            instruments = []
-            for symbol, exchange in symbols:
+        sub_mode = mode or self._mode
+        
+        # Build SDK 3-tuples matching subscribe() pattern
+        instruments_to_remove = []
+        for symbol, exchange in symbols:
+            mode_int = _get_sdk_mode_int(sub_mode)
+            
+            # Resolve security_id + wire segment via resolver
+            if self._resolver is not None:
+                try:
+                    inst = self._resolver.resolve(symbol, exchange)
+                    security_id = str(inst.security_id)
+                    wire = self._resolver.wire_segment_of(symbol, exchange)
+                    exch_int = SEGMENT_TO_NUMERIC.get(wire, _exchange_to_segment_int(exchange))
+                except Exception as exc:
+                    logger.warning("security_id_resolution_failed_unsubscribe", extra={
+                        "symbol": symbol, "exchange": exchange, "error": str(exc)
+                    })
+                    continue
+            else:
+                if not symbol.isdigit():
+                    logger.warning("invalid_security_id_no_resolver", extra={"symbol": symbol})
+                    continue
+                security_id = symbol
                 exch_int = _exchange_to_segment_int(exchange)
-                instruments.append((exch_int, symbol))
             
-            self._feed.unsubscribe_symbols(instruments)
-            
-            with self._sub_lock:
-                for sym in symbols:
-                    self._subscriptions.discard(sym)
-            
-            logger.info("unsubscribed", extra={"count": len(symbols)})
-            return True
+            instruments_to_remove.append((exch_int, security_id, mode_int))
+        
+        # Send unsubscribe to SDK
+        try:
+            if instruments_to_remove:
+                self._feed.unsubscribe_symbols(instruments_to_remove)
         except Exception as exc:
-            logger.warning("unsubscribe_failed", extra={"error": str(exc)})
-            return False
+            logger.warning("unsubscribe_sdk_failed", extra={"error": str(exc)})
+        
+        # Remove from local tracking sets
+        with self._sub_lock:
+            for sdk_instr in instruments_to_remove:
+                if sdk_instr in self._subscribed_instruments:
+                    self._subscribed_instruments.discard(sdk_instr)
+                    try:
+                        self._instruments.remove(sdk_instr)
+                    except ValueError:
+                        pass
+            for sym in symbols:
+                self._subscription_keys.discard(sym)
+        
+        logger.info("unsubscribed", extra={"count": len(symbols)})
+        return True
     
     def on_tick(self, callback: Callable[[Tick], None]) -> None:
         """Register callback for incoming tick packets.
@@ -448,6 +492,10 @@ class DhanWebSocketClient:
     def _parse_sdk_data(self, data: dict[str, Any]) -> Tick | None:
         """Parse SDK market data dict into Tick domain object.
         
+        Wire contract (verified live 2026-07-27): SDK payloads carry
+        security_id/LTP/volume and (Full mode only) a 5-level depth array —
+        there is no symbol, last_price or best_bid_price key.
+        
         Args:
             data: Dict from SDK on_message callback.
         
@@ -455,16 +503,23 @@ class DhanWebSocketClient:
             Tick object or None if parsing fails.
         """
         try:
-            symbol = data.get("symbol", "") or data.get("tradingsymbol", "")
-            if not symbol:
+            sid = data.get("security_id")
+            if sid is None:
                 return None
+            symbol = self._symbol_by_sid.get(str(sid), str(sid))
             
-            ltp = Decimal(str(data.get("last_price", data.get("ltp", "0"))))
-            bid = Decimal(str(data.get("best_bid_price", data.get("bid", "0"))))
-            ask = Decimal(str(data.get("best_ask_price", data.get("ask", "0"))))
+            ltp = Decimal(str(data.get("LTP", "0")))
+            
+            # Best bid/ask from depth[0] (Full mode); Quote/Ticker have no depth
+            depth = data.get("depth") or []
+            if depth:
+                bid = Decimal(str(depth[0].get("bid_price", "0")))
+                ask = Decimal(str(depth[0].get("ask_price", "0")))
+            else:
+                bid = ask = Decimal("0")
             
             # Volume handling with delta computation (thread-safe)
-            raw_vol = data.get("total_traded_volume", data.get("volume", 0))
+            raw_vol = data.get("volume", 0)
             cum_vol = int(raw_vol) if raw_vol is not None else 0
             
             with self._vol_lock:
@@ -472,17 +527,8 @@ class DhanWebSocketClient:
                 delta_vol = max(0, cum_vol - prev_vol)
                 self._cumulative_vols[symbol] = cum_vol
             
-            # Exchange timestamp
-            ts = data.get("last_trade_time", data.get("exchange_timestamp"))
-            if ts is not None:
-                if isinstance(ts, (int, float)):
-                    exchange_ts = datetime.fromtimestamp(ts, tz=timezone.utc)
-                elif isinstance(ts, str):
-                    exchange_ts = datetime.fromisoformat(ts.replace("Z", "+00:00"))
-                else:
-                    exchange_ts = datetime.now(timezone.utc)
-            else:
-                exchange_ts = datetime.now(timezone.utc)
+            # LTT is time-of-day only ("12:23:58") — arrival wall clock is honest
+            exchange_ts = datetime.now(timezone.utc)
             
             return Tick(
                 symbol=symbol,
@@ -503,10 +549,7 @@ class DhanWebSocketClient:
     def subscriptions(self) -> set[tuple[str, str]]:
         """Return current subscriptions as (symbol, exchange) tuples."""
         with self._sub_lock:
-            # Convert from SDK format (exch_int, symbol, mode) back to (symbol, exchange)
-            # For now, return empty set since we don't store exchange in SDK format
-            # Trade_XV2 maintains this mapping separately
-            return set()
+            return set(self._subscription_keys)
     
     async def close(self) -> None:
         """Alias for disconnect for resource cleanup contexts."""

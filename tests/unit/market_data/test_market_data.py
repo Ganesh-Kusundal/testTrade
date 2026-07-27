@@ -7,7 +7,6 @@ from scalpr.domain.tick import Tick, OHLCV
 from scalpr.market_data.aggregator import TickAggregator, IST
 from scalpr.market_data.historical import SeamStitcher
 from scalpr.market_data.validators import TickValidator
-from scalpr.market_data.dhan_feed import DhanMarketFeed
 
 
 @pytest.mark.asyncio
@@ -108,18 +107,11 @@ def test_validator_deduplicates_same_exchange_timestamp():
 @pytest.mark.asyncio
 async def test_volume_delta_not_cumulative_in_ohlcv():
     """TickAggregator sums tick.delta_volume instead of using cumulative_volume in OHLCV volume."""
-    feed = DhanMarketFeed("c1", "t1")
     agg = TickAggregator(timeframe_minutes=5)
-    base_time = time.time()
+    base_time = datetime.now(timezone.utc)
     
-    raw_tick1 = {"symbol": "RELIANCE", "ltp": 2500.0, "bid": 2499.0, "ask": 2501.0, "volume": 1000, "timestamp": base_time}
-    raw_tick2 = {"symbol": "RELIANCE", "ltp": 2505.0, "bid": 2504.0, "ask": 2506.0, "volume": 1025, "timestamp": base_time + 1}
-    
-    t1 = feed.parse_raw_message(raw_tick1)
-    t2 = feed.parse_raw_message(raw_tick2)
-    
-    assert t1.delta_volume == 0  # Initial cumulative vol sets baseline
-    assert t2.delta_volume == 25  # 1025 - 1000
+    t1 = Tick("RELIANCE", Decimal("2500.0"), Decimal("2499.0"), Decimal("2501.0"), 0, 1000, base_time)
+    t2 = Tick("RELIANCE", Decimal("2505.0"), Decimal("2504.0"), Decimal("2506.0"), 25, 1025, base_time + timedelta(seconds=1))
     
     await agg.process_tick(t1)
     await agg.process_tick(t2)

@@ -84,8 +84,9 @@ class TestWebSocketSecurityIdResolution:
         assert result is True
 
     @pytest.mark.asyncio
-    async def test_subscribe_uses_integer_security_id(self, mock_resolver):
-        """Security ID must be converted to integer for SDK."""
+    async def test_subscribe_uses_string_security_id(self, mock_resolver):
+        """Security ID must be a string in the SDK v2 tuple — int SecurityId
+        is silently accepted by the server but streams nothing (verified live 2026-07-27)."""
         client = DhanWebSocketClient(
             access_token="test_token",
             client_id="test_client",
@@ -98,17 +99,17 @@ class TestWebSocketSecurityIdResolution:
         
         await client.subscribe([("RELIANCE", "NSE")])
         
-        # Verify SDK feed received subscription with integer security_id
+        # Verify SDK feed received subscription with string security_id
         call_args = mock_feed.subscribe_symbols.call_args
         assert call_args is not None, "subscribe_symbols should be called"
         
         instruments = call_args[0][0] if call_args[0] else []
         assert len(instruments) > 0, "Should have at least one instrument"
         
-        # SDK format: (exchange_int, security_id_int, mode_int)
-        exch_int, sec_id_int, mode_int = instruments[0]
-        assert isinstance(sec_id_int, int), f"security_id must be int, got {type(sec_id_int)}"
-        assert sec_id_int == 2885, f"Expected RELIANCE security_id=2885, got {sec_id_int}"
+        # SDK v2 format: (exchange_int, security_id_str, mode_int)
+        exch_int, sec_id, mode_int = instruments[0]
+        assert isinstance(sec_id, str), f"security_id must be str, got {type(sec_id)}"
+        assert sec_id == "2885", f"Expected RELIANCE security_id='2885', got {sec_id}"
 
     @pytest.mark.asyncio
     async def test_subscribe_handles_resolution_failure_gracefully(self, mock_resolver):
@@ -260,11 +261,11 @@ class TestEndToEndSecurityIdFlow:
         # 2. SDK received correct subscription
         call_args = mock_feed.subscribe_symbols.call_args
         instruments = call_args[0][0]
-        exch_int, sec_id_int, mode_int = instruments[0]
+        exch_int, sec_id, mode_int = instruments[0]
         
-        # 3. Security ID is correct integer
-        assert sec_id_int == 2885
-        assert isinstance(sec_id_int, int)
+        # 3. Security ID is the correct string (SDK v2 JSON packet requires str)
+        assert sec_id == "2885"
+        assert isinstance(sec_id, str)
         
         # 4. Mode is valid SDK integer (15=Ticker, 17=Quote, 21=Full)
         assert mode_int in (15, 17, 21), f"Invalid SDK mode: {mode_int}"
@@ -286,7 +287,7 @@ class TestEndToEndSecurityIdFlow:
         
         call_args = mock_feed.subscribe_symbols.call_args
         instruments = call_args[0][0]
-        exch_int, sec_id_int, mode_int = instruments[0]
+        exch_int, sec_id, mode_int = instruments[0]
         
-        # TCS security_id is 11536
-        assert sec_id_int == 11536
+        # TCS security_id is "11536" (string — SDK v2 JSON packet)
+        assert sec_id == "11536"

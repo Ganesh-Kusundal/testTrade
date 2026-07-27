@@ -205,7 +205,9 @@ def test_portfolio_manager_realised_pnl():
 
 def test_options_scanner():
     """OptionsScanner filters liquid ATM options contracts based on delta/spot proximity."""
-    scanner = OptionsScanner(min_oi=100, min_volume=500, max_spread=Decimal("1.50"))
+    resolver = MagicMock()
+    resolver.resolve.side_effect = lambda sym, exch: MagicMock(symbol=sym)
+    scanner = OptionsScanner(resolver=resolver, min_oi=100, min_volume=500, max_spread=Decimal("1.50"))
     
     # Spot price is 22000
     chain = [

@@ -13,39 +13,24 @@ from typing import Any
 
 from scalpr.brokers.dhan.http_client import DhanHttpClient
 from scalpr.brokers.dhan.resolver import SymbolResolver
-from scalpr.brokers.dhan.segments import EXCHANGE_TO_SEGMENT
-from scalpr.domain.tick import OHLCV
 
 logger = logging.getLogger(__name__)
 
-# Valid timeframe patterns
-_VALID_TIMEFRAMES: frozenset[str] = frozenset({
-    "1m", "2m", "3m", "5m", "10m", "15m", "30m", "60m",
-    "1H", "2H", "4H",
-    "1D", "1W", "1M",
-})
-
-# Dhan API timeframe mapping
-# Dhan accepts: 1, 3, 5, 10, 15, 30, 60 (minutes), 1D, 1W, 1M
-_DHAN_TIMEFRAME_MAP: dict[str, str] = {
+# Dhan v2 intraday intervals (minutes). Verified live 2026-07-27:
+# the API serves 1/3/5/15/25/60 only — no 2/10/30/120/240, no weekly/monthly.
+_INTRADAY_INTERVALS: dict[str, str] = {
     "1m": "1",
-    "2m": "2",
     "3m": "3",
     "5m": "5",
-    "10m": "10",
     "15m": "15",
-    "30m": "30",
+    "25m": "25",
     "60m": "60",
     "1H": "60",
-    "2H": "120",
-    "4H": "240",
-    "1D": "1D",
-    "1W": "1W",
-    "1M": "1M",
 }
 
-# IST timezone (Dhan returns timestamps in IST)
-_IST = timezone(timedelta(hours=5, minutes=30))
+_DAILY_TIMEFRAMES: frozenset[str] = frozenset({"1D"})
+
+_VALID_TIMEFRAMES: frozenset[str] = frozenset(_INTRADAY_INTERVALS) | _DAILY_TIMEFRAMES
 
 
 class HistoricalDataAdapter:
@@ -105,38 +90,30 @@ class HistoricalDataAdapter:
         self._validate_inputs(symbol, exchange, timeframe, from_date, to_date)
 
         security_id, segment = self._resolve_segment(symbol, exchange)
-        dhan_tf = self._map_timeframe(timeframe)
 
-        # Use intraday for sub-daily, historical for daily+
-        if timeframe in ("1D", "1W", "1M"):
-            endpoint = "/charts/historical"
-        else:
-            endpoint = "/charts/intraday"
-
-        params = {
+        # Dhan v2 charts endpoints require POST + JSON body with a mandatory
+        # "instrument" name (EQUITY/INDEX/FUTSTK/...). Verified live 2026-07-27.
+        body: dict[str, Any] = {
             "securityId": security_id,
             "exchangeSegment": segment,
-            "interval": dhan_tf,
+            "instrument": self._resolver.instrument_kind_of(symbol, exchange),
+            "oi": False,
             "fromDate": from_date.isoformat(),
             "toDate": to_date.isoformat(),
         }
+        if timeframe in _DAILY_TIMEFRAMES:
+            endpoint = "/charts/historical"
+            body["expiryCode"] = 0
+        else:
+            endpoint = "/charts/intraday"
+            body["interval"] = _INTRADAY_INTERVALS[timeframe]
 
         logger.debug(
             "historical_ohlcv_request",
-            extra={
-                "symbol": symbol,
-                "exchange": exchange,
-                "segment": segment,
-                "security_id": security_id,
-                "timeframe": timeframe,
-                "dhan_timeframe": dhan_tf,
-                "from_date": from_date.isoformat(),
-                "to_date": to_date.isoformat(),
-                "endpoint": endpoint,
-            },
+            extra={"symbol": symbol, "exchange": exchange, "endpoint": endpoint, "body": body},
         )
 
-        data = self._client.get(f"{endpoint}?{self._encode_params(params)}")
+        data = self._client.post(endpoint, json=body)
         return self._parse_candles(data)
 
     def get_ohlcv_latest(
@@ -222,7 +199,7 @@ class HistoricalDataAdapter:
                 f"Valid timeframes: {sorted(_VALID_TIMEFRAMES)}"
             )
 
-    # ── Resolution & mapping ────────────────────────────────────────────
+    # ── Resolution ──────────────────────────────────────────────────────
 
     def _resolve_segment(self, symbol: str, exchange: str) -> tuple[str, str]:
         """Resolve symbol to (security_id, segment) tuple.
@@ -231,108 +208,46 @@ class HistoricalDataAdapter:
             (security_id, dhan_segment_string)
         """
         inst = self._resolver.resolve(symbol, exchange)
-        segment = EXCHANGE_TO_SEGMENT.get(inst.exchange.value, "NSE_EQ")
+        segment = self._resolver.wire_segment_of(symbol, exchange)
         security_id = inst.security_id
         return security_id, segment
-
-    def _map_timeframe(self, timeframe: str) -> str:
-        """Map SCALPR timeframe string to Dhan API interval value."""
-        dhan_tf = _DHAN_TIMEFRAME_MAP.get(timeframe)
-        if dhan_tf is None:
-            raise ValueError(f"No Dhan mapping for timeframe: {timeframe!r}")
-        return dhan_tf
 
     # ── Parsing ─────────────────────────────────────────────────────────
 
     def _parse_candles(self, data: dict[str, Any]) -> list[dict[str, Any]]:
-        """Parse Dhan API response into standard candle dicts.
+        """Parse Dhan v2 column-array response into candle dicts.
 
-        Expected Dhan response structure::
+        Dhan returns parallel arrays with epoch-second timestamps::
 
-            {
-                "data": [
-                    {
-                        "timestamp": "2024-01-15T09:15:00+05:30",
-                        "open": 2456.50,
-                        "high": 2460.00,
-                        "low": 2455.00,
-                        "close": 2458.75,
-                        "volume": 12345
-                    },
-                    ...
-                ]
-            }
-
-        Returns:
-            List of dicts with: timestamp, open, high, low, close, volume
+            {"open": [...], "high": [...], "low": [...], "close": [...],
+             "volume": [...], "timestamp": [1784485800.0, ...]}
         """
-        candles_data = data.get("data", [])
-        if not candles_data:
+        timestamps = data.get("timestamp") or []
+        if not timestamps:
             logger.debug("historical_ohlcv_empty_response")
             return []
 
-        candles: list[dict[str, Any]] = []
-        for raw in candles_data:
-            try:
-                candle = self._parse_single_candle(raw)
-                candles.append(candle)
-            except Exception as exc:
-                logger.warning(
-                    "historical_ohlcv_parse_error",
-                    extra={"raw_candle": raw, "error": str(exc)},
-                )
-                continue
+        candles = [
+            {
+                "timestamp": datetime.fromtimestamp(float(ts), tz=timezone.utc),
+                "open": Decimal(str(o)),
+                "high": Decimal(str(h)),
+                "low": Decimal(str(low)),
+                "close": Decimal(str(c)),
+                "volume": int(float(v)),
+            }
+            for ts, o, h, low, c, v in zip(
+                timestamps,
+                data.get("open", []),
+                data.get("high", []),
+                data.get("low", []),
+                data.get("close", []),
+                data.get("volume", []),
+            )
+        ]
 
-        logger.debug(
-            "historical_ohlcv_parsed",
-            extra={"total_candles": len(candles)},
-        )
+        logger.debug("historical_ohlcv_parsed", extra={"total_candles": len(candles)})
         return candles
-
-    def _parse_single_candle(self, raw: dict[str, Any]) -> dict[str, Any]:
-        """Parse a single raw candle dict from the API response."""
-        ts = self._parse_timestamp(raw.get("timestamp", ""))
-        return {
-            "timestamp": ts,
-            "open": Decimal(str(raw.get("open", 0))),
-            "high": Decimal(str(raw.get("high", 0))),
-            "low": Decimal(str(raw.get("low", 0))),
-            "close": Decimal(str(raw.get("close", 0))),
-            "volume": int(raw.get("volume", 0)),
-        }
-
-    def _parse_timestamp(self, ts_str: str) -> datetime:
-        """Parse timestamp string to timezone-aware datetime (UTC).
-
-        Handles formats:
-        - ISO 8601 with timezone: "2024-01-15T09:15:00+05:30"
-        - ISO 8601 without timezone: "2024-01-15T09:15:00"
-        - Unix timestamp (seconds): 1705292700
-        """
-        if not ts_str:
-            raise ValueError("Empty timestamp")
-
-        # Try Unix timestamp (int or float string)
-        try:
-            ts_float = float(ts_str)
-            if ts_float > 1e9:  # Likely a Unix timestamp in seconds
-                return datetime.fromtimestamp(ts_float, tz=timezone.utc)
-        except (ValueError, TypeError, OSError):
-            pass
-
-        # Try ISO 8601 parsing
-        # Python 3.7+ fromisoformat handles most ISO formats
-        try:
-            dt = datetime.fromisoformat(ts_str)
-            if dt.tzinfo is None:
-                # Assume IST if no timezone (Dhan's default)
-                dt = dt.replace(tzinfo=_IST)
-            # Convert to UTC for consistency with SCALPR domain model
-            return dt.astimezone(timezone.utc)
-        except (ValueError, TypeError) as exc:
-            raise ValueError(
-                f"Cannot parse timestamp: {ts_str!r}"
-            ) from exc
 
     # ── Utilities ───────────────────────────────────────────────────────
 
@@ -367,14 +282,7 @@ class HistoricalDataAdapter:
     def _timeframe_to_minutes(self, timeframe: str) -> int | None:
         """Convert timeframe string to minutes, or None for daily+."""
         minute_map = {
-            "1m": 1, "2m": 2, "3m": 3, "5m": 5, "10m": 10,
-            "15m": 15, "30m": 30, "60m": 60, "1H": 60,
-            "2H": 120, "4H": 240,
+            "1m": 1, "3m": 3, "5m": 5, "15m": 15, "25m": 25,
+            "60m": 60, "1H": 60,
         }
         return minute_map.get(timeframe)
-
-    @staticmethod
-    def _encode_params(params: dict[str, str]) -> str:
-        """URL-encode query parameters."""
-        from urllib.parse import urlencode
-        return urlencode(params)

@@ -8,6 +8,8 @@ from datetime import datetime
 
 load_dotenv(".env")
 
+from scalpr.brokers.dhan.loader import InstrumentLoader
+from scalpr.brokers.dhan.resolver import SymbolResolver
 from scalpr.brokers.dhan.ws_client import DhanWebSocketClient
 from scalpr.domain.tick import Tick
 
@@ -34,11 +36,11 @@ def main():
     print(f"Token: {access_token[:20]}...")
     print()
     
-    # NIFTY 50 Index - security_id might be different
-    # Try with trading symbol first, then security_id
+    # Canonical symbol only — the broker resolver owns the security_id mapping
+    resolver = SymbolResolver()
+    resolver.load_from_rows(InstrumentLoader.load_cached())
     symbols_to_test = [
-        ("NIFTY 50", "NSE", "NIFTY 50 Index"),
-        ("26000", "NSE", "NIFTY 50 (security_id=26000)"),
+        ("NIFTY", "NSE", "NIFTY 50 Index"),
     ]
     
     for symbol, exchange, description in symbols_to_test:
@@ -50,6 +52,7 @@ def main():
             access_token=access_token,
             client_id=client_id,
             mode="quote",
+            resolver=resolver,
         )
         
         tick_count = [0]

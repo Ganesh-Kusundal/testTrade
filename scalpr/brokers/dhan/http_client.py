@@ -133,6 +133,10 @@ class DhanHttpClient:
         self.access_token = access_token
         self._session.headers["access-token"] = access_token
 
+    def close(self) -> None:
+        """Close the underlying HTTP session and release resources."""
+        self._session.close()
+
     def post(self, endpoint: str, json: dict | None = None) -> dict[str, Any]:
         """POST request to Dhan API."""
         return self._request("POST", endpoint, json=json)
@@ -227,12 +231,19 @@ class DhanHttpClient:
                 "method": method, "endpoint": endpoint, "status": resp.status_code,
             })
 
-            # 401 - try token refresh
-            if resp.status_code == 401:
+            # 401 — or Dhan's DH-906 "Invalid Token" (arrives as HTTP 400,
+            # captured live 2026-07-27) — try token refresh
+            token_rejected = resp.status_code == 401 or (
+                resp.status_code >= 400 and "DH-906" in (resp.text or "")
+            )
+            if token_rejected:
                 if attempt == 1 and self._try_refresh_token():
                     logger.info("http_retry_after_refresh", extra={"method": method, "endpoint": endpoint})
                     continue
-                raise AuthenticationError(f"Token rejected: HTTP 401 on {method} {endpoint}")
+                raise AuthenticationError(
+                    f"Token rejected: HTTP {resp.status_code} on {method} {endpoint}"
+                    + (" (DH-906 Invalid Token)" if resp.status_code != 401 else "")
+                )
 
             # 429 - rate limited
             if resp.status_code == 429:

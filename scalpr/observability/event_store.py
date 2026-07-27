@@ -198,7 +198,7 @@ def _reconstruct_domain_object(field_name: str, data: dict[str, Any]) -> Any:
                 side=OrderSide[data.get("side", "BUY")],
                 order_type=OrderType[data.get("order_type", "MARKET")],
                 quantity=data.get("quantity", 0),
-                price=Decimal(str(data.get("price", "0"))) if data.get("price") else None,
+                price=Decimal(str(data.get("price", "0") or "0")),
                 state=OrderState[data.get("state", "PENDING")],
             )
         elif field_name == "fill":
@@ -206,11 +206,10 @@ def _reconstruct_domain_object(field_name: str, data: dict[str, Any]) -> Any:
                 order_id=data.get("order_id", ""),
                 fill_id=data.get("fill_id", ""),
                 symbol=data.get("symbol", ""),
-                exchange=Exchange[data.get("exchange", "NSE")],
                 side=OrderSide[data.get("side", "BUY")],
                 quantity=data.get("quantity", 0),
                 price=Decimal(str(data.get("price", "0"))),
-                fill_timestamp=datetime.fromisoformat(data.get("fill_timestamp", datetime.now(timezone.utc).isoformat())),
+                timestamp=datetime.fromisoformat(data.get("timestamp", datetime.now(timezone.utc).isoformat())),
             )
         else:
             # For unsupported types, return dict (best effort)

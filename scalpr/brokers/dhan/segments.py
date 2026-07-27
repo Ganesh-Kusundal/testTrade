@@ -14,18 +14,22 @@ DEFAULT_SEGMENT = "NSE_EQ"
 # Short exchange codes
 _EXCHANGE_SHORT: dict[Exchange, str] = {
     Exchange.NSE: "NSE",
+    Exchange.BSE: "BSE",
     Exchange.MCX: "MCX",
 }
 
 # Dhan HTTP/wire segment strings
 _DHAN_WIRE: dict[Exchange, str] = {
     Exchange.NSE: "NSE_EQ",
+    Exchange.BSE: "BSE_EQ",
     Exchange.MCX: "MCX_COMM",
+    Exchange.NSE_FNO: "NSE_FNO",
 }
 
 # Exchange string to Dhan wire segment
 EXCHANGE_TO_SEGMENT: dict[str, str] = {
     "NSE": "NSE_EQ",
+    "BSE": "BSE_EQ",
     "MCX": "MCX_COMM",
     "INDEX": "IDX_I",  # For indices like NIFTY, BANKNIFTY
     "NFO": "NSE_FNO",  # NSE F&O
@@ -35,6 +39,7 @@ EXCHANGE_TO_SEGMENT: dict[str, str] = {
 # Dhan wire segment to exchange string
 SEGMENT_TO_EXCHANGE: dict[str, str] = {
     "NSE_EQ": "NSE",
+    "BSE_EQ": "BSE",
     "MCX_COMM": "MCX",
     "IDX_I": "INDEX",
     "NSE_FNO": "NSE",

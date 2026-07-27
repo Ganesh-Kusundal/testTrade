@@ -164,19 +164,6 @@ class TestMarketDataDisruptor:
         assert any(t.ltp == Decimal("0") for t in ticks)
         # Some should have negative volume
         assert any(t.delta_volume < 0 for t in ticks)
-    
-    def test_disconnect_websocket_context_manager(self):
-        """Test WebSocket disconnection simulation."""
-        disruptor = MarketDataDisruptor()
-        
-        with disruptor.disconnect_websocket():
-            from scalpr.market_data.dhan_feed import DhanMarketFeed
-            feed = DhanMarketFeed.__new__(DhanMarketFeed)
-            
-            with pytest.raises(ConnectionError, match="disconnected"):
-                feed.connect()
-            
-            assert not feed.is_connected
 
 
 class TestOrderFailureInjector:

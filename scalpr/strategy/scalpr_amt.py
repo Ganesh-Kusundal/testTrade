@@ -77,14 +77,23 @@ class ScalprAmtStrategy(IStrategy):
                 # Submit through OrderRouter (enforces risk checks)
                 try:
                     margins = self.order_router.gateway.get_margins()
-                    available_margin = margins.get("available_margin", Decimal("1000000.00"))
-                    
+                    available_margin = margins.get("available_margin") or Decimal("0")
+                    portfolio_value = margins.get("total_balance") or Decimal("0")
+                    if portfolio_value <= 0:
+                        # Fail-closed: no trade without real risk data
+                        logger.error("risk_inputs_unavailable — order blocked")
+                        return
+                    daily_loss = max(
+                        Decimal("0"),
+                        -sum((p.realised_pnl + p.unrealised_pnl for p in positions), Decimal("0")),
+                    )
+
                     self.order_router.submit_order(
                         order=order,
                         positions=positions,
                         available_margin=available_margin,
-                        daily_loss=Decimal("0"),  # TODO: Fetch from portfolio manager
-                        portfolio_value=Decimal("1000000.00"),  # TODO: Fetch from portfolio manager
+                        daily_loss=daily_loss,
+                        portfolio_value=portfolio_value,
                     )
                     logger.info(f"AMT Strategy: Order {order.order_id} submitted successfully")
                 except Exception as exc:

@@ -11,7 +11,6 @@ from typing import Any
 
 from scalpr.brokers.dhan.http_client import DhanHttpClient
 from scalpr.brokers.dhan.resolver import SymbolResolver
-from scalpr.brokers.dhan.segments import EXCHANGE_TO_SEGMENT
 from scalpr.domain.instrument import Exchange
 
 logger = logging.getLogger(__name__)
@@ -34,7 +33,7 @@ class MarketDataAdapter:
     def _resolve_segment(self, symbol: str, exchange: str) -> tuple[int, str]:
         """Resolve symbol to numeric security_id and segment."""
         inst = self._resolver.resolve(symbol, exchange)
-        segment = EXCHANGE_TO_SEGMENT.get(inst.exchange.value, "NSE_EQ")
+        segment = self._resolver.wire_segment_of(symbol, exchange)
         security_id = int(inst.security_id)  # Convert to int for Dhan API
         return security_id, segment
 
@@ -93,7 +92,10 @@ class MarketDataAdapter:
         return quote
 
     def get_depth(self, symbol: str, exchange: str = "NSE") -> dict[str, Any]:
-        """Get market depth for a symbol.
+        """Get market depth for a symbol (5-level via REST quote endpoint).
+
+        Note: For 20-level depth, use the DhanWebSocketManager with FullDepth mode.
+        The REST /marketfeed/quote endpoint only returns 5 levels.
         
         Args:
             symbol: Trading symbol
@@ -151,7 +153,7 @@ class MarketDataAdapter:
             try:
                 security_id, segment = self._resolve_segment(sym, exchange)
                 segment_map.setdefault(segment, []).append(security_id)
-                symbol_map[security_id] = sym
+                symbol_map[str(security_id)] = sym  # response keys are strings
             except Exception:
                 continue
         
@@ -186,7 +188,7 @@ class MarketDataAdapter:
             try:
                 security_id, segment = self._resolve_segment(sym, exchange)
                 segment_map.setdefault(segment, []).append(security_id)
-                symbol_map[security_id] = sym
+                symbol_map[str(security_id)] = sym  # response keys are strings
             except Exception:
                 continue
         

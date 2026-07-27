@@ -115,6 +115,7 @@ class OrdersAdapter:
                 "price": str(dhan_req.price) if dhan_req.price else "0",  # Fixed: use str to preserve Decimal precision
                 "triggerPrice": str(dhan_req.triggerPrice) if dhan_req.triggerPrice else "0",  # Fixed: use str
                 "securityId": dhan_req.securityId,
+                "validity": dhan_req.validity,
             }
 
             logger.info(
@@ -312,7 +313,7 @@ class OrdersAdapter:
         for raw in raw_orders:
             order = {
                 "order_id": raw.get("orderId", ""),
-                "symbol": raw.get("tradingsymbol", raw.get("securityId", "")),
+                "symbol": raw.get("tradingSymbol", raw.get("securityId", "")),
                 "exchange_segment": raw.get("exchangeSegment", ""),
                 "side": raw.get("transactionType", ""),
                 "order_type": raw.get("orderType", ""),
@@ -359,7 +360,7 @@ class OrdersAdapter:
             trade = {
                 "trade_id": raw.get("tradeId", ""),
                 "order_id": raw.get("orderId", ""),
-                "symbol": raw.get("tradingsymbol", raw.get("securityId", "")),
+                "symbol": raw.get("tradingSymbol", raw.get("securityId", "")),
                 "side": raw.get("transactionType", ""),
                 "quantity": int(raw.get("quantity", 0)),
                 "price": Decimal(str(raw.get("price", 0))),

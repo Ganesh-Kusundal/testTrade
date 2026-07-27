@@ -12,31 +12,11 @@ from collections.abc import Iterable
 from decimal import Decimal
 
 from scalpr.brokers.dhan.exceptions import InstrumentNotFoundError
+from scalpr.brokers.dhan.instrument_mapper import map_row, wire_segment_for
 from scalpr.brokers.dhan.segments import SEGMENT_TO_EXCHANGE
 from scalpr.domain.instrument import Exchange, Instrument, OptionType, Segment
 
 logger = logging.getLogger(__name__)
-
-# Instrument type mapping from Dhan CSV
-_NAME_TO_TYPE: dict[str, Segment] = {
-    "EQUITY": Segment.EQUITY,
-    "INDEX": Segment.EQUITY,
-    "OPTIDX": Segment.OPTIONS,
-    "OPTSTK": Segment.OPTIONS,
-    "OPTCUR": Segment.OPTIONS,
-    "OPTFUT": Segment.OPTIONS,
-    "OPTCOM": Segment.OPTIONS,
-    "FUTIDX": Segment.FUTURES,
-    "FUTSTK": Segment.FUTURES,
-    "FUTCUR": Segment.FUTURES,
-    "FUTCOM": Segment.FUTURES,
-}
-
-# Dhan option type mapping
-_DHAN_OPTION_TYPE: dict[str, OptionType] = {
-    "CE": OptionType.CE, "CALL": OptionType.CE,
-    "PE": OptionType.PE, "PUT": OptionType.PE,
-}
 
 
 class SymbolResolver:
@@ -50,6 +30,8 @@ class SymbolResolver:
         self._by_symbol: dict[tuple[str, Exchange], Instrument] = {}
         self._by_security_id: dict[str, Instrument] = {}
         self._by_underlying: dict[tuple[str, Exchange], list[Instrument]] = {}
+        self._wire_by_sid: dict[str, str] = {}
+        self._kind_by_sid: dict[str, str] = {}
         self._loaded = False
         self._lock = threading.RLock()
 
@@ -89,6 +71,16 @@ class SymbolResolver:
         """Get lot size for an instrument."""
         return self.resolve(symbol, exchange).lot_size
 
+    def wire_segment_of(self, symbol: str, exchange: str) -> str:
+        """Dhan wire segment for a symbol (e.g. "NSE_EQ", "IDX_I", "NSE_FNO")."""
+        inst = self.resolve(symbol, exchange)
+        return self._wire_by_sid.get(inst.security_id) or wire_segment_for(inst.exchange, inst.segment)
+
+    def instrument_kind_of(self, symbol: str, exchange: str) -> str:
+        """Dhan instrument name (e.g. "EQUITY", "INDEX", "FUTSTK") required by charts APIs."""
+        inst = self.resolve(symbol, exchange)
+        return self._kind_by_sid.get(inst.security_id) or "EQUITY"
+
     def stats(self) -> dict:
         """Get resolver statistics."""
         return {"loaded": self._loaded, "total": len(self._by_security_id)}
@@ -109,18 +101,22 @@ class SymbolResolver:
         new_by_symbol: dict[tuple[str, Exchange], Instrument] = {}
         new_by_sid: dict[str, Instrument] = {}
         new_by_underlying: dict[tuple[str, Exchange], list[Instrument]] = {}
+        new_wire_by_sid: dict[str, str] = {}
+        new_kind_by_sid: dict[str, str] = {}
         skipped = 0
 
         for row in rows:
             try:
-                inst = self._row_to_instrument(row)
+                mapped = map_row(row)
             except Exception:
                 skipped += 1
                 continue
 
-            if inst is None:
+            if mapped is None:
                 skipped += 1
                 continue
+
+            inst = mapped.instrument
 
             # Generate alternate keys for flexible lookup
             alt_keys = _generate_alternate_keys(
@@ -141,11 +137,22 @@ class SymbolResolver:
                     new_by_symbol[(k, inst.exchange)] = inst
 
             new_by_sid[inst.security_id] = inst  # Index by numeric security_id
+            new_wire_by_sid[inst.security_id] = mapped.wire_segment
+            new_kind_by_sid[inst.security_id] = str(row.get("SEM_INSTRUMENT_NAME") or "").strip().upper()
+
+            # Populate underlying index for OPTIONS/FUTURES
+            if inst.segment in (Segment.OPTIONS, Segment.FUTURES):
+                underlying = mapped.underlying or (inst.symbol.split()[0].upper() if inst.symbol else "")
+                if underlying:
+                    key = (underlying, inst.exchange)
+                    new_by_underlying.setdefault(key, []).append(inst)
 
         with self._lock:
             self._by_symbol = new_by_symbol
             self._by_security_id = new_by_sid
             self._by_underlying = new_by_underlying
+            self._wire_by_sid = new_wire_by_sid
+            self._kind_by_sid = new_kind_by_sid
             self._loaded = True
 
         total_loaded = len(new_by_sid)
@@ -214,79 +221,6 @@ class SymbolResolver:
                     pass
             # Default to NSE
             return Exchange.NSE
-
-    @staticmethod
-    def _row_to_instrument(row: dict) -> Instrument | None:
-        """Convert CSV row to Instrument."""
-        symbol = (row.get("SEM_TRADING_SYMBOL") or "").strip()
-        security_id = str(row.get("SEM_SMST_SECURITY_ID") or "").strip()
-        if not symbol or not security_id:
-            return None
-
-        segment_str = (row.get("SEM_EXM_EXCH_ID") or "").strip().upper()
-        exchange_str = SEGMENT_TO_EXCHANGE.get(segment_str, "NSE")
-        try:
-            exchange = Exchange(exchange_str)
-        except ValueError:
-            exchange = Exchange.NSE
-
-        name = (row.get("SEM_INSTRUMENT_NAME") or "").strip().upper()
-        segment = _NAME_TO_TYPE.get(name)
-        if segment is None:
-            return None
-
-        lot_size = _safe_int(row.get("SEM_LOT_UNITS"), default=1)
-        tick_size = _safe_decimal(row.get("SEM_TICK_SIZE"), default="0.05")
-
-        option_type: OptionType | None = None
-        strike: Decimal | None = None
-        expiry = None
-
-        if segment in (Segment.OPTIONS, Segment.FUTURES):
-            expiry_str = row.get("SEM_EXPIRY_DATE")
-            if expiry_str:
-                try:
-                    from datetime import date
-                    expiry = date.fromisoformat(expiry_str[:10])
-                except Exception:
-                    pass
-
-            if segment == Segment.OPTIONS:
-                opt_raw = (row.get("SEM_OPTION_TYPE") or "").strip().upper()
-                option_type = _DHAN_OPTION_TYPE.get(opt_raw)
-                strike_val = row.get("SEM_STRIKE_PRICE")
-                if strike_val is not None:
-                    strike = _safe_decimal(strike_val)
-
-        return Instrument(
-            symbol=symbol,
-            exchange=exchange,
-            segment=segment,
-            security_id=security_id,  # Use actual Dhan security_id
-            lot_size=lot_size,
-            tick_size=tick_size,
-            option_type=option_type,
-            strike=strike,
-            expiry=expiry,
-        )
-
-
-def _safe_int(value, default: int = 0) -> int:
-    """Safely convert value to int."""
-    try:
-        return int(float(value))
-    except (TypeError, ValueError):
-        return default
-
-
-def _safe_decimal(value, default: str = "0") -> Decimal:
-    """Safely convert value to Decimal."""
-    if value is None:
-        return Decimal(default)
-    try:
-        return Decimal(str(value))
-    except Exception:
-        return Decimal(default)
 
 
 def _generate_alternate_keys(

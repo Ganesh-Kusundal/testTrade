@@ -17,6 +17,7 @@ class DhanOrderRequest:
     price: Decimal
     triggerPrice: Decimal
     securityId: str
+    validity: str = "DAY"
 
 
 @dataclass(slots=True, frozen=True)

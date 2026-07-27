@@ -137,7 +137,9 @@ class InstrumentLoader:
             out.append({
                 "SEM_TRADING_SYMBOL": str(getattr(r, "SEM_TRADING_SYMBOL", "")),
                 "SEM_SMST_SECURITY_ID": str(int(getattr(r, "SEM_SMST_SECURITY_ID", 0))),
-                "SEM_EXM_EXCH_ID": seg,
+                "SEM_EXM_EXCH_ID": exch_id,  # raw exchange id (NSE/BSE/MCX), as the name promises
+                "SEM_SEGMENT": segment,  # raw segment code (E/D/I/M/C)
+                "WIRE_SEGMENT": seg,  # explicit Dhan wire segment (NSE_EQ/BSE_EQ/IDX_I/...)
                 "SEM_INSTRUMENT_NAME": str(getattr(r, "SEM_INSTRUMENT_NAME", "")),
                 "SEM_LOT_UNITS": _safe_float(r, "SEM_LOT_UNITS", 1),
                 "SEM_TICK_SIZE": _safe_float(r, "SEM_TICK_SIZE", 0.05),

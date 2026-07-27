@@ -5,6 +5,7 @@ from decimal import Decimal
 from typing import Any, Generic, TypeVar
 
 from scalpr.brokers.dhan.dtos import DhanOrderRequest, DhanOrderResponse
+from scalpr.brokers.dhan.segments import to_dhan_wire
 from scalpr.domain.fill import Fill
 from scalpr.domain.instrument import Exchange
 from scalpr.domain.order import Order, OrderType
@@ -59,14 +60,10 @@ class DhanMapper:
     @staticmethod
     def order_to_dhan_request(order: Order, client_id: str, security_id: str) -> Result[DhanOrderRequest, str]:
         try:
-            # Exchange segment mapping
-            if order.exchange == Exchange.NSE:
-                segment = "NSE_EQ"
-            elif order.exchange == Exchange.NSE_FNO:
-                segment = "NSE_FNO"
-            elif order.exchange == Exchange.MCX:
-                segment = "MCX_COMM"  # Fixed: was "MCXCOMM" (missing underscore)
-            else:
+            # Single source of segment truth (segments.py)
+            try:
+                segment = to_dhan_wire(order.exchange)
+            except ValueError:
                 return Result.failure(f"Unsupported exchange: {order.exchange}")
 
             return Result.success(

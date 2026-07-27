@@ -284,10 +284,114 @@ class TestClientBasic:
         assert "disconnected" in repr(DhanWebSocketClient(access_token="t"))
 
 
-# ── TODO: Add new SDK-based tests ─────────────────────────────────────────────
-# - Test security_id resolution via resolver
-# - Test SDK callback wiring (on_connect, on_message, on_close, on_error)
-# - Test subscription mode conversion (ltp→15, quote→17, full→21)
-# - Test exchange segment conversion (NSE→1, MCX→3, NFO→2)
-# - Integration tests with mocked MarketFeed
+# ── SDK wire contract tests (payloads captured live 2026-07-27) ──────────────
+
+
+def _make_resolver(security_id="2885", wire_segment="NSE_EQ"):
+    resolver = MagicMock()
+    inst = MagicMock()
+    inst.security_id = security_id
+    resolver.resolve.return_value = inst
+    resolver.wire_segment_of.return_value = wire_segment
+    return resolver
+
+
+# Real Full Data payload captured live from dhanhq SDK, 2026-07-27.
+_FULL_DATA = {
+    "type": "Full Data", "exchange_segment": 1, "security_id": 2885,
+    "LTP": "1279.90", "LTQ": 1, "LTT": "12:23:58", "avg_price": "1282.85",
+    "volume": 3143534, "total_sell_quantity": 905385, "total_buy_quantity": 618056,
+    "OI": 0, "oi_day_high": 0, "oi_day_low": 0,
+    "open": "1288.20", "close": "1278.00", "high": "1288.70", "low": "1278.50",
+    "depth": [
+        {"bid_quantity": 80, "ask_quantity": 2378, "bid_orders": 2, "ask_orders": 15,
+         "bid_price": "1279.70", "ask_price": "1279.90"},
+        {"bid_quantity": 150, "ask_quantity": 1013, "bid_orders": 3, "ask_orders": 9,
+         "bid_price": "1279.50", "ask_price": "1280.00"},
+    ],
+}
+
+# Real Quote Data shape (SDK process_quote — no depth, no symbol key).
+_QUOTE_DATA = {
+    "type": "Quote Data", "exchange_segment": 1, "security_id": 2885,
+    "LTP": "1279.90", "LTQ": 44, "LTT": "12:23:58", "avg_price": "1282.85",
+    "volume": 3143578, "total_sell_quantity": 905346, "total_buy_quantity": 618120,
+    "open": "1288.20", "close": "1278.00", "high": "1288.70", "low": "1278.50",
+}
+
+
+class TestSubscribeSdkTupleFormat:
+    """SDK v2 JSON packet requires string SecurityId and the instrument's
+    own wire segment (an index lives on IDX_I=0, not the exchange default)."""
+
+    @pytest.mark.asyncio
+    async def test_security_id_is_string_in_sdk_tuple(self):
+        client = DhanWebSocketClient(access_token="t", resolver=_make_resolver())
+        await client.subscribe([("RELIANCE", "NSE")], mode="full")
+        assert client._instruments == [(1, "2885", 21)]
+
+    @pytest.mark.asyncio
+    async def test_segment_comes_from_resolver_wire_segment(self):
+        resolver = _make_resolver(security_id="13", wire_segment="IDX_I")
+        client = DhanWebSocketClient(access_token="t", resolver=resolver)
+        await client.subscribe([("NIFTY", "NSE")], mode="quote")
+        assert client._instruments == [(0, "13", 17)]
+
+    @pytest.mark.asyncio
+    async def test_index_full_mode_downgrades_to_quote(self):
+        """Dhan serves no Full packets for indices (no depth) — full mode
+        on IDX_I silently streams nothing, so downgrade to quote."""
+        resolver = _make_resolver(security_id="13", wire_segment="IDX_I")
+        client = DhanWebSocketClient(access_token="t", resolver=resolver)
+        await client.subscribe([("NIFTY", "NSE")], mode="full")
+        assert client._instruments == [(0, "13", 17)]
+
+    @pytest.mark.asyncio
+    async def test_subscribe_records_sid_to_symbol_mapping(self):
+        client = DhanWebSocketClient(access_token="t", resolver=_make_resolver())
+        await client.subscribe([("RELIANCE", "NSE")])
+        assert client._symbol_by_sid["2885"] == "RELIANCE"
+
+
+class TestParseSdkData:
+    """SDK payloads carry security_id/LTP/volume/depth — never symbol,
+    last_price or best_bid_price. Parse must use the real keys."""
+
+    def _client(self):
+        client = DhanWebSocketClient(access_token="t")
+        client._symbol_by_sid["2885"] = "RELIANCE"
+        return client
+
+    def test_parses_full_data_with_depth_bid_ask(self):
+        tick = self._client()._parse_sdk_data(dict(_FULL_DATA))
+        assert tick is not None
+        assert tick.symbol == "RELIANCE"
+        assert tick.ltp == Decimal("1279.90")
+        assert tick.bid == Decimal("1279.70")  # depth[0].bid_price
+        assert tick.ask == Decimal("1279.90")  # depth[0].ask_price
+        assert tick.cumulative_volume == 3143534
+
+    def test_parses_quote_data_without_depth(self):
+        tick = self._client()._parse_sdk_data(dict(_QUOTE_DATA))
+        assert tick is not None
+        assert tick.ltp == Decimal("1279.90")
+        assert tick.bid == Decimal("0")
+        assert tick.ask == Decimal("0")
+
+    def test_unknown_sid_falls_back_to_sid_string(self):
+        client = DhanWebSocketClient(access_token="t")
+        tick = client._parse_sdk_data(dict(_QUOTE_DATA))
+        assert tick is not None
+        assert tick.symbol == "2885"
+
+    def test_missing_security_id_returns_none(self):
+        assert self._client()._parse_sdk_data({"type": "Quote Data"}) is None
+
+    def test_volume_delta_across_ticks(self):
+        client = self._client()
+        first = client._parse_sdk_data(dict(_FULL_DATA))
+        second = client._parse_sdk_data({**_FULL_DATA, "volume": 3143634})
+        assert first.delta_volume == 0  # baseline
+        assert second.delta_volume == 100
+        assert second.cumulative_volume == 3143634
 

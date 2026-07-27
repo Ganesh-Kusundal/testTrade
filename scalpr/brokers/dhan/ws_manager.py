@@ -320,6 +320,15 @@ class DhanWebSocketManager(IMarketDataFeed):
                 logger.error("Failed to subscribe: %s", exc)
                 self._metrics.last_error = str(exc)
 
+    async def subscribe_pairs(self, pairs: list[tuple[str, str]]) -> None:
+        """Subscribe to (symbol, exchange) pairs, preserving the exchange.
+
+        Unlike the IMarketDataFeed ``subscribe(list[str])`` (which hardcodes
+        NSE), this is the exchange-aware entry point for callers that know
+        the segment.
+        """
+        await self._subscribe_async(pairs)
+
     async def _unsubscribe_async(self, symbols: set[tuple[str, str]]) -> None:
         """Remove from subscription list and send unsubscribe to client."""
         async with self._lock:

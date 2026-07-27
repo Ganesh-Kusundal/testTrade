@@ -17,7 +17,7 @@ from scalpr.brokers.dhan.market_data import MarketDataAdapter
 from scalpr.brokers.dhan.orders import OrdersAdapter
 from scalpr.brokers.dhan.portfolio import PortfolioAdapter
 from scalpr.brokers.dhan.historical import HistoricalDataAdapter
-from scalpr.brokers.dhan.exceptions import OrderError, InstrumentNotFoundError
+from scalpr.brokers.dhan.exceptions import BrokerError, OrderError, InstrumentNotFoundError
 from scalpr.brokers.dhan.dtos import DhanOrderResponse
 from scalpr.domain.order import Order, OrderSide, OrderType, OrderState
 from scalpr.domain.fill import Fill
@@ -50,6 +50,8 @@ def mock_resolver():
     inst.lot_size = 1
     inst.tick_size = Decimal("0.05")
     resolver.resolve.return_value = inst
+    resolver.wire_segment_of.return_value = "NSE_EQ"
+    resolver.instrument_kind_of.return_value = "EQUITY"
     return resolver
 
 
@@ -225,8 +227,8 @@ class TestMarketDataAdapter:
         mock_http_client.post.return_value = {
             "data": {
                 "NSE_EQ": {
-                    1: {"last_price": 2510},
-                    2: {"last_price": 3600},
+                    "1": {"last_price": 2510},
+                    "2": {"last_price": 3600},
                 }
             }
         }
@@ -258,8 +260,8 @@ class TestMarketDataAdapter:
         mock_http_client.post.return_value = {
             "data": {
                 "NSE_EQ": {
-                    1: {"last_price": 2510, "volume": 1000, "ohlc": {"open": 2500, "high": 2520, "low": 2490, "close": 2500}},
-                    2: {"last_price": 3600, "volume": 2000, "ohlc": {"open": 3590, "high": 3610, "low": 3580, "close": 3590}},
+                    "1": {"last_price": 2510, "volume": 1000, "ohlc": {"open": 2500, "high": 2520, "low": 2490, "close": 2500}},
+                    "2": {"last_price": 3600, "volume": 2000, "ohlc": {"open": 3590, "high": 3610, "low": 3580, "close": 3590}},
                 }
             }
         }
@@ -517,7 +519,7 @@ class TestOrdersAdapter:
         mock_http_client.get.return_value = [
             {
                 "orderId": "dhan_1",
-                "tradingsymbol": "RELIANCE",
+                "tradingSymbol": "RELIANCE",
                 "exchangeSegment": "NSE_EQ",
                 "transactionType": "BUY",
                 "orderType": "LIMIT",
@@ -545,7 +547,7 @@ class TestOrdersAdapter:
     def test_should_handle_wrapped_orderbook_response(self, orders_adapter, mock_http_client):
         mock_http_client.get.return_value = {
             "data": [
-                {"orderId": "dhan_1", "tradingsymbol": "TCS", "quantity": 5, "price": 3600, "orderStatus": "FILLED"}
+                {"orderId": "dhan_1", "tradingSymbol": "TCS", "quantity": 5, "price": 3600, "orderStatus": "FILLED"}
             ]
         }
         orderbook = orders_adapter.get_orderbook()
@@ -564,7 +566,7 @@ class TestOrdersAdapter:
             {
                 "tradeId": "trade_1",
                 "orderId": "dhan_1",
-                "tradingsymbol": "RELIANCE",
+                "tradingSymbol": "RELIANCE",
                 "transactionType": "BUY",
                 "quantity": 10,
                 "price": 2500.0,
@@ -643,10 +645,11 @@ class TestPortfolioAdapter:
         assert len(positions) == 1
         assert positions[0].symbol == "RELIANCE"
 
-    def test_should_return_empty_list_on_api_error(self, portfolio_adapter, mock_http_client):
+    def test_should_raise_broker_error_on_api_error(self, portfolio_adapter, mock_http_client):
+        # C3 fail-closed: an outage must never fabricate an empty book
         mock_http_client.get.side_effect = Exception("API down")
-        positions = portfolio_adapter.get_positions()
-        assert positions == []
+        with pytest.raises(BrokerError, match="positions"):
+            portfolio_adapter.get_positions()
 
     def test_should_handle_wrapped_position_response(self, portfolio_adapter, mock_http_client):
         mock_http_client.get.return_value = {
@@ -679,10 +682,10 @@ class TestPortfolioAdapter:
         assert holdings[0].state == PositionState.OPEN
         assert holdings[0].realised_pnl == Decimal("0")
 
-    def test_should_return_empty_list_on_holdings_error(self, portfolio_adapter, mock_http_client):
+    def test_should_raise_broker_error_on_holdings_error(self, portfolio_adapter, mock_http_client):
         mock_http_client.get.side_effect = Exception("API down")
-        holdings = portfolio_adapter.get_holdings()
-        assert holdings == []
+        with pytest.raises(BrokerError, match="holdings"):
+            portfolio_adapter.get_holdings()
 
     # --- fund_limits ---
 
@@ -695,16 +698,18 @@ class TestPortfolioAdapter:
             "realtime": True,
         }
         limits = portfolio_adapter.get_fund_limits()
+        # Dhan v2 endpoint is singular /fundlimit — plural 404s live (found 2026-07-27)
+        mock_http_client.get.assert_called_once_with("/fundlimit")
         assert limits["available_margin"] == Decimal("50000")
         assert limits["used_margin"] == Decimal("10000")
         assert limits["total_balance"] == Decimal("60000")
         assert limits["collateral"] == Decimal("5000")
         assert limits["realtime"] is True
 
-    def test_should_return_empty_dict_on_fund_limits_error(self, portfolio_adapter, mock_http_client):
+    def test_should_raise_broker_error_on_fund_limits_error(self, portfolio_adapter, mock_http_client):
         mock_http_client.get.side_effect = Exception("API down")
-        limits = portfolio_adapter.get_fund_limits()
-        assert limits == {}
+        with pytest.raises(BrokerError, match="fund limits"):
+            portfolio_adapter.get_fund_limits()
 
     def test_should_handle_alternate_field_names_in_fund_limits(self, portfolio_adapter, mock_http_client):
         mock_http_client.get.return_value = {
@@ -838,20 +843,16 @@ class TestHistoricalDataAdapter:
     timeframe validation, date handling, response parsing, and
     lookback estimation."""
 
-    # --- get_ohlcv ---
+    # --- get_ohlcv (wire contract verified live against Dhan v2, 2026-07-27) ---
 
-    def test_should_fetch_ohlcv_and_return_parsed_candles(self, historical_adapter, mock_http_client):
-        mock_http_client.get.return_value = {
-            "data": [
-                {
-                    "timestamp": "2024-01-15T09:15:00+05:30",
-                    "open": 2456.50,
-                    "high": 2460.00,
-                    "low": 2455.00,
-                    "close": 2458.75,
-                    "volume": 12345,
-                }
-            ]
+    def test_should_fetch_ohlcv_and_parse_column_array_response(self, historical_adapter, mock_http_client):
+        mock_http_client.post.return_value = {
+            "open": [2456.50, 2458.75],
+            "high": [2460.00, 2462.00],
+            "low": [2455.00, 2457.00],
+            "close": [2458.75, 2460.50],
+            "volume": [12345, 6789],
+            "timestamp": [1705292700.0, 1705293000.0],
         }
         candles = historical_adapter.get_ohlcv(
             symbol="RELIANCE",
@@ -860,15 +861,16 @@ class TestHistoricalDataAdapter:
             from_date=date(2024, 1, 15),
             to_date=date(2024, 1, 15),
         )
-        assert len(candles) == 1
-        assert candles[0]["open"] == Decimal("2456.50")
-        assert candles[0]["high"] == Decimal("2460.00")
-        assert candles[0]["low"] == Decimal("2455.00")
+        assert len(candles) == 2
+        assert candles[0]["open"] == Decimal("2456.5")
+        assert candles[0]["high"] == Decimal("2460.0")
+        assert candles[0]["low"] == Decimal("2455.0")
         assert candles[0]["close"] == Decimal("2458.75")
         assert candles[0]["volume"] == 12345
+        assert candles[0]["timestamp"] == datetime.fromtimestamp(1705292700, tz=timezone.utc)
 
-    def test_should_use_intraday_endpoint_for_sub_daily_timeframe(self, historical_adapter, mock_http_client):
-        mock_http_client.get.return_value = {"data": []}
+    def test_should_post_intraday_with_interval_and_instrument(self, historical_adapter, mock_http_client):
+        mock_http_client.post.return_value = {}
         historical_adapter.get_ohlcv(
             symbol="RELIANCE",
             exchange="NSE",
@@ -876,11 +878,19 @@ class TestHistoricalDataAdapter:
             from_date=date(2024, 1, 15),
             to_date=date(2024, 1, 15),
         )
-        args, _ = mock_http_client.get.call_args
-        assert "/charts/intraday" in args[0]
+        args, kwargs = mock_http_client.post.call_args
+        assert args[0] == "/charts/intraday"
+        body = kwargs["json"]
+        assert body["interval"] == "15"
+        assert body["instrument"] == "EQUITY"
+        assert body["securityId"] == 1
+        assert body["exchangeSegment"] == "NSE_EQ"
+        assert body["fromDate"] == "2024-01-15"
+        assert body["toDate"] == "2024-01-15"
+        assert "timeFrame" not in body
 
-    def test_should_use_historical_endpoint_for_daily_timeframe(self, historical_adapter, mock_http_client):
-        mock_http_client.get.return_value = {"data": []}
+    def test_should_post_daily_historical_with_expiry_code(self, historical_adapter, mock_http_client):
+        mock_http_client.post.return_value = {}
         historical_adapter.get_ohlcv(
             symbol="RELIANCE",
             exchange="NSE",
@@ -888,56 +898,37 @@ class TestHistoricalDataAdapter:
             from_date=date(2024, 1, 1),
             to_date=date(2024, 1, 31),
         )
-        args, _ = mock_http_client.get.call_args
-        assert "/charts/historical" in args[0]
+        args, kwargs = mock_http_client.post.call_args
+        assert args[0] == "/charts/historical"
+        body = kwargs["json"]
+        assert body["expiryCode"] == 0
+        assert body["instrument"] == "EQUITY"
+        assert "interval" not in body
 
-    def test_should_use_historical_endpoint_for_weekly_timeframe(self, historical_adapter, mock_http_client):
-        mock_http_client.get.return_value = {"data": []}
+    def test_should_use_resolver_instrument_kind_in_body(self, historical_adapter, mock_http_client, mock_resolver):
+        mock_resolver.instrument_kind_of.return_value = "INDEX"
+        mock_http_client.post.return_value = {}
         historical_adapter.get_ohlcv(
-            symbol="RELIANCE",
+            symbol="NIFTY",
             exchange="NSE",
-            timeframe="1W",
+            timeframe="1D",
             from_date=date(2024, 1, 1),
-            to_date=date(2024, 3, 31),
+            to_date=date(2024, 1, 31),
         )
-        args, _ = mock_http_client.get.call_args
-        assert "/charts/historical" in args[0]
-
-    def test_should_use_historical_endpoint_for_monthly_timeframe(self, historical_adapter, mock_http_client):
-        mock_http_client.get.return_value = {"data": []}
-        historical_adapter.get_ohlcv(
-            symbol="RELIANCE",
-            exchange="NSE",
-            timeframe="1M",
-            from_date=date(2024, 1, 1),
-            to_date=date(2024, 12, 31),
-        )
-        args, _ = mock_http_client.get.call_args
-        assert "/charts/historical" in args[0]
+        _, kwargs = mock_http_client.post.call_args
+        assert kwargs["json"]["instrument"] == "INDEX"
 
     # --- timeframe validation ---
 
     def test_should_validate_supported_timeframe(self, historical_adapter):
-        assert historical_adapter.validate_timeframe("1m") is True
-        assert historical_adapter.validate_timeframe("5m") is True
-        assert historical_adapter.validate_timeframe("15m") is True
-        assert historical_adapter.validate_timeframe("1H") is True
-        assert historical_adapter.validate_timeframe("1D") is True
-        assert historical_adapter.validate_timeframe("1W") is True
-        assert historical_adapter.validate_timeframe("1M") is True
+        # Only intervals Dhan v2 actually serves: 1/3/5/15/25/60 minute + daily
+        for tf in ["1m", "3m", "5m", "15m", "25m", "60m", "1H", "1D"]:
+            assert historical_adapter.validate_timeframe(tf) is True, f"{tf} should be valid"
 
     def test_should_reject_unsupported_timeframe(self, historical_adapter):
-        assert historical_adapter.validate_timeframe("7m") is False
-        assert historical_adapter.validate_timeframe("8H") is False
-        assert historical_adapter.validate_timeframe("abc") is False
-
-    def test_should_accept_all_valid_minute_timeframes(self, historical_adapter):
-        for tf in ["1m", "2m", "3m", "5m", "10m", "15m", "30m", "60m"]:
-            assert historical_adapter.validate_timeframe(tf) is True, f"{tf} should be valid"
-
-    def test_should_accept_all_valid_hour_timeframes(self, historical_adapter):
-        for tf in ["1H", "2H", "4H"]:
-            assert historical_adapter.validate_timeframe(tf) is True, f"{tf} should be valid"
+        # Dhan v2 has no 2/10/30/120/240-minute intervals and no weekly/monthly endpoint
+        for tf in ["2m", "7m", "10m", "30m", "2H", "4H", "8H", "1W", "1M", "abc"]:
+            assert historical_adapter.validate_timeframe(tf) is False, f"{tf} should be invalid"
 
     def test_should_raise_value_error_for_invalid_timeframe_in_get_ohlcv(self, historical_adapter):
         with pytest.raises(ValueError, match="Invalid timeframe"):
@@ -1028,96 +1019,43 @@ class TestHistoricalDataAdapter:
         with pytest.raises(ValueError, match="count must be positive"):
             historical_adapter.get_ohlcv_latest("RELIANCE", "NSE", "5m", count=-5)
 
-    # --- _parse_candles ---
+    # --- _parse_candles (Dhan v2 column-array format) ---
 
     def test_should_return_empty_list_for_empty_response(self, historical_adapter):
-        candles = historical_adapter._parse_candles({"data": []})
-        assert candles == []
+        assert historical_adapter._parse_candles({"open": [], "timestamp": []}) == []
 
-    def test_should_return_empty_list_for_missing_data_key(self, historical_adapter):
-        candles = historical_adapter._parse_candles({})
-        assert candles == []
+    def test_should_return_empty_list_for_missing_data_keys(self, historical_adapter):
+        assert historical_adapter._parse_candles({}) == []
 
-    def test_should_skip_malformed_candles_and_continue(self, historical_adapter):
+    def test_should_parse_columns_with_decimal_types(self, historical_adapter):
         response = {
-            "data": [
-                {"timestamp": "2024-01-15T09:15:00+05:30", "open": 2500, "high": 2510, "low": 2495, "close": 2505, "volume": 100},
-                {"timestamp": "", "open": 0},
-                {"timestamp": "2024-01-15T09:20:00+05:30", "open": 2505, "high": 2515, "low": 2500, "close": 2510, "volume": 120},
-            ]
+            "open": [2500.0],
+            "high": [2510.0],
+            "low": [2495.0],
+            "close": [2505.0],
+            "volume": [100.0],
+            "timestamp": [1705292700.0],
+        }
+        candles = historical_adapter._parse_candles(response)
+        assert len(candles) == 1
+        assert isinstance(candles[0]["open"], Decimal)
+        assert isinstance(candles[0]["high"], Decimal)
+        assert isinstance(candles[0]["low"], Decimal)
+        assert isinstance(candles[0]["close"], Decimal)
+        assert isinstance(candles[0]["volume"], int)
+        assert candles[0]["timestamp"].tzinfo == timezone.utc
+
+    def test_should_truncate_to_shortest_column_on_length_mismatch(self, historical_adapter):
+        response = {
+            "open": [2500.0, 2505.0, 2510.0],
+            "high": [2510.0, 2515.0],
+            "low": [2495.0, 2500.0],
+            "close": [2505.0, 2510.0],
+            "volume": [100.0, 120.0],
+            "timestamp": [1705292700.0, 1705293000.0],
         }
         candles = historical_adapter._parse_candles(response)
         assert len(candles) == 2
-
-    # --- _parse_single_candle ---
-
-    def test_should_parse_single_candle_with_decimal_types(self, historical_adapter):
-        raw = {
-            "timestamp": "2024-01-15T09:15:00+05:30",
-            "open": 2456.50,
-            "high": 2460.00,
-            "low": 2455.00,
-            "close": 2458.75,
-            "volume": 12345,
-        }
-        candle = historical_adapter._parse_single_candle(raw)
-        assert isinstance(candle["open"], Decimal)
-        assert isinstance(candle["high"], Decimal)
-        assert isinstance(candle["low"], Decimal)
-        assert isinstance(candle["close"], Decimal)
-        assert isinstance(candle["volume"], int)
-
-    # --- _parse_timestamp ---
-
-    def test_should_parse_iso_timestamp_with_timezone_to_utc(self, historical_adapter):
-        dt = historical_adapter._parse_timestamp("2024-01-15T09:15:00+05:30")
-        assert dt.tzinfo is not None
-        assert dt.hour == 3
-        assert dt.minute == 45
-
-    def test_should_parse_iso_timestamp_without_timezone_as_ist(self, historical_adapter):
-        dt = historical_adapter._parse_timestamp("2024-01-15T09:15:00")
-        assert dt.tzinfo is not None
-        assert dt.hour == 3
-        assert dt.minute == 45
-
-    def test_should_parse_unix_timestamp(self, historical_adapter):
-        dt = historical_adapter._parse_timestamp("1705292700")
-        assert dt.tzinfo == timezone.utc
-        assert dt.year == 2024
-        assert dt.month == 1
-        assert dt.day == 15
-
-    def test_should_raise_error_for_empty_timestamp(self, historical_adapter):
-        with pytest.raises(ValueError, match="Empty timestamp"):
-            historical_adapter._parse_timestamp("")
-
-    def test_should_raise_error_for_unparseable_timestamp(self, historical_adapter):
-        with pytest.raises(ValueError, match="Cannot parse timestamp"):
-            historical_adapter._parse_timestamp("not-a-date")
-
-    # --- _map_timeframe ---
-
-    def test_should_map_minute_timeframes_correctly(self, historical_adapter):
-        assert historical_adapter._map_timeframe("1m") == "1"
-        assert historical_adapter._map_timeframe("5m") == "5"
-        assert historical_adapter._map_timeframe("15m") == "15"
-        assert historical_adapter._map_timeframe("30m") == "30"
-        assert historical_adapter._map_timeframe("60m") == "60"
-
-    def test_should_map_hour_timeframes_correctly(self, historical_adapter):
-        assert historical_adapter._map_timeframe("1H") == "60"
-        assert historical_adapter._map_timeframe("2H") == "120"
-        assert historical_adapter._map_timeframe("4H") == "240"
-
-    def test_should_map_daily_weekly_monthly_timeframes_correctly(self, historical_adapter):
-        assert historical_adapter._map_timeframe("1D") == "1D"
-        assert historical_adapter._map_timeframe("1W") == "1W"
-        assert historical_adapter._map_timeframe("1M") == "1M"
-
-    def test_should_raise_error_for_unmappable_timeframe(self, historical_adapter):
-        with pytest.raises(ValueError, match="No Dhan mapping"):
-            historical_adapter._map_timeframe("7m")
 
     # --- _estimate_lookback_days ---
 
@@ -1143,15 +1081,12 @@ class TestHistoricalDataAdapter:
     def test_should_convert_minute_timeframes_to_minutes(self, historical_adapter):
         assert historical_adapter._timeframe_to_minutes("1m") == 1
         assert historical_adapter._timeframe_to_minutes("15m") == 15
+        assert historical_adapter._timeframe_to_minutes("25m") == 25
         assert historical_adapter._timeframe_to_minutes("60m") == 60
         assert historical_adapter._timeframe_to_minutes("1H") == 60
-        assert historical_adapter._timeframe_to_minutes("2H") == 120
-        assert historical_adapter._timeframe_to_minutes("4H") == 240
 
     def test_should_return_none_for_daily_timeframe(self, historical_adapter):
         assert historical_adapter._timeframe_to_minutes("1D") is None
-        assert historical_adapter._timeframe_to_minutes("1W") is None
-        assert historical_adapter._timeframe_to_minutes("1M") is None
 
     # --- resolve segment integration ---
 
@@ -1163,12 +1098,3 @@ class TestHistoricalDataAdapter:
         mock_resolver.resolve.side_effect = InstrumentNotFoundError("not found")
         with pytest.raises(InstrumentNotFoundError):
             historical_adapter._resolve_segment("UNKNOWN", "NSE")
-
-    # --- URL encoding ---
-
-    def test_should_encode_params_correctly(self, historical_adapter):
-        params = {"securityId": "RELIANCE", "exchangeSegment": "NSE_EQ", "interval": "5"}
-        encoded = historical_adapter._encode_params(params)
-        assert "securityId=RELIANCE" in encoded
-        assert "exchangeSegment=NSE_EQ" in encoded
-        assert "interval=5" in encoded

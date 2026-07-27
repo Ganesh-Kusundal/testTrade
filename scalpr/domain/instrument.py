@@ -8,6 +8,7 @@ from enum import Enum
 
 class Exchange(str, Enum):
     NSE = "NSE"
+    BSE = "BSE"
     MCX = "MCX"
     NSE_FNO = "NSE_FNO"  # F&O segment
 
@@ -30,7 +31,7 @@ class Instrument:
     symbol: str
     exchange: Exchange
     segment: Segment
-    security_id: str  # Dhan numeric security ID (e.g., "2885" for RELIANCE)
+    security_id: str  # broker-assigned instrument id; populated only by broker resolvers, opaque outside brokers
     lot_size: int
     tick_size: Decimal
     option_type: OptionType | None = None

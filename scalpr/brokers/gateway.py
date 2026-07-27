@@ -7,8 +7,10 @@ loading, and simplified method signatures.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
+import threading
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any, Callable
@@ -17,7 +19,7 @@ import pandas as pd
 from dotenv import load_dotenv
 
 from scalpr.brokers.broker_port import IBrokerGateway
-from scalpr.brokers.contracts import Funds, Holding, MarketDepth, Quote, Trade
+from scalpr.brokers.contracts import DepthLevel, Funds, Holding, MarketDepth, Quote, Trade
 from scalpr.brokers.registry import BrokerRegistry
 from scalpr.domain.tick import Tick
 
@@ -63,6 +65,8 @@ class Gateway:
             broker, self._config
         )
         self._ws_manager: Any = None
+        self._ws_loop: asyncio.AbstractEventLoop | None = None
+        self._ws_thread: threading.Thread | None = None
         self._stream_callbacks: list[Callable] = []
 
         if auto_connect:
@@ -79,18 +83,23 @@ class Gateway:
         load_dotenv()
 
         if self._broker_name == "dhan":
-            client_id = os.environ.get("DHAN_CLIENT_ID", "")
-            access_token = os.environ.get("DHAN_ACCESS_TOKEN", "")
+            from scalpr.brokers.dhan.auth import ensure_fresh_token
 
-            if not client_id or not access_token:
+            client_id = os.environ.get("DHAN_CLIENT_ID", "")
+            if not client_id:
                 raise ValueError(
-                    "DHAN_CLIENT_ID and DHAN_ACCESS_TOKEN must be set in .env "
-                    "or environment variables"
+                    "DHAN_CLIENT_ID must be set in .env or environment variables"
                 )
+
+            # Auto-refreshes via TOTP if the cached token is expired
+            access_token = ensure_fresh_token()
 
             return {
                 "client_id": client_id,
                 "access_token": access_token,
+                # W7b: on a broker 401 the http client calls this to force
+                # TOTP regeneration (the cached token looks fresh locally)
+                "token_refresh_fn": lambda: ensure_fresh_token(force=True),
             }
 
         raise ValueError(
@@ -152,7 +161,6 @@ class Gateway:
             MarketDepth dataclass with bid/ask levels
         """
         # Delegate to connection's market_data adapter
-        # This assumes DhanGateway has connection.market_data.get_depth()
         if hasattr(self._gateway, "connection") and hasattr(
             self._gateway.connection, "market_data"
         ):
@@ -160,11 +168,23 @@ class Gateway:
                 symbol, exchange
             )
 
-            bid_levels = []
-            ask_levels = []
+            bid_levels = [
+                DepthLevel(
+                    price=level["price"],
+                    quantity=level["quantity"],
+                    orders=level["orders"],
+                )
+                for level in raw_depth.get("bids", [])
+            ]
+            ask_levels = [
+                DepthLevel(
+                    price=level["price"],
+                    quantity=level["quantity"],
+                    orders=level["orders"],
+                )
+                for level in raw_depth.get("asks", [])
+            ]
 
-            # Parse depth data (implementation depends on broker adapter)
-            # This is a placeholder - actual parsing will depend on response format
             return MarketDepth(
                 symbol=symbol,
                 exchange=exchange,
@@ -330,7 +350,7 @@ class Gateway:
                     trade_id=fill.fill_id,
                     order_id=fill.order_id,
                     symbol=fill.symbol,
-                    exchange=str(fill.side),
+                    exchange=fill.exchange,
                     side=fill.side,
                     quantity=fill.quantity,
                     price=fill.price,
@@ -367,17 +387,31 @@ class Gateway:
         if self._ws_manager is None:
             self._init_websocket_manager()
 
-        # Subscribe to symbols
-        for symbol in symbols:
-            self._ws_manager.subscribe(symbol, exchange)
+        # Subscribe on the manager's event loop, preserving the exchange
+        asyncio.run_coroutine_threadsafe(
+            self._ws_manager.subscribe_pairs([(s, exchange) for s in symbols]),
+            self._ws_loop,
+        ).result(timeout=15)
 
         logger.info(f"stream_subscribed: {symbols}")
 
     def stop_stream(self) -> None:
-        """Stop all streaming subscriptions."""
-        if self._ws_manager:
-            self._ws_manager.disconnect()
+        """Stop all streaming subscriptions and the background loop."""
+        if not self._ws_manager:
+            return
+        try:
+            asyncio.run_coroutine_threadsafe(
+                self._ws_manager.stop(), self._ws_loop
+            ).result(timeout=15)
+        except Exception as exc:
+            logger.error(f"ws_manager_stop_failed: {exc}")
+        finally:
+            self._ws_loop.call_soon_threadsafe(self._ws_loop.stop)
+            self._ws_thread.join(timeout=5)
+            self._ws_loop.close()
             self._ws_manager = None
+            self._ws_loop = None
+            self._ws_thread = None
             self._stream_callbacks.clear()
             logger.info("stream_stopped")
 
@@ -389,30 +423,55 @@ class Gateway:
         """
         return self._ws_manager is not None
 
-    def _init_websocket_manager(self) -> None:
-        """Initialize WebSocket manager for streaming."""
-        try:
-            # Try to import and initialize DhanWebSocketManager
-            from scalpr.brokers.dhan.ws_manager import DhanWebSocketManager
+    def _dispatch_tick(self, tick: Tick) -> None:
+        """Fan a tick out to every registered stream callback."""
+        for cb in list(self._stream_callbacks):
+            try:
+                cb(tick)
+            except Exception:
+                logger.exception("stream_callback_error")
 
-            # Access the underlying connection to get HTTP client config
-            if hasattr(self._gateway, "connection"):
-                connection = self._gateway.connection
-                # WebSocket manager needs client_id and access_token
-                self._ws_manager = DhanWebSocketManager(
-                    client_id=self._config.get("client_id", ""),
-                    access_token=self._config.get("access_token", ""),
-                )
-                self._ws_manager.connect()
-                logger.info("websocket_manager_initialized")
-            else:
-                raise ValueError(
-                    "Gateway does not expose connection for WebSocket initialization"
-                )
+    def _init_websocket_manager(self) -> None:
+        """Initialize WebSocket manager on a dedicated background event loop.
+
+        Gateway is used from sync CLI/scripts, so it owns a daemon-thread
+        loop that runs the async DhanWebSocketManager machinery.
+        """
+        try:
+            from scalpr.brokers.dhan.ws_manager import DhanWebSocketManager
         except ImportError:
             raise NotImplementedError(
                 f"Streaming not available for {self._broker_name}"
             )
+
+        if not hasattr(self._gateway, "connection"):
+            raise ValueError(
+                "Gateway does not expose connection for WebSocket initialization"
+            )
+
+        # Resolver is mandatory: without it ws_client only accepts
+        # digit-only symbols and silently skips named ones.
+        resolver = self._gateway.connection.resolver
+
+        self._ws_loop = asyncio.new_event_loop()
+        self._ws_thread = threading.Thread(
+            target=self._ws_loop.run_forever, name="gateway-ws-loop", daemon=True
+        )
+        self._ws_thread.start()
+
+        self._ws_manager = DhanWebSocketManager(
+            access_token=self._config.get("access_token", ""),
+            client_id=self._config.get("client_id", ""),
+            resolver=resolver,
+        )
+        # Registered before start(): no loop running in this thread, so
+        # add_subscriber takes its synchronous append path.
+        self._ws_manager.add_subscriber(self._dispatch_tick)
+
+        asyncio.run_coroutine_threadsafe(
+            self._ws_manager.start(), self._ws_loop
+        ).result(timeout=15)
+        logger.info("websocket_manager_initialized")
 
     # ------------------------------------------------------------------
     # Lifecycle

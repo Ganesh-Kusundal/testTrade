@@ -17,6 +17,7 @@ class Fill:
     quantity: int
     price: Decimal
     timestamp: datetime | None = None
+    exchange: str = ""  # "" = unknown (broker response lacked segment)
 
     def __post_init__(self) -> None:
         if not isinstance(self.price, Decimal):
@@ -35,6 +36,7 @@ class PartialFill:
     quantity: int
     price: Decimal
     timestamp: datetime | None = None
+    exchange: str = ""  # "" = unknown (broker response lacked segment)
 
     def __post_init__(self) -> None:
         if not isinstance(self.price, Decimal):

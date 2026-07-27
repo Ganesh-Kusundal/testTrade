@@ -3,7 +3,14 @@ config/__init__.py
 config/endpoints.py
 config/indices.py
 config/secrets_manager.py
+scalpr/__init__.py
+scalpr/api/bootstrap.py
 scalpr/api/main.py
+scalpr/api/routers/__init__.py
+scalpr/api/routers/market_data.py
+scalpr/api/routers/orders.py
+scalpr/api/routers/portfolio.py
+scalpr/api/routers/replay.py
 scalpr/brokers/__init__.py
 scalpr/brokers/broker_port.py
 scalpr/brokers/capabilities.py
@@ -36,6 +43,7 @@ scalpr/cli/commands/holdings.py
 scalpr/cli/commands/orders.py
 scalpr/cli/commands/positions.py
 scalpr/cli/commands/quote.py
+scalpr/cli/commands/stream.py
 scalpr/cli/commands/trades.py
 scalpr/domain/__init__.py
 scalpr/domain/events.py
@@ -81,7 +89,10 @@ scalpr/strategy/strategy_port.py
 scalpr/testing/chaos.py
 scripts/generate_dhan_token.py
 scripts/test_dhan_connection.py
+scripts/validate_failure_handling.py
 scripts/validate_gateway_live.py
+scripts/validate_research_workflow.py
+scripts/validate_streaming.py
 tradexv2.egg-info/PKG-INFO
 tradexv2.egg-info/SOURCES.txt
 tradexv2.egg-info/dependency_links.txt

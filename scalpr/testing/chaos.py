@@ -163,23 +163,6 @@ class MarketDataDisruptor:
     def __init__(self) -> None:
         self.disruption_active = False
     
-    @contextmanager
-    def disconnect_websocket(self) -> Generator[None, None, None]:
-        """Simulate WebSocket disconnection."""
-        from scalpr.market_data.dhan_feed import DhanMarketFeed
-        
-        original_connect = DhanMarketFeed.connect
-        original_is_connected = DhanMarketFeed.is_connected
-        
-        DhanMarketFeed.connect = Mock(side_effect=ConnectionError("WebSocket disconnected"))
-        DhanMarketFeed.is_connected = property(lambda self: False)
-        
-        try:
-            yield
-        finally:
-            DhanMarketFeed.connect = original_connect
-            DhanMarketFeed.is_connected = original_is_connected
-    
     def generate_stale_ticks(self, base_price: Decimal, count: int) -> list:
         """Generate ticks with identical timestamps (stale data)."""
         from datetime import datetime, timezone
