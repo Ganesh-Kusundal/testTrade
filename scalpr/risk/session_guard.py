@@ -20,6 +20,8 @@ class SessionGuard:
         self.halted = False
         self._warned_nse = False
         self._warned_mcx = False
+        self._squared_off_nse = False
+        self._squared_off_mcx = False
 
     def record_pnl(self, pnl: Decimal) -> None:
         """Record trade PnL. Halts and squares off after 3 consecutive losses."""
@@ -46,7 +48,8 @@ class SessionGuard:
             self._warned_nse = True
         
         # Square-off at 15:15+ IST
-        if hour == 15 and minute >= 15:
+        if hour == 15 and minute >= 15 and not self._squared_off_nse:
+            self._squared_off_nse = True
             logger.critical("SessionGuard Cutoff: NSE Intraday square-off time reached. Squaring off.")
             self.gateway.square_off_all()
             self.halted = True
@@ -59,7 +62,8 @@ class SessionGuard:
             self._warned_mcx = True
         
         # Square-off at 23:15+ IST
-        if hour == 23 and minute >= 15:
+        if hour == 23 and minute >= 15 and not self._squared_off_mcx:
+            self._squared_off_mcx = True
             logger.critical("SessionGuard Cutoff: MCX Intraday square-off time reached. Squaring off.")
             self.gateway.square_off_all()
             self.halted = True
@@ -73,4 +77,6 @@ class SessionGuard:
         self.halted = False
         self._warned_nse = False
         self._warned_mcx = False
+        self._squared_off_nse = False
+        self._squared_off_mcx = False
         logger.info("SessionGuard has been manually reset.")
