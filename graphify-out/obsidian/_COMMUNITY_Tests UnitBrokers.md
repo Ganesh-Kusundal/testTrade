@@ -1,0 +1,240 @@
+---
+type: community
+cohesion: 0.08
+members: 93
+---
+
+# Tests: Unit/Brokers
+
+**Cohesion:** 0.08 - loosely connected
+**Members:** 93 nodes
+
+## Members
+- [[.is_terminal()]] - code - scalpr/domain/order.py
+- [[.restore_orders()]] - code - scalpr/oms/persistence.py
+- [[.test_limit_order_uses_price_fallback()]] - code - tests/unit/brokers/dhan/test_critical_fixes.py
+- [[.test_market_order_with_fill_uses_traded_price()]] - code - tests/unit/brokers/dhan/test_critical_fixes.py
+- [[.test_market_order_with_zero_fill_price_logs_warning()]] - code - tests/unit/brokers/dhan/test_critical_fixes.py
+- [[.test_mcx_order_uses_correct_segment_and_string_prices()]] - code - tests/unit/brokers/dhan/test_critical_fixes.py
+- [[.test_modify_order_uses_string_prices()]] - code - tests/unit/brokers/dhan/test_critical_fixes.py
+- [[.test_orders_api_receives_string_not_float()]] - code - tests/unit/brokers/dhan/test_critical_fixes.py
+- [[.test_should_create_dhan_connection_with_config()]] - code - tests/unit/brokers/dhan/test_gateway_connection.py
+- [[.test_should_instantiate_with_valid_config()]] - code - tests/unit/brokers/dhan/test_gateway_connection.py
+- [[Abstract interface defining the broker gateway contract.]] - rationale - scalpr/brokers/broker_port.py
+- [[Adapter for order operations against Dhan API.      Provides methods for     -]] - rationale - scalpr/brokers/dhan/orders.py
+- [[Comprehensive tests for critical Dhan broker fixes.  Tests verify all P0P1P2 f]] - rationale - tests/unit/brokers/dhan/test_critical_fixes.py
+- [[Comprehensive unit tests for DhanConnection and DhanGateway.  Tests cover - Con]] - rationale - tests/unit/brokers/dhan/test_gateway_connection.py
+- [[ConfigurationError]] - code - scalpr/brokers/dhan/exceptions.py
+- [[Create a gateway with a fully mocked connection that is already 'connected'.]] - rationale - tests/unit/brokers/dhan/test_gateway_connection.py
+- [[Dhan]] - code - config/endpoints.py
+- [[Dhan broker API endpoints — constants and defaults.]] - rationale - config/endpoints.py
+- [[DhanGateway]] - code - scalpr/brokers/dhan/gateway.py
+- [[DhanGateway must construct without error with valid config.]] - rationale - tests/unit/brokers/dhan/test_gateway_connection.py
+- [[DhanGateway must create a DhanConnection with the provided config.]] - rationale - tests/unit/brokers/dhan/test_gateway_connection.py
+- [[Exchange_4]] - code - scalpr/domain/instrument.py
+- [[IBrokerGateway]] - code - scalpr/brokers/broker_port.py
+- [[Integration tests for OMS persistence wiring.]] - rationale - tests/unit/oms/test_persistence_wiring.py
+- [[Integration tests verifying multiple fixes work together.]] - rationale - tests/unit/brokers/dhan/test_critical_fixes.py
+- [[Integration-style tests verifying the full delegation chain gateway → connectio]] - rationale - tests/unit/brokers/dhan/test_gateway_connection.py
+- [[LIMIT orders should use order.price as fallback if no fill yet.]] - rationale - tests/unit/brokers/dhan/test_critical_fixes.py
+- [[MARKET orders with 0 traded_price should log warning.]] - rationale - tests/unit/brokers/dhan/test_critical_fixes.py
+- [[MARKET orders with actual fill should use traded_price.]] - rationale - tests/unit/brokers/dhan/test_critical_fixes.py
+- [[MCX order should use MCX_COMM segment AND string prices.]] - rationale - tests/unit/brokers/dhan/test_critical_fixes.py
+- [[Missing or invalid configuration.]] - rationale - scalpr/brokers/dhan/exceptions.py
+- [[Modify order payload must use strings for prices.]] - rationale - tests/unit/brokers/dhan/test_critical_fixes.py
+- [[OmsRepository]] - code - scalpr/oms/persistence.py
+- [[Order payload must use strings for prices to preserve Decimal precision.]] - rationale - tests/unit/brokers/dhan/test_critical_fixes.py
+- [[OrderSide_1]] - code - scalpr/domain/order.py
+- [[OrderState]] - code - scalpr/domain/order.py
+- [[OrderType]] - code - scalpr/domain/order.py
+- [[OrdersAdapter]] - code - scalpr/brokers/dhan/orders.py
+- [[PositionSide]] - code - scalpr/domain/position.py
+- [[Production Dhan broker gateway implementing IBrokerGateway.      Thin facade ove]] - rationale - scalpr/brokers/dhan/gateway.py
+- [[Restore all order records from database.]] - rationale - scalpr/oms/persistence.py
+- [[SQLite persistence layer for Order Management System state, with WAL mode enable]] - rationale - scalpr/oms/persistence.py
+- [[Test the full connect → verify → disconnect lifecycle.]] - rationale - tests/unit/brokers/dhan/test_gateway_connection.py
+- [[TestDecimalPrecision]] - code - tests/unit/brokers/dhan/test_critical_fixes.py
+- [[TestDhanConnectionAdapterProperties]] - code - tests/unit/brokers/dhan/test_gateway_connection.py
+- [[TestDhanConnectionConfigValidation]] - code - tests/unit/brokers/dhan/test_gateway_connection.py
+- [[TestDhanConnectionHttpClientConfig]] - code - tests/unit/brokers/dhan/test_gateway_connection.py
+- [[TestDhanConnectionLifecycle]] - code - tests/unit/brokers/dhan/test_gateway_connection.py
+- [[TestDhanConnectionStateTracking]] - code - tests/unit/brokers/dhan/test_gateway_connection.py
+- [[TestDhanConnectionThreadSafety]] - code - tests/unit/brokers/dhan/test_gateway_connection.py
+- [[TestDhanConnectionTokenRefresh]] - code - tests/unit/brokers/dhan/test_gateway_connection.py
+- [[TestDhanGatewayConnectionProperty]] - code - tests/unit/brokers/dhan/test_gateway_connection.py
+- [[TestDhanGatewayErrorPropagation]] - code - tests/unit/brokers/dhan/test_gateway_connection.py
+- [[TestDhanGatewayFullDelegationChain]] - code - tests/unit/brokers/dhan/test_gateway_connection.py
+- [[TestDhanGatewayHistoricalDelegation]] - code - tests/unit/brokers/dhan/test_gateway_connection.py
+- [[TestDhanGatewayInterfaceCompliance]] - code - tests/unit/brokers/dhan/test_gateway_connection.py
+- [[TestDhanGatewayLifecycleDelegation]] - code - tests/unit/brokers/dhan/test_gateway_connection.py
+- [[TestDhanGatewayMarketDataDelegation]] - code - tests/unit/brokers/dhan/test_gateway_connection.py
+- [[TestDhanGatewayOrderDelegation]] - code - tests/unit/brokers/dhan/test_gateway_connection.py
+- [[TestDhanGatewayOrderMapping]] - code - tests/unit/brokers/dhan/test_gateway_connection.py
+- [[TestDhanGatewayPortfolioDelegation]] - code - tests/unit/brokers/dhan/test_gateway_connection.py
+- [[TestDhanGatewaySquareOff]] - code - tests/unit/brokers/dhan/test_gateway_connection.py
+- [[TestIntegrationFixes]] - code - tests/unit/brokers/dhan/test_critical_fixes.py
+- [[TestMCXSegmentFix]] - code - tests/unit/brokers/dhan/test_critical_fixes.py
+- [[TestMarketOrderFills]] - code - tests/unit/brokers/dhan/test_critical_fixes.py
+- [[TestProfileValidation]] - code - tests/unit/brokers/dhan/test_critical_fixes.py
+- [[TestRateLimits]] - code - tests/unit/brokers/dhan/test_critical_fixes.py
+- [[Validate that DhanConnection rejects invalid configurations immediately.]] - rationale - tests/unit/brokers/dhan/test_gateway_connection.py
+- [[Verify DhanGateway correctly implements the IBrokerGateway contract.]] - rationale - tests/unit/brokers/dhan/test_gateway_connection.py
+- [[Verify HTTP client is configured with the correct parameters.]] - rationale - tests/unit/brokers/dhan/test_gateway_connection.py
+- [[Verify MARKET orders handle fill price correctly.]] - rationale - tests/unit/brokers/dhan/test_critical_fixes.py
+- [[Verify MCX orders use correct MCX_COMM segment.]] - rationale - tests/unit/brokers/dhan/test_critical_fixes.py
+- [[Verify _map_raw_order_to_order correctly maps Dhan responses to domain objects.]] - rationale - tests/unit/brokers/dhan/test_gateway_connection.py
+- [[Verify accurate connection state reporting throughout the lifecycle.]] - rationale - tests/unit/brokers/dhan/test_gateway_connection.py
+- [[Verify adapter properties raise BrokerError when accessed before connect().]] - rationale - tests/unit/brokers/dhan/test_gateway_connection.py
+- [[Verify connection validates profile on connect.]] - rationale - tests/unit/brokers/dhan/test_critical_fixes.py
+- [[Verify errors from connectionadapters propagate correctly through the gateway.]] - rationale - tests/unit/brokers/dhan/test_gateway_connection.py
+- [[Verify gateway correctly delegates historical data to connection adapter.]] - rationale - tests/unit/brokers/dhan/test_gateway_connection.py
+- [[Verify gateway correctly delegates lifecycle methods to connection.]] - rationale - tests/unit/brokers/dhan/test_gateway_connection.py
+- [[Verify gateway correctly delegates market data methods to connection adapters.]] - rationale - tests/unit/brokers/dhan/test_gateway_connection.py
+- [[Verify gateway correctly delegates order operations to connection adapters.]] - rationale - tests/unit/brokers/dhan/test_gateway_connection.py
+- [[Verify gateway correctly delegates portfolio methods to connection adapters.]] - rationale - tests/unit/brokers/dhan/test_gateway_connection.py
+- [[Verify order payloads use strings, not floats, for prices.]] - rationale - tests/unit/brokers/dhan/test_critical_fixes.py
+- [[Verify rate limits match Dhan API specifications.]] - rationale - tests/unit/brokers/dhan/test_critical_fixes.py
+- [[Verify square_off_all correctly closes positions with counter market orders.]] - rationale - tests/unit/brokers/dhan/test_gateway_connection.py
+- [[Verify that concurrent connectdisconnect calls are handled safely.]] - rationale - tests/unit/brokers/dhan/test_gateway_connection.py
+- [[Verify the .connection property provides access to the underlying DhanConnection]] - rationale - tests/unit/brokers/dhan/test_gateway_connection.py
+- [[Verify token_refresh_fn is passed through to the HTTP client.]] - rationale - tests/unit/brokers/dhan/test_gateway_connection.py
+- [[mocked_gateway_connection()]] - code - tests/unit/brokers/dhan/test_gateway_connection.py
+- [[str]] - code
+- [[test_critical_fixes.py]] - code - tests/unit/brokers/dhan/test_critical_fixes.py
+- [[test_gateway_connection.py]] - code - tests/unit/brokers/dhan/test_gateway_connection.py
+- [[test_persistence_wiring.py]] - code - tests/unit/oms/test_persistence_wiring.py
+
+## Live Query (requires Dataview plugin)
+
+```dataview
+TABLE source_file, type FROM #community/Tests_Unit/Brokers
+SORT file.name ASC
+```
+
+## Connections to other communities
+- 151 edges to [[_COMMUNITY_Oms - Order]]
+- 123 edges to [[_COMMUNITY_Tests UnitTesting]]
+- 56 edges to [[_COMMUNITY_Domain Events]]
+- 50 edges to [[_COMMUNITY_Tests UnitBrokers_3]]
+- 36 edges to [[_COMMUNITY_Tests UnitBrokers_1]]
+- 34 edges to [[_COMMUNITY_Dhan Broker Integration_2]]
+- 23 edges to [[_COMMUNITY_Tests UnitBrokers_2]]
+- 13 edges to [[_COMMUNITY_Signals - Gate]]
+- 10 edges to [[_COMMUNITY_Backtester]]
+- 9 edges to [[_COMMUNITY_Tests UnitOms]]
+- 7 edges to [[_COMMUNITY_Broker Registry]]
+- 6 edges to [[_COMMUNITY_Oms - Paper]]
+- 6 edges to [[_COMMUNITY_Tests UnitBrokers_4]]
+- 6 edges to [[_COMMUNITY_Tests UnitBrokers_8]]
+- 6 edges to [[_COMMUNITY_Tests UnitBrokers_6]]
+- 6 edges to [[_COMMUNITY_Tests UnitBrokers_7]]
+- 5 edges to [[_COMMUNITY_Scanner - Options]]
+- 4 edges to [[_COMMUNITY_Tests UnitBrokers_10]]
+- 4 edges to [[_COMMUNITY_Tests UnitObservability]]
+- 4 edges to [[_COMMUNITY_Tests UnitStrategy]]
+- 3 edges to [[_COMMUNITY_Configuration_2]]
+- 3 edges to [[_COMMUNITY_Risk - Session]]
+- 3 edges to [[_COMMUNITY_Dhan Broker Integration_13]]
+- 3 edges to [[_COMMUNITY_Dhan Broker Integration_12]]
+- 3 edges to [[_COMMUNITY_Dhan Broker Integration_6]]
+- 2 edges to [[_COMMUNITY_Dhan Broker Integration_7]]
+- 2 edges to [[_COMMUNITY_Scripts - Test - Dhan]]
+- 2 edges to [[_COMMUNITY_API Server]]
+- 2 edges to [[_COMMUNITY_Brokers - Broker_1]]
+- 2 edges to [[_COMMUNITY_Brokers - Broker]]
+- 2 edges to [[_COMMUNITY_Broker Gateway]]
+- 2 edges to [[_COMMUNITY_Market - Data_1]]
+- 2 edges to [[_COMMUNITY_Market - Data_3]]
+- 2 edges to [[_COMMUNITY_Dhan Broker Integration_15]]
+- 2 edges to [[_COMMUNITY_Tests UnitBrokers_12]]
+- 2 edges to [[_COMMUNITY_Tests UnitBrokers_11]]
+- 2 edges to [[_COMMUNITY_Tests UnitBrokers_9]]
+- 2 edges to [[_COMMUNITY_Simulation - Replay]]
+- 2 edges to [[_COMMUNITY_OMS Persistence]]
+- 1 edge to [[_COMMUNITY_Dhan Broker Integration_4]]
+- 1 edge to [[_COMMUNITY_Market - Data]]
+- 1 edge to [[_COMMUNITY_Brokers - Broker_2]]
+- 1 edge to [[_COMMUNITY_Brokers - Broker_3]]
+- 1 edge to [[_COMMUNITY_Brokers - Broker_4]]
+- 1 edge to [[_COMMUNITY_Brokers - Broker_5]]
+- 1 edge to [[_COMMUNITY_Brokers - Broker_6]]
+- 1 edge to [[_COMMUNITY_Brokers - Broker_7]]
+- 1 edge to [[_COMMUNITY_Broker Contracts]]
+- 1 edge to [[_COMMUNITY_Dhan Broker Integration_10]]
+- 1 edge to [[_COMMUNITY_Dhan Broker Integration_19]]
+- 1 edge to [[_COMMUNITY_Dhan Broker Integration_14]]
+- 1 edge to [[_COMMUNITY_Dhan Broker Integration_20]]
+- 1 edge to [[_COMMUNITY_Dhan Broker Integration_21]]
+- 1 edge to [[_COMMUNITY_Dhan Broker Integration_22]]
+- 1 edge to [[_COMMUNITY_Dhan Broker Integration_23]]
+- 1 edge to [[_COMMUNITY_Dhan Broker Integration_9]]
+- 1 edge to [[_COMMUNITY_Dhan Broker Integration_24]]
+- 1 edge to [[_COMMUNITY_Chaos Testing]]
+- 1 edge to [[_COMMUNITY_Tests UnitBrokers_15]]
+- 1 edge to [[_COMMUNITY_Tests UnitBrokers_21]]
+- 1 edge to [[_COMMUNITY_Tests UnitBrokers_18]]
+- 1 edge to [[_COMMUNITY_Tests UnitBrokers_19]]
+- 1 edge to [[_COMMUNITY_Tests UnitBrokers_20]]
+- 1 edge to [[_COMMUNITY_Tests UnitBrokers_16]]
+- 1 edge to [[_COMMUNITY_Tests UnitBrokers_17]]
+- 1 edge to [[_COMMUNITY_Tests UnitBrokers_22]]
+- 1 edge to [[_COMMUNITY_Tests UnitBrokers_28]]
+- 1 edge to [[_COMMUNITY_Tests UnitBrokers_50]]
+- 1 edge to [[_COMMUNITY_Tests UnitBrokers_35]]
+- 1 edge to [[_COMMUNITY_Tests UnitBrokers_32]]
+- 1 edge to [[_COMMUNITY_Tests UnitBrokers_33]]
+- 1 edge to [[_COMMUNITY_Tests UnitBrokers_34]]
+- 1 edge to [[_COMMUNITY_Tests UnitBrokers_40]]
+- 1 edge to [[_COMMUNITY_Tests UnitBrokers_43]]
+- 1 edge to [[_COMMUNITY_Tests UnitBrokers_36]]
+- 1 edge to [[_COMMUNITY_Tests UnitBrokers_42]]
+- 1 edge to [[_COMMUNITY_Tests UnitBrokers_37]]
+- 1 edge to [[_COMMUNITY_Tests UnitBrokers_39]]
+- 1 edge to [[_COMMUNITY_Tests UnitBrokers_41]]
+- 1 edge to [[_COMMUNITY_Tests UnitBrokers_38]]
+- 1 edge to [[_COMMUNITY_Tests UnitBrokers_44]]
+- 1 edge to [[_COMMUNITY_Tests UnitBrokers_45]]
+- 1 edge to [[_COMMUNITY_Tests UnitBrokers_46]]
+- 1 edge to [[_COMMUNITY_Tests UnitBrokers_47]]
+- 1 edge to [[_COMMUNITY_Tests UnitBrokers_48]]
+- 1 edge to [[_COMMUNITY_Tests UnitBrokers_49]]
+- 1 edge to [[_COMMUNITY_Tests UnitBrokers_51]]
+- 1 edge to [[_COMMUNITY_Tests UnitBrokers_52]]
+- 1 edge to [[_COMMUNITY_Tests UnitBrokers_54]]
+- 1 edge to [[_COMMUNITY_Tests UnitBrokers_53]]
+- 1 edge to [[_COMMUNITY_Tests UnitBrokers_56]]
+- 1 edge to [[_COMMUNITY_Tests UnitBrokers_55]]
+- 1 edge to [[_COMMUNITY_Tests UnitBrokers_57]]
+- 1 edge to [[_COMMUNITY_Tests UnitBrokers_58]]
+- 1 edge to [[_COMMUNITY_Tests UnitBrokers_59]]
+- 1 edge to [[_COMMUNITY_Tests UnitBrokers_60]]
+- 1 edge to [[_COMMUNITY_Tests UnitBrokers_61]]
+- 1 edge to [[_COMMUNITY_Tests UnitBrokers_62]]
+- 1 edge to [[_COMMUNITY_Tests UnitBrokers_66]]
+- 1 edge to [[_COMMUNITY_Tests UnitBrokers_64]]
+- 1 edge to [[_COMMUNITY_Tests UnitBrokers_65]]
+- 1 edge to [[_COMMUNITY_Tests UnitBrokers_63]]
+- 1 edge to [[_COMMUNITY_Tests UnitBrokers_70]]
+- 1 edge to [[_COMMUNITY_Tests UnitBrokers_68]]
+- 1 edge to [[_COMMUNITY_Tests UnitBrokers_69]]
+- 1 edge to [[_COMMUNITY_Tests UnitBrokers_67]]
+- 1 edge to [[_COMMUNITY_Tests UnitBrokers_71]]
+- 1 edge to [[_COMMUNITY_Tests UnitBrokers_73]]
+- 1 edge to [[_COMMUNITY_Tests UnitBrokers_75]]
+- 1 edge to [[_COMMUNITY_Tests UnitBrokers_72]]
+- 1 edge to [[_COMMUNITY_Tests UnitBrokers_74]]
+- 1 edge to [[_COMMUNITY_Tests UnitBrokers_23]]
+- 1 edge to [[_COMMUNITY_Tests UnitBrokers_24]]
+- 1 edge to [[_COMMUNITY_Tests UnitBrokers_26]]
+- 1 edge to [[_COMMUNITY_Tests UnitBrokers_29]]
+- 1 edge to [[_COMMUNITY_Tests UnitBrokers_25]]
+- 1 edge to [[_COMMUNITY_Tests UnitBrokers_27]]
+- 1 edge to [[_COMMUNITY_Tests UnitBrokers_31]]
+- 1 edge to [[_COMMUNITY_Tests UnitBrokers_30]]
+
+## Top bridge nodes
+- [[Exchange_4]] - degree 102, connects to 21 communities
+- [[OrdersAdapter]] - degree 48, connects to 20 communities
+- [[IBrokerGateway]] - degree 66, connects to 18 communities
+- [[OrderSide_1]] - degree 91, connects to 15 communities
+- [[OrderState]] - degree 79, connects to 14 communities

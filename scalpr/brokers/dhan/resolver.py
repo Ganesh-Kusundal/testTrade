@@ -1,0 +1,361 @@
+"""O(1) symbol → Instrument resolver backed by dictionaries.
+
+Provides fast instrument lookup with support for alternate symbol formats
+and index fallback.
+"""
+
+from __future__ import annotations
+
+import logging
+import threading
+from collections.abc import Iterable
+from decimal import Decimal
+
+from scalpr.brokers.dhan.exceptions import InstrumentNotFoundError
+from scalpr.brokers.dhan.segments import SEGMENT_TO_EXCHANGE
+from scalpr.domain.instrument import Exchange, Instrument, OptionType, Segment
+
+logger = logging.getLogger(__name__)
+
+# Instrument type mapping from Dhan CSV
+_NAME_TO_TYPE: dict[str, Segment] = {
+    "EQUITY": Segment.EQUITY,
+    "INDEX": Segment.EQUITY,
+    "OPTIDX": Segment.OPTIONS,
+    "OPTSTK": Segment.OPTIONS,
+    "OPTCUR": Segment.OPTIONS,
+    "OPTFUT": Segment.OPTIONS,
+    "OPTCOM": Segment.OPTIONS,
+    "FUTIDX": Segment.FUTURES,
+    "FUTSTK": Segment.FUTURES,
+    "FUTCUR": Segment.FUTURES,
+    "FUTCOM": Segment.FUTURES,
+}
+
+# Dhan option type mapping
+_DHAN_OPTION_TYPE: dict[str, OptionType] = {
+    "CE": OptionType.CE, "CALL": OptionType.CE,
+    "PE": OptionType.PE, "PUT": OptionType.PE,
+}
+
+
+class SymbolResolver:
+    """Thread-safe O(1) symbol → Instrument resolver.
+    
+    Provides fast instrument lookup by symbol, security_id, or alternate formats.
+    Supports loading from CSV rows with automatic alternate key generation.
+    """
+
+    def __init__(self) -> None:
+        self._by_symbol: dict[tuple[str, Exchange], Instrument] = {}
+        self._by_security_id: dict[str, Instrument] = {}
+        self._by_underlying: dict[tuple[str, Exchange], list[Instrument]] = {}
+        self._loaded = False
+        self._lock = threading.RLock()
+
+    def resolve(self, symbol: str, exchange: str) -> Instrument:
+        """Resolve symbol to Instrument.
+        
+        Args:
+            symbol: Trading symbol (e.g., "RELIANCE", "NIFTY")
+            exchange: Exchange code (e.g., "NSE", "MCX", "INDEX")
+        
+        Returns:
+            Instrument object
+        
+        Raises:
+            InstrumentNotFoundError: If symbol cannot be resolved
+        """
+        exch = self._normalise_exchange(exchange)
+        inst = self._find(symbol, exch)
+        if inst is None:
+            raise InstrumentNotFoundError(
+                f"Instrument not found: symbol={symbol!r}, exchange={exchange!r}"
+            )
+        return inst
+
+    def get_by_symbol(self, symbol: str, exchange: str) -> Instrument | None:
+        """Get instrument by symbol, returns None if not found."""
+        try:
+            return self._find(symbol, self._normalise_exchange(exchange))
+        except Exception:
+            return None
+
+    def get_by_security_id(self, security_id: str) -> Instrument | None:
+        """Get instrument by security_id, returns None if not found."""
+        return self._by_security_id.get(str(security_id))
+
+    def get_lot_size(self, symbol: str, exchange: str) -> int:
+        """Get lot size for an instrument."""
+        return self.resolve(symbol, exchange).lot_size
+
+    def stats(self) -> dict:
+        """Get resolver statistics."""
+        return {"loaded": self._loaded, "total": len(self._by_security_id)}
+
+    def all_instruments(self) -> list[Instrument]:
+        """Get all loaded instruments."""
+        return list(self._by_security_id.values())
+
+    def load_from_rows(self, rows: Iterable[dict]) -> dict[str, int | float]:
+        """Load instruments from CSV rows with atomic swap.
+        
+        Args:
+            rows: Iterable of CSV row dicts
+        
+        Returns:
+            Dict with keys: total, skipped, skip_rate
+        """
+        new_by_symbol: dict[tuple[str, Exchange], Instrument] = {}
+        new_by_sid: dict[str, Instrument] = {}
+        new_by_underlying: dict[tuple[str, Exchange], list[Instrument]] = {}
+        skipped = 0
+
+        for row in rows:
+            try:
+                inst = self._row_to_instrument(row)
+            except Exception:
+                skipped += 1
+                continue
+
+            if inst is None:
+                skipped += 1
+                continue
+
+            # Generate alternate keys for flexible lookup
+            alt_keys = _generate_alternate_keys(
+                symbol=inst.symbol,
+                segment=inst.segment,
+                expiry=inst.expiry,
+                strike=inst.strike,
+                option_type=inst.option_type,
+            )
+
+            # Register all alternate keys
+            for k in alt_keys:
+                existing = new_by_symbol.get((k, inst.exchange))
+                if existing is None:
+                    new_by_symbol[(k, inst.exchange)] = inst
+                # Prefer non-option over option for same key
+                elif existing.segment == Segment.OPTIONS and inst.segment != Segment.OPTIONS:
+                    new_by_symbol[(k, inst.exchange)] = inst
+
+            new_by_sid[inst.security_id] = inst  # Index by numeric security_id
+
+        with self._lock:
+            self._by_symbol = new_by_symbol
+            self._by_security_id = new_by_sid
+            self._by_underlying = new_by_underlying
+            self._loaded = True
+
+        total_loaded = len(new_by_sid)
+        total_processed = total_loaded + skipped
+        skip_rate = skipped / total_processed if total_processed > 0 else 0.0
+
+        result = {
+            "total": total_loaded,
+            "skipped": skipped,
+            "skip_rate": skip_rate,
+        }
+
+        logger.info(
+            f"Instrument cache loaded: total={total_loaded} skipped={skipped} skip_rate={skip_rate*100:.2f}%"
+        )
+
+        return result
+
+    def _find(self, symbol: str, exch: Exchange) -> Instrument | None:
+        """Find instrument with progressive lookup."""
+        clean = symbol.strip().upper()
+
+        # 1. Try direct lookup
+        inst = self._by_symbol.get((clean, exch))
+        if inst is not None:
+            return inst
+
+        # 2. Try stripped lookup (no spaces, dashes)
+        stripped = clean.replace(" ", "").replace("-", "").replace("_", "")
+        inst = self._by_symbol.get((stripped, exch))
+        if inst is not None:
+            return inst
+
+        # 3. Try standardizing option format (CALL -> CE, PUT -> PE)
+        if clean.endswith("CALL"):
+            clean = clean[:-4] + "CE"
+        elif clean.endswith("PUT"):
+            clean = clean[:-3] + "PE"
+
+        inst = self._by_symbol.get((clean, exch))
+        if inst is not None:
+            return inst
+
+        # 4. Try INDEX fallback for known indices
+        if clean in ("NIFTY", "BANKNIFTY", "FINNIFTY", "SENSEX"):
+            index_exch = Exchange.NSE  # SCALPR doesn't have INDEX, use NSE
+            inst = self._by_symbol.get((clean, index_exch))
+            if inst is not None:
+                return inst
+
+        return None
+
+    @staticmethod
+    def _normalise_exchange(exchange: str) -> Exchange:
+        """Normalize exchange string to Exchange enum."""
+        up = exchange.strip().upper()
+        try:
+            return Exchange(up)
+        except ValueError:
+            # Try segment mapping
+            mapped = SEGMENT_TO_EXCHANGE.get(up)
+            if mapped:
+                try:
+                    return Exchange(mapped)
+                except ValueError:
+                    pass
+            # Default to NSE
+            return Exchange.NSE
+
+    @staticmethod
+    def _row_to_instrument(row: dict) -> Instrument | None:
+        """Convert CSV row to Instrument."""
+        symbol = (row.get("SEM_TRADING_SYMBOL") or "").strip()
+        security_id = str(row.get("SEM_SMST_SECURITY_ID") or "").strip()
+        if not symbol or not security_id:
+            return None
+
+        segment_str = (row.get("SEM_EXM_EXCH_ID") or "").strip().upper()
+        exchange_str = SEGMENT_TO_EXCHANGE.get(segment_str, "NSE")
+        try:
+            exchange = Exchange(exchange_str)
+        except ValueError:
+            exchange = Exchange.NSE
+
+        name = (row.get("SEM_INSTRUMENT_NAME") or "").strip().upper()
+        segment = _NAME_TO_TYPE.get(name)
+        if segment is None:
+            return None
+
+        lot_size = _safe_int(row.get("SEM_LOT_UNITS"), default=1)
+        tick_size = _safe_decimal(row.get("SEM_TICK_SIZE"), default="0.05")
+
+        option_type: OptionType | None = None
+        strike: Decimal | None = None
+        expiry = None
+
+        if segment in (Segment.OPTIONS, Segment.FUTURES):
+            expiry_str = row.get("SEM_EXPIRY_DATE")
+            if expiry_str:
+                try:
+                    from datetime import date
+                    expiry = date.fromisoformat(expiry_str[:10])
+                except Exception:
+                    pass
+
+            if segment == Segment.OPTIONS:
+                opt_raw = (row.get("SEM_OPTION_TYPE") or "").strip().upper()
+                option_type = _DHAN_OPTION_TYPE.get(opt_raw)
+                strike_val = row.get("SEM_STRIKE_PRICE")
+                if strike_val is not None:
+                    strike = _safe_decimal(strike_val)
+
+        return Instrument(
+            symbol=symbol,
+            exchange=exchange,
+            segment=segment,
+            security_id=security_id,  # Use actual Dhan security_id
+            lot_size=lot_size,
+            tick_size=tick_size,
+            option_type=option_type,
+            strike=strike,
+            expiry=expiry,
+        )
+
+
+def _safe_int(value, default: int = 0) -> int:
+    """Safely convert value to int."""
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_decimal(value, default: str = "0") -> Decimal:
+    """Safely convert value to Decimal."""
+    if value is None:
+        return Decimal(default)
+    try:
+        return Decimal(str(value))
+    except Exception:
+        return Decimal(default)
+
+
+def _generate_alternate_keys(
+    symbol: str,
+    segment: Segment,
+    expiry,
+    strike: Decimal | None,
+    option_type: OptionType | None,
+) -> list[str]:
+    """Generate alternate symbol formats for flexible lookup."""
+    keys = []
+    
+    # 1. Primary symbol
+    sym_up = symbol.strip().upper()
+    keys.append(sym_up)
+    
+    # 2. Stripped symbol (no spaces, dashes)
+    stripped = sym_up.replace(" ", "").replace("-", "").replace("_", "")
+    keys.append(stripped)
+    
+    # 3. Standardize option format
+    if sym_up.endswith("CALL"):
+        keys.append(sym_up[:-4] + "CE")
+    elif sym_up.endswith("PUT"):
+        keys.append(sym_up[:-3] + "PE")
+    
+    # 4. For options/futures, generate common formats
+    if segment in (Segment.OPTIONS, Segment.FUTURES) and expiry:
+        try:
+            from datetime import datetime
+            if isinstance(expiry, str):
+                dt = datetime.strptime(expiry[:10], "%Y-%m-%d")
+            else:
+                dt = datetime.combine(expiry, datetime.min.time())
+            
+            dd = dt.strftime("%d")
+            dd_strip = str(int(dd))
+            MMM = dt.strftime("%b").upper()
+            yy = dt.strftime("%y")
+            yyyy = dt.strftime("%Y")
+            
+            # Extract underlying (first word of symbol)
+            underlying = sym_up.split()[0]
+            
+            if segment == Segment.OPTIONS and option_type and strike:
+                ce_pe = option_type.value
+                strike_str = str(int(strike)) if strike % 1 == 0 else str(strike)
+                
+                # Generate common option formats
+                keys.append(f"{underlying} {dd} {MMM} {yy} {strike_str} {ce_pe}")
+                keys.append(f"{underlying} {dd_strip} {MMM} {yy} {strike_str} {ce_pe}")
+                keys.append(f"{underlying}{dd}{MMM}{yy}{strike_str}{ce_pe}")
+                keys.append(f"{underlying}{dd_strip}{MMM}{yy}{strike_str}{ce_pe}")
+            
+            elif segment == Segment.FUTURES:
+                keys.append(f"{underlying} {MMM} FUT")
+                keys.append(f"{underlying}{MMM}FUT")
+                keys.append(f"{underlying} {yy} {MMM} FUT")
+        
+        except Exception as exc:
+            logger.debug(f"alternate_key_generation_failed: {exc}")
+    
+    # Deduplicate
+    res = []
+    seen = set()
+    for k in keys:
+        k_clean = k.strip().upper()
+        if k_clean and k_clean not in seen:
+            seen.add(k_clean)
+            res.append(k_clean)
+    
+    return res

@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find /Users/apple/Downloads/Trade_XV2 -type f -name \"*.py\" | head -80 && echo \"---\" && ls -la /Users/apple/Downloads/Trade_XV2/)"
+    ]
+  }
+}

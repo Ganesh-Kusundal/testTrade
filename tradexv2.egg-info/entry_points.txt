@@ -1,0 +1,2 @@
+[console_scripts]
+tradex = scalpr.cli.main:main

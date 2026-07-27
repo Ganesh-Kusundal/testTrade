@@ -1,0 +1,29 @@
+Metadata-Version: 2.4
+Name: tradexv2
+Version: 0.1.0
+Summary: Python-based, broker-agnostic algorithmic trading framework for Indian exchanges
+Requires-Python: >=3.10
+Requires-Dist: requests>=2.31
+Requires-Dist: pandas>=2.0
+Requires-Dist: pydantic>=2.5
+Requires-Dist: rich>=13.0
+Requires-Dist: textual>=0.40
+Requires-Dist: python-dotenv>=1.0
+Requires-Dist: PyYAML>=6.0
+Requires-Dist: dhanhq>=2.0
+Requires-Dist: pyotp>=2.9
+Requires-Dist: PyJWT>=2.8
+Requires-Dist: aiohttp>=3.9
+Requires-Dist: websockets>=12.0
+Provides-Extra: dev
+Requires-Dist: pytest>=7.4; extra == "dev"
+Requires-Dist: pytest-asyncio>=0.23; extra == "dev"
+Requires-Dist: pytest-cov>=4.1; extra == "dev"
+Requires-Dist: pytest-xdist>=3.5; extra == "dev"
+Requires-Dist: ruff>=0.1; extra == "dev"
+Requires-Dist: mypy>=1.7; extra == "dev"
+Requires-Dist: pre-commit>=3.5; extra == "dev"
+Requires-Dist: bandit>=1.7; extra == "dev"
+Requires-Dist: pip-audit>=2.6; extra == "dev"
+Requires-Dist: import-linter>=2.0; extra == "dev"
+Requires-Dist: hypothesis>=6.100; extra == "dev"

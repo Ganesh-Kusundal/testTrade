@@ -1,0 +1,17 @@
+---
+source_file: "frontend/tsconfig.node.json"
+type: "code"
+community: "Frontend: Node"
+location: "L3"
+tags:
+  - graphify/code
+  - graphify/EXTRACTED
+  - community/Frontend_Node
+---
+
+# composite
+
+## Connections
+- [[compilerOptions_1]] - `contains` [EXTRACTED]
+
+#graphify/code #graphify/EXTRACTED #community/Frontend_Node

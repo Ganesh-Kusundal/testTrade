@@ -1,0 +1,51 @@
+---
+source_file: "scalpr/domain/order.py"
+type: "code"
+community: "Oms - Order"
+location: "L1"
+tags:
+  - graphify/code
+  - graphify/EXTRACTED
+  - community/Oms_-_Order
+---
+
+# order.py
+
+## Connections
+- [[Decimal_8]] - `imports_from` [EXTRACTED]
+- [[Enum]] - `imports_from` [EXTRACTED]
+- [[Exchange_4]] - `imports` [EXTRACTED]
+- [[Order]] - `contains` [EXTRACTED]
+- [[OrderSide_1]] - `contains` [EXTRACTED]
+- [[OrderState]] - `contains` [EXTRACTED]
+- [[OrderType]] - `contains` [EXTRACTED]
+- [[__init__.py_4]] - `re_exports` [EXTRACTED]
+- [[backtester.py]] - `imports_from` [EXTRACTED]
+- [[broker_port.py]] - `imports_from` [EXTRACTED]
+- [[events.py]] - `imports_from` [EXTRACTED]
+- [[fill.py]] - `imports_from` [EXTRACTED]
+- [[fill_simulator.py]] - `imports_from` [EXTRACTED]
+- [[gateway.py]] - `imports_from` [EXTRACTED]
+- [[instrument.py]] - `imports_from` [EXTRACTED]
+- [[mapper.py]] - `imports_from` [EXTRACTED]
+- [[order_manager.py]] - `imports_from` [EXTRACTED]
+- [[order_router.py]] - `imports_from` [EXTRACTED]
+- [[orders.py]] - `imports_from` [EXTRACTED]
+- [[paper_oms.py]] - `imports_from` [EXTRACTED]
+- [[persistence.py]] - `imports_from` [EXTRACTED]
+- [[position.py]] - `imports_from` [EXTRACTED]
+- [[pre_trade.py]] - `imports_from` [EXTRACTED]
+- [[scalpr_amt.py]] - `imports_from` [EXTRACTED]
+- [[test_adapters.py]] - `imports_from` [EXTRACTED]
+- [[test_chaos.py]] - `imports_from` [EXTRACTED]
+- [[test_critical_fixes.py]] - `imports_from` [EXTRACTED]
+- [[test_domain.py]] - `imports_from` [EXTRACTED]
+- [[test_event_bus_wiring.py]] - `imports_from` [EXTRACTED]
+- [[test_event_store.py]] - `imports_from` [EXTRACTED]
+- [[test_gateway.py]] - `imports_from` [EXTRACTED]
+- [[test_gateway_connection.py]] - `imports_from` [EXTRACTED]
+- [[test_oms_risk.py]] - `imports_from` [EXTRACTED]
+- [[test_persistence_wiring.py]] - `imports_from` [EXTRACTED]
+- [[test_strategy_sim.py]] - `imports_from` [EXTRACTED]
+
+#graphify/code #graphify/EXTRACTED #community/Oms_-_Order
