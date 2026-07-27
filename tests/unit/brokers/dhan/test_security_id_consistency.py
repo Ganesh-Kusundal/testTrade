@@ -99,8 +99,8 @@ class TestWebSocketSecurityIdResolution:
         await client.subscribe([("RELIANCE", "NSE")])
         
         # Verify SDK feed received subscription with integer security_id
-        call_args = mock_feed.subscribe_samples.call_args
-        assert call_args is not None, "subscribe_samples should be called"
+        call_args = mock_feed.subscribe_symbols.call_args
+        assert call_args is not None, "subscribe_symbols should be called"
         
         instruments = call_args[0][0] if call_args[0] else []
         assert len(instruments) > 0, "Should have at least one instrument"
@@ -134,7 +134,7 @@ class TestWebSocketSecurityIdResolution:
         assert result is True
         
         # Verify SDK feed was NOT called (no valid instruments)
-        mock_feed.subscribe_samples.assert_not_called()
+        mock_feed.subscribe_symbols.assert_not_called()
         
     @pytest.mark.asyncio
     async def test_subscribe_fallback_without_resolver(self):
@@ -258,7 +258,7 @@ class TestEndToEndSecurityIdFlow:
         mock_resolver.resolve.assert_called_once_with("RELIANCE", "NSE")
         
         # 2. SDK received correct subscription
-        call_args = mock_feed.subscribe_samples.call_args
+        call_args = mock_feed.subscribe_symbols.call_args
         instruments = call_args[0][0]
         exch_int, sec_id_int, mode_int = instruments[0]
         
@@ -284,7 +284,7 @@ class TestEndToEndSecurityIdFlow:
         
         await client.subscribe([("TCS", "NSE")])
         
-        call_args = mock_feed.subscribe_samples.call_args
+        call_args = mock_feed.subscribe_symbols.call_args
         instruments = call_args[0][0]
         exch_int, sec_id_int, mode_int = instruments[0]
         

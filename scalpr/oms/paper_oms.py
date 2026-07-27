@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import threading
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
+from typing import Any
 
 from scalpr.brokers.broker_port import IBrokerGateway
 from scalpr.domain.fill import Fill
@@ -153,6 +154,61 @@ class PaperOms(IBrokerGateway):
 
     def is_connected(self) -> bool:
         return self._connected
+
+    # ── IBrokerGateway: lifecycle stubs ──────────────────────────────────
+
+    def connect(self) -> None:
+        """Paper OMS is always connected (in-memory)."""
+        self._connected = True
+
+    def disconnect(self) -> None:
+        """Paper OMS teardown — marks disconnected."""
+        self._connected = False
+
+    # ── IBrokerGateway: market data stubs ────────────────────────────────
+
+    def get_ltp(self, symbol: str, exchange: str = "NSE") -> Decimal:
+        """Return last price set via set_last_price(), or zero."""
+        with self._lock:
+            return self.last_prices.get(symbol, Decimal("0"))
+
+    def get_quote(self, symbol: str, exchange: str = "NSE") -> dict[str, Any]:
+        """Return minimal quote dict from last known price."""
+        ltp = self.get_ltp(symbol, exchange)
+        return {"ltp": ltp, "symbol": symbol, "exchange": exchange}
+
+    def get_ohlcv(
+        self,
+        symbol: str,
+        exchange: str,
+        timeframe: str,
+        from_date: date,
+        to_date: date,
+    ) -> list[dict[str, Any]]:
+        """Paper OMS has no historical data — return empty list."""
+        return []
+
+    # ── IBrokerGateway: orderbook / tradebook stubs ──────────────────────
+
+    def get_orders(self) -> list[Order]:
+        """Return all orders placed so far."""
+        with self._lock:
+            return list(self.orders_dict.values())
+
+    def get_tradebook(self) -> list[Fill]:
+        """Paper OMS does not persist fills separately — return empty."""
+        return []
+
+    # ── IBrokerGateway: portfolio stubs ──────────────────────────────────
+
+    def get_holdings(self) -> list[Position]:
+        """Paper OMS has no delivery holdings — return empty."""
+        return []
+
+    def get_fund_limits(self) -> dict:
+        """Return current balance as fund limits."""
+        with self._lock:
+            return {"available_margin": self.balance, "total_balance": self.balance}
 
     def square_off_all(self) -> list[Fill]:
         with self._lock:
