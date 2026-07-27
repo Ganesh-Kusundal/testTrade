@@ -7,7 +7,7 @@ from typing import Any, Generic, TypeVar
 from scalpr.brokers.dhan.dtos import DhanOrderRequest, DhanOrderResponse
 from scalpr.domain.fill import Fill
 from scalpr.domain.instrument import Exchange
-from scalpr.domain.order import Order
+from scalpr.domain.order import Order, OrderType
 from scalpr.domain.position import Position, PositionSide, PositionState
 
 T = TypeVar('T')
@@ -44,6 +44,15 @@ class Result(Generic[T, E]):
         return cls(False, error=error)
 
 
+# Dhan API expects "SL" and "SL-M", not the enum values "STOP_LOSS" / "STOP_LOSS_MARKET"
+_ORDER_TYPE_TO_DHAN: dict[OrderType, str] = {
+    OrderType.LIMIT: "LIMIT",
+    OrderType.MARKET: "MARKET",
+    OrderType.STOP_LOSS: "SL",
+    OrderType.STOP_LOSS_MARKET: "SL-M",
+}
+
+
 class DhanMapper:
     """Pure data transformer between Domain objects and Dhan API DTOs."""
 
@@ -67,7 +76,7 @@ class DhanMapper:
                     transactionType=order.side.value,
                     exchangeSegment=segment,
                     productType=order.product_type,
-                    orderType=order.order_type.value,
+                    orderType=_ORDER_TYPE_TO_DHAN[order.order_type],
                     quantity=order.quantity,
                     price=order.price,
                     triggerPrice=order.trigger_price,
