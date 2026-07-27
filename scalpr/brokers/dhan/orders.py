@@ -13,6 +13,7 @@ Key design principles:
 from __future__ import annotations
 
 import logging
+import threading
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
@@ -38,9 +39,9 @@ class OrdersAdapter:
     - Fetching orderbook (all orders for the day)
     - Fetching tradebook (all fills for the day)
 
-    Thread-safety: Idempotency cache uses a set with no explicit locking.
-    For production use with multiple threads, wrap cache access in a lock
-    or use a thread-safe cache (e.g., dict with threading.Lock).
+    Thread-safety: Idempotency cache is protected by a threading.Lock.
+    The lock covers the check-and-add operations but NOT the API call itself,
+    so concurrent orders with different correlation_ids proceed in parallel.
     """
 
     def __init__(self, client: DhanHttpClient, resolver: SymbolResolver):
@@ -53,6 +54,8 @@ class OrdersAdapter:
         self._client = client
         self._resolver = resolver
         self._idempotency_cache: set[str] = set()
+        self._in_flight: set[str] = set()  # correlation_ids currently being submitted
+        self._cache_lock = threading.Lock()
 
     def place_order(self, order: Order) -> Fill:
         """Place a new order and return the resulting Fill.
@@ -69,68 +72,81 @@ class OrdersAdapter:
         Raises:
             OrderError: If idempotency check fails, mapping fails, or API rejects.
         """
-        # ── Idempotency check ──────────────────────────────────────────
+        # ── Idempotency check (lock-protected) ─────────────────────────
         correlation_id = order.correlation_id or order.order_id
-        if correlation_id in self._idempotency_cache:
-            raise OrderError(
-                f"Duplicate order blocked: correlation_id={correlation_id!r} "
-                f"already submitted"
+        with self._cache_lock:
+            if correlation_id in self._idempotency_cache or correlation_id in self._in_flight:
+                raise OrderError(
+                    f"Duplicate order blocked: correlation_id={correlation_id!r} "
+                    f"already submitted"
+                )
+            self._in_flight.add(correlation_id)
+
+        # ── Pre-flight validation, resolution, mapping, and API call ───
+        # All wrapped in try/except to guarantee _in_flight cleanup on failure.
+        try:
+            self._validate_order(order)
+
+            # ── Resolve security_id ────────────────────────────────────
+            try:
+                inst = self._resolver.resolve(order.symbol, order.exchange.value)
+                security_id = inst.security_id
+            except Exception as exc:
+                raise OrderError(
+                    f"Cannot resolve security_id for {order.symbol} on {order.exchange}: {exc}"
+                ) from exc
+
+            # ── Map domain → Dhan DTO ─────────────────────────────────
+            dhan_req_result = DhanMapper.order_to_dhan_request(order, self._client.client_id, security_id)
+            if not dhan_req_result.is_ok:
+                raise OrderError(f"Order mapping failed: {dhan_req_result.error}")
+
+            dhan_req = dhan_req_result.value
+
+            # Build JSON payload from DTO
+            payload: dict[str, Any] = {
+                "dhanClientId": dhan_req.dhanClientId,
+                "correlationId": dhan_req.correlationId,
+                "transactionType": dhan_req.transactionType,
+                "exchangeSegment": dhan_req.exchangeSegment,
+                "productType": dhan_req.productType,
+                "orderType": dhan_req.orderType,
+                "quantity": dhan_req.quantity,
+                "price": str(dhan_req.price) if dhan_req.price else "0",  # Fixed: use str to preserve Decimal precision
+                "triggerPrice": str(dhan_req.triggerPrice) if dhan_req.triggerPrice else "0",  # Fixed: use str
+                "securityId": dhan_req.securityId,
+            }
+
+            logger.info(
+                "placing_order",
+                extra={
+                    "order_id": order.order_id,
+                    "correlation_id": correlation_id,
+                    "symbol": order.symbol,
+                    "side": order.side.value,
+                    "quantity": order.quantity,
+                    "price": float(order.price),
+                },
             )
 
-        # ── Pre-flight validation ──────────────────────────────────────
-        self._validate_order(order)
-
-        # ── Resolve security_id ────────────────────────────────────────
-        try:
-            inst = self._resolver.resolve(order.symbol, order.exchange.value)
-            security_id = inst.security_id
-        except Exception as exc:
-            raise OrderError(
-                f"Cannot resolve security_id for {order.symbol} on {order.exchange}: {exc}"
-            ) from exc
-
-        # ── Map domain → Dhan DTO ─────────────────────────────────────
-        dhan_req_result = DhanMapper.order_to_dhan_request(order, self._client.client_id, security_id)
-        if not dhan_req_result.is_ok:
-            raise OrderError(f"Order mapping failed: {dhan_req_result.error}")
-
-        dhan_req = dhan_req_result.value
-
-        # Build JSON payload from DTO
-        payload: dict[str, Any] = {
-            "dhanClientId": dhan_req.dhanClientId,
-            "correlationId": dhan_req.correlationId,
-            "transactionType": dhan_req.transactionType,
-            "exchangeSegment": dhan_req.exchangeSegment,
-            "productType": dhan_req.productType,
-            "orderType": dhan_req.orderType,
-            "quantity": dhan_req.quantity,
-            "price": str(dhan_req.price) if dhan_req.price else "0",  # Fixed: use str to preserve Decimal precision
-            "triggerPrice": str(dhan_req.triggerPrice) if dhan_req.triggerPrice else "0",  # Fixed: use str
-            "securityId": dhan_req.securityId,
-        }
-
-        logger.info(
-            "placing_order",
-            extra={
-                "order_id": order.order_id,
-                "correlation_id": correlation_id,
-                "symbol": order.symbol,
-                "side": order.side.value,
-                "quantity": order.quantity,
-                "price": float(order.price),
-            },
-        )
-
-        # ── Call API ───────────────────────────────────────────────────
-        try:
+            # ── Call API ───────────────────────────────────────────────
             response_data = self._client.post("/orders", json=payload)
+        except OrderError:
+            # Remove from in-flight on failure so retry is possible; re-raise as-is
+            with self._cache_lock:
+                self._in_flight.discard(correlation_id)
+            raise
         except Exception as exc:
+            # Remove from in-flight on failure so retry is possible
+            with self._cache_lock:
+                self._in_flight.discard(correlation_id)
             # Do NOT add to idempotency cache on failure — allow retry
             raise OrderError(f"Order placement failed: {exc}") from exc
 
-        # ── Mark idempotency ──────────────────────────────────────────
-        self._idempotency_cache.add(correlation_id)
+        # ── Mark idempotency (lock-protected) ──────────────────────────
+        with self._cache_lock:
+            self._idempotency_cache.add(correlation_id)
+            self._in_flight.discard(correlation_id)
 
         # ── Parse response ─────────────────────────────────────────────
         order_id = response_data.get("orderId", order.order_id)
@@ -362,8 +378,9 @@ class OrdersAdapter:
         Should be called at session start or end-of-day to prevent
         stale correlation_ids from blocking new orders.
         """
-        count = len(self._idempotency_cache)
-        self._idempotency_cache.clear()
+        with self._cache_lock:
+            count = len(self._idempotency_cache)
+            self._idempotency_cache.clear()
         logger.info(f"idempotency_cache_cleared: {count} entries removed")
 
     @staticmethod
