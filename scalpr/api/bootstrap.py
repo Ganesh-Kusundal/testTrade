@@ -73,9 +73,22 @@ def wire(
 
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
     session_id = datetime.now(timezone.utc).strftime("live-%Y%m%d")
+
+    # Kill switch: live order placement is HALTED by default.
+    # Set SCALPR_LIVE_ORDERS=1 to explicitly enable. This is the safety-critical
+    # default — without it, the only way to stop live trading is to kill the process.
+    live_orders_enabled = os.environ.get("SCALPR_LIVE_ORDERS") == "1"
+    risk_gate = PreTradeRiskGate(halted=not live_orders_enabled)
+    if not live_orders_enabled:
+        import logging
+        logging.getLogger(__name__).warning(
+            "SCALPR_LIVE_ORDERS is not set to '1' — risk gate HALTED, "
+            "all orders will be rejected. Set SCALPR_LIVE_ORDERS=1 to enable."
+        )
+
     order_router = OrderRouter(
         gateway=gateway,
-        risk_gate=PreTradeRiskGate(),
+        risk_gate=risk_gate,
         circuit_breaker=CircuitBreaker(),
         order_manager=OrderManager(
             OmsRepository(db_path),
@@ -178,6 +191,13 @@ def create_app() -> FastAPI:
     app.include_router(orders.router)
     app.include_router(portfolio.router)
     app.include_router(replay.router)
+
+    # JWT auth middleware — only when SCALPR_JWT_SECRET is set (Bloomberg plan Module 10).
+    # Health probes stay exempt via EXEMPT_PATHS in scalpr.api.auth.
+    jwt_secret = os.environ.get("SCALPR_JWT_SECRET")
+    if jwt_secret:
+        from scalpr.api.auth import JwtAuthMiddleware
+        app.add_middleware(JwtAuthMiddleware, secret=jwt_secret)
 
     # Store dependencies on app.state for router access
     gateway, broker_error = _create_gateway()
