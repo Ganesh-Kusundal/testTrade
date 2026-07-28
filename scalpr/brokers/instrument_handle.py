@@ -53,7 +53,7 @@ class InstrumentHandle:
         """Get current last traded price (uses pre-resolved security_id)."""
         return self._market_data.get_ltp_by_id(
             self._resolved.security_id,
-            self._resolved.dhan_exchange_segment,
+            self._resolved.wire_segment,
             symbol=self.symbol,
         )
 
@@ -61,7 +61,7 @@ class InstrumentHandle:
         """Get full quote with all fields (uses pre-resolved security_id)."""
         return self._market_data.get_quote_by_id(
             self._resolved.security_id,
-            self._resolved.dhan_exchange_segment,
+            self._resolved.wire_segment,
             symbol=self.symbol,
         )
 
@@ -75,7 +75,7 @@ class InstrumentHandle:
             )
         return self._market_data.get_depth_by_id(
             self._resolved.security_id,
-            self._resolved.dhan_exchange_segment,
+            self._resolved.wire_segment,
             symbol=self.symbol,
         )
 

@@ -37,14 +37,8 @@ class TestToDhanWire:
     def test_nse_index(self):
         assert to_dhan_wire(Exchange.NSE, Segment.INDEX) == "IDX_I"
 
-    def test_index_exchange_index_segment(self):
-        assert to_dhan_wire(Exchange.INDEX, Segment.INDEX) == "IDX_I"
-
     def test_nse_currency(self):
         assert to_dhan_wire(Exchange.NSE, Segment.CURRENCY) == "NSE_CURRENCY"
-
-    def test_currency_exchange_currency_segment(self):
-        assert to_dhan_wire(Exchange.CURRENCY, Segment.CURRENCY) == "NSE_CURRENCY"
 
     def test_mcx_options(self):
         assert to_dhan_wire(Exchange.MCX, Segment.OPTIONS) == "MCX_COMM"
@@ -74,9 +68,6 @@ class TestExchangeToWire:
 
     def test_mcx_exchange(self):
         assert exchange_to_wire(Exchange.MCX) == "MCX_COMM"
-
-    def test_index_exchange(self):
-        assert exchange_to_wire(Exchange.INDEX) == "IDX_I"
 
     def test_string_nse(self):
         assert exchange_to_wire("NSE") == "NSE_EQ"
@@ -114,10 +105,10 @@ class TestNormaliseExchange:
         assert normalise_exchange("NSE_FNO") == Exchange.NSE
 
     def test_idx_i(self):
-        assert normalise_exchange("IDX_I") == Exchange.INDEX
+        assert normalise_exchange("IDX_I") == Exchange.NSE
 
     def test_nse_currency(self):
-        assert normalise_exchange("NSE_CURRENCY") == Exchange.CURRENCY
+        assert normalise_exchange("NSE_CURRENCY") == Exchange.NSE
 
     def test_case_insensitive(self):
         assert normalise_exchange("nse") == Exchange.NSE
@@ -145,9 +136,6 @@ class TestNormaliseExchange:
 
 class TestWireSegmentForConsolidation:
     """wire_segment_for delegates to the canonical to_dhan_wire table (W1)."""
-
-    def test_index_returns_idx_i_not_nse_eq(self):
-        assert wire_segment_for(Exchange.INDEX, Segment.INDEX) == "IDX_I"
 
     def test_nse_index_returns_idx_i(self):
         assert wire_segment_for(Exchange.NSE, Segment.INDEX) == "IDX_I"

@@ -18,17 +18,8 @@ _EXCHANGE_SHORT: dict[Exchange, str] = {
     Exchange.MCX: "MCX",
 }
 
-# Dhan HTTP/wire segment strings
-_DHAN_WIRE: dict[Exchange, str] = {
-    Exchange.NSE: "NSE_EQ",
-    Exchange.BSE: "BSE_EQ",
-    Exchange.MCX: "MCX_COMM",
-    Exchange.NSE_FNO: "NSE_FNO",
-    Exchange.INDEX: "IDX_I",
-    Exchange.CURRENCY: "NSE_CURRENCY",
-}
-
-# Exchange string to Dhan wire segment
+# Exchange string to Dhan wire segment (default segment per exchange).
+# Used by ws_client.py for binary protocol segment lookup.
 EXCHANGE_TO_SEGMENT: dict[str, str] = {
     "NSE": "NSE_EQ",
     "BSE": "BSE_EQ",
@@ -85,6 +76,9 @@ SEGMENT_TO_NUMERIC: dict[str, int] = {v: k for k, v in NUMERIC_TO_SEGMENT.items(
 def exchange_to_wire(exchange: Exchange | str) -> str:
     """Convert Exchange enum or string to Dhan wire segment string (legacy 1-arg).
     
+    Delegates to the canonical pair-based _WIRE_BY_EXCHANGE_SEGMENT using
+    a default segment per exchange.
+    
     Args:
         exchange: Exchange enum value or string (e.g., "NSE", "MCX")
     
@@ -95,10 +89,17 @@ def exchange_to_wire(exchange: Exchange | str) -> str:
         ValueError: If exchange is not recognized
     """
     if isinstance(exchange, Exchange):
-        wire = _DHAN_WIRE.get(exchange)
-        if wire is None:
+        # Derive from canonical pair map using a default segment
+        _default_seg = {
+            Exchange.NSE: Segment.EQUITY,
+            Exchange.BSE: Segment.EQUITY,
+            Exchange.MCX: Segment.COMMODITY,
+            Exchange.NSE_FNO: Segment.FUTURES,
+        }
+        seg = _default_seg.get(exchange)
+        if seg is None:
             raise ValueError(f"No wire segment for exchange: {exchange}")
-        return wire
+        return _WIRE_BY_EXCHANGE_SEGMENT[(exchange, seg)]
     
     # String lookup
     wire = EXCHANGE_TO_SEGMENT.get(exchange.upper())
@@ -117,17 +118,10 @@ _EXCHANGE_NORMALISE: dict[str, Exchange] = {
     "MCX_COMM": Exchange.MCX,
     "NSE_FNO": Exchange.NSE,
     "BSE_FNO": Exchange.BSE,
-    # Wire strings deliberately map to the enum they name (IDX_I → INDEX,
-    # *_CURRENCY → CURRENCY): the resolver's _find has its own INDEX→NSE
-    # fallback for well-known indices, and callers passing wire strings get
-    # the semantically-true exchange back. Only the SCALPR storage-key
-    # aliases below normalise to the row-storage exchange.
-    "IDX_I": Exchange.INDEX,
-    "NSE_CURRENCY": Exchange.CURRENCY,
-    "BSE_CURRENCY": Exchange.CURRENCY,
-    # Storage-key aliases: index/currency rows are stored under their raw
-    # exchange (NSE/BSE per instrument_mapper), so these identifiers must
-    # normalise to the storage key rather than Exchange.INDEX/CURRENCY.
+    # Indices and currency use Exchange.NSE (not separate exchange enums).
+    "IDX_I": Exchange.NSE,
+    "NSE_CURRENCY": Exchange.NSE,
+    "BSE_CURRENCY": Exchange.NSE,
     "INDEX": Exchange.NSE,
     "CURRENCY": Exchange.NSE,
     "NFO": Exchange.NSE,
@@ -170,11 +164,9 @@ _WIRE_BY_EXCHANGE_SEGMENT: dict[tuple[Exchange, Segment], str] = {
     (Exchange.MCX, Segment.OPTIONS): "MCX_COMM",
     (Exchange.NSE, Segment.INDEX): "IDX_I",
     (Exchange.BSE, Segment.INDEX): "IDX_I",
-    (Exchange.INDEX, Segment.INDEX): "IDX_I",
     (Exchange.NSE_FNO, Segment.FUTURES): "NSE_FNO",
     (Exchange.NSE_FNO, Segment.OPTIONS): "NSE_FNO",
     (Exchange.NSE, Segment.CURRENCY): "NSE_CURRENCY",
-    (Exchange.CURRENCY, Segment.CURRENCY): "NSE_CURRENCY",
 }
 
 

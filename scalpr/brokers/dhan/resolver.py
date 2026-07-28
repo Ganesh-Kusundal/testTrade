@@ -77,7 +77,7 @@ class SymbolResolver:
             exchange=exch,
             segment=inst.segment,
             trading_symbol=inst.symbol,
-            dhan_exchange_segment=wire_seg,
+            wire_segment=wire_seg,
             lot_size=inst.lot_size,
             tick_size=inst.tick_size,
             freeze_quantity=None,

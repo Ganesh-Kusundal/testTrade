@@ -81,3 +81,51 @@ class TestLifespanGating:
             with TestClient(app):
                 assert app.state.feed is None
                 assert getattr(app.state, "executor", None) is None
+
+
+class TestCandleProviderFailClosed:
+    """B-009/B-010: _create_candle_provider must not crash or create duplicate connections."""
+
+    def test_returns_none_when_gateway_is_none(self):
+        from scalpr.api.bootstrap import _create_candle_provider
+        assert _create_candle_provider(None) is None
+
+    def test_returns_none_when_gateway_has_no_connection(self):
+        from scalpr.api.bootstrap import _create_candle_provider
+        gw = MagicMock()
+        gw.connection = None
+        assert _create_candle_provider(gw) is None
+
+    def test_returns_callable_when_gateway_has_connection(self):
+        from scalpr.api.bootstrap import _create_candle_provider
+        gw = MagicMock()
+        gw.connection = MagicMock()
+        provider = _create_candle_provider(gw)
+        assert provider is not None
+        assert callable(provider)
+
+    def test_shares_gateway_connection_not_duplicate(self):
+        """B-010: candle provider must use gateway's connection, not create a new one."""
+        from scalpr.api.bootstrap import _create_candle_provider
+        mock_conn = MagicMock()
+        mock_conn.historical.get_ohlcv.return_value = []
+        gw = MagicMock()
+        gw.connection = mock_conn
+        provider = _create_candle_provider(gw)
+        # Call the provider — it should use gw.connection.historical
+        result = provider("TCS", "NSE", "5m", "2026-07-28")
+        assert result == []
+        mock_conn.historical.get_ohlcv.assert_called_once()
+
+    def test_create_app_boots_when_gateway_fails(self):
+        """B-009: create_app() must succeed even when gateway creation fails."""
+        with patch("scalpr.api.bootstrap._load_dotenv"), \
+             patch("scalpr.api.bootstrap._create_gateway") as mock_gw:
+            mock_gw.return_value = (None, "broker down")
+            from scalpr.api.bootstrap import create_app
+            app = create_app()
+            assert app is not None
+            assert app.state.gateway is None
+            assert app.state.broker_error == "broker down"
+            # replay_manager should have no candle_provider
+            assert app.state.replay_manager is not None

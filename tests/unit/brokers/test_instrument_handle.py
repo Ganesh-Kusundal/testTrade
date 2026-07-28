@@ -21,7 +21,7 @@ def _make_resolved():
         exchange=Exchange.NSE,
         segment=Segment.EQUITY,
         trading_symbol="TCS",
-        dhan_exchange_segment="NSE_EQ",
+        wire_segment="NSE_EQ",
         lot_size=1,
         tick_size=Decimal("0.05"),
         freeze_quantity=1000,

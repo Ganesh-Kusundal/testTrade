@@ -25,7 +25,7 @@ from scalpr.brokers.dhan.option_chain import OptionChainAdapter
 from scalpr.brokers.errors import InstrumentNotFound
 from scalpr.brokers.instrument_handle import InstrumentHandle
 from scalpr.brokers.registry import BrokerRegistry
-from scalpr.domain.instrument import MarketFeed, SimpleInstrumentId
+from scalpr.domain.instrument import Exchange, MarketFeed, Segment, SimpleInstrumentId
 from scalpr.domain.tick import Tick
 
 logger = logging.getLogger(__name__)
@@ -499,16 +499,21 @@ class Gateway:
 
     def instrument(
         self,
-        identifier: str | SimpleInstrumentId,
-        exchange: str | None = None,
-        segment: str | None = None,
+        identifier: str | SimpleInstrumentId | None = None,
+        exchange: str | Exchange | None = None,
+        segment: str | Segment | None = None,
     ) -> InstrumentHandle:
         """Resolve instrument and return handle with scoped operations.
 
+        Supports two calling conventions:
+        1. ``gw.instrument("TCS:NSE")`` — qualified string
+        2. ``gw.instrument("TCS", Exchange.NSE)`` — separate args
+        3. ``gw.instrument("TCS", "NSE")`` — string args
+
         Args:
-            identifier: Qualified symbol (e.g. "TCS:NSE") or SimpleInstrumentId
-            exchange: Not supported — raises ValueError if provided
-            segment: Not supported — raises ValueError if provided
+            identifier: Qualified symbol ("TCS:NSE"), SimpleInstrumentId, or plain symbol
+            exchange: Exchange enum or string (e.g., Exchange.NSE, "NSE", "MCX")
+            segment: Segment enum or string (e.g., Segment.INDEX, "INDEX")
 
         Returns:
             InstrumentHandle with .historical(), .quote(), .ltp(), .depth()
@@ -516,22 +521,40 @@ class Gateway:
         Usage::
 
             tcs = gw.instrument("TCS:NSE")
+            tcs = gw.instrument("TCS", Exchange.NSE)
+            nifty = gw.instrument("NIFTY", Exchange.NSE, Segment.INDEX)
             candles = tcs.historical(interval="1D", start="2025-01-01")
             quote = tcs.quote()
         """
-        if exchange is not None or segment is not None:
-            raise ValueError(
-                "exchange/segment overrides are not supported; encode the "
-                "exchange in the identifier, e.g. 'TCS:NSE'"
-            )
         conn = self._get_dhan_connection()
 
-        try:
-            if isinstance(identifier, str):
-                inst_id = SimpleInstrumentId.parse(identifier)
-                resolved = conn.resolver.resolve_full(inst_id.symbol, inst_id.exchange.value)
+        # Resolve symbol and exchange from the calling convention
+        symbol: str
+        exch_str: str
+
+        if isinstance(identifier, SimpleInstrumentId):
+            symbol = identifier.symbol
+            exch_str = identifier.exchange.value
+        elif isinstance(identifier, str) and ":" in identifier and exchange is None:
+            # Qualified string "TCS:NSE"
+            inst_id = SimpleInstrumentId.parse(identifier)
+            symbol = inst_id.symbol
+            exch_str = inst_id.exchange.value
+        elif isinstance(identifier, str):
+            symbol = identifier
+            if exchange is None:
+                exch_str = "NSE"
+            elif isinstance(exchange, Exchange):
+                exch_str = exchange.value
             else:
-                resolved = conn.resolver.resolve_full(identifier.symbol, identifier.exchange.value)
+                exch_str = str(exchange)
+        else:
+            raise ValueError(
+                f"identifier must be a string or SimpleInstrumentId, got {type(identifier).__name__}"
+            )
+
+        try:
+            resolved = conn.resolver.resolve_full(symbol, exch_str)
         except _DhanInstrumentNotFound as exc:
             raise InstrumentNotFound(str(exc)) from exc
 

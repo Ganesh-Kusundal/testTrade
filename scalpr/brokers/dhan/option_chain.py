@@ -87,7 +87,7 @@ class OptionChainAdapter:
     def _resolve_underlying(self, symbol: str, exchange: str) -> tuple[int, str]:
         """Resolve underlying to (security_id, wire_segment)."""
         resolved = self._resolver.resolve_full(symbol, exchange)
-        return int(resolved.security_id), resolved.dhan_exchange_segment
+        return int(resolved.security_id), resolved.wire_segment
 
     def _resolve_next_expiry(self, security_id: int, segment: str) -> date:
         """Fetch expiry list and return the earliest future expiry."""

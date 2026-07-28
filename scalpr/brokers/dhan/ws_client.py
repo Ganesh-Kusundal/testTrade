@@ -39,14 +39,6 @@ logger = logging.getLogger(__name__)
 # Default subscription mode
 _DEFAULT_MODE = "quote"
 
-# Mode mapping for SDK
-_SDK_MODES: dict[str, str] = {
-    "ltp": "Ticker",
-    "quote": "Quote",
-    "depth": "Quote",  # SDK doesn't distinguish depth from quote in v2
-    "full": "Full",
-}
-
 
 def _get_sdk_mode_int(mode_str: str) -> int:
     """Get SDK mode integer from mode string.
@@ -55,12 +47,16 @@ def _get_sdk_mode_int(mode_str: str) -> int:
     Depth=19, Full=21). Older versions had a MarketFeed class; the current
     installed version does not, so we import the constants directly.
     """
-    from dhanhq.marketfeed import Ticker, Quote, Full, Depth
-    
+    try:
+        from dhanhq.marketfeed import Ticker, Quote, Full, Depth
+    except ImportError:
+        # Hardcoded fallback matching dhanhq v2 wire constants
+        Ticker, Quote, Depth, Full = 15, 17, 19, 21
+
     _mode_map: dict[str, int] = {
         "ltp": Ticker,
         "quote": Quote,
-        "depth": Depth,
+        "depth": Quote,  # SDK doesn't distinguish depth from quote in v2
         "full": Full,
     }
     return _mode_map.get(mode_str, Quote)

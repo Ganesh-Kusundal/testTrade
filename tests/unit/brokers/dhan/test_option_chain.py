@@ -50,7 +50,7 @@ def _adapter():
     resolver = MagicMock()
     resolved = MagicMock()
     resolved.security_id = 13
-    resolved.dhan_exchange_segment = "IDX_I"
+    resolved.wire_segment = "IDX_I"
     resolver.resolve_full.return_value = resolved
     return OptionChainAdapter(client, resolver), client, resolver
 

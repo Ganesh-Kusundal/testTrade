@@ -12,8 +12,8 @@ class Exchange(str, Enum):
     BSE = "BSE"
     MCX = "MCX"
     NSE_FNO = "NSE_FNO"  # F&O segment
-    INDEX = "INDEX"
-    CURRENCY = "CURRENCY"
+    # Note: indices use Exchange.NSE + Segment.INDEX (not a separate exchange).
+    # Currency uses Exchange.NSE + Segment.CURRENCY.
 
 
 class Segment(str, Enum):
@@ -116,7 +116,7 @@ class ResolvedInstrument:
     exchange: Exchange
     segment: Segment
     trading_symbol: str
-    dhan_exchange_segment: str
+    wire_segment: str  # provider-neutral wire-format segment (e.g. "NSE_EQ", "IDX_I")
     lot_size: int | None
     tick_size: Decimal | None
     freeze_quantity: int | None

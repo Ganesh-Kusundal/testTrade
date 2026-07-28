@@ -188,6 +188,39 @@ class TestMarketDataAdapter:
         assert quote["oi_day_high"] == Decimal("1200000")
         assert quote["oi_day_low"] == Decimal("900000")
 
+    def test_should_compute_change_percent_from_net_change_and_close(self, market_adapter, mock_http_client):
+        """B-003: change_percent = net_change / close * 100."""
+        mock_http_client.post.return_value = {
+            "data": {
+                "NSE_EQ": {
+                    "1": {
+                        "last_price": 2510.50,
+                        "net_change": 15.30,
+                        "ohlc": {"open": 2495.00, "high": 2520.00, "low": 2490.00, "close": 2495.20},
+                    }
+                }
+            }
+        }
+        quote = market_adapter.get_quote("RELIANCE", "NSE")
+        expected = Decimal("15.30") / Decimal("2495.20") * 100
+        assert quote["change_percent"] == expected
+
+    def test_change_percent_zero_close_guard(self, market_adapter, mock_http_client):
+        """B-003: When close is 0, change_percent must be 0 (no division by zero)."""
+        mock_http_client.post.return_value = {
+            "data": {
+                "NSE_EQ": {
+                    "1": {
+                        "last_price": 100.0,
+                        "net_change": 5.0,
+                        "ohlc": {"open": 95.0, "high": 105.0, "low": 90.0, "close": 0},
+                    }
+                }
+            }
+        }
+        quote = market_adapter.get_quote("TEST", "NSE")
+        assert quote["change_percent"] == Decimal("0")
+
     def test_should_raise_when_quote_entry_empty(self, market_adapter, mock_http_client):
         mock_http_client.post.return_value = {"data": {"NSE_EQ": {"1": {}}}}
         with pytest.raises(ValueError, match="No quote data"):

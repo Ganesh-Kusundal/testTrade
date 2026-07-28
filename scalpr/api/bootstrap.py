@@ -141,30 +141,24 @@ async def _start_trading(app: FastAPI) -> None:
     logger.info("trading_wired: %s", watchlist)
 
 
-def _create_candle_provider():
-    """Create a candle provider function for replay sessions.
+def _create_candle_provider(gateway):
+    """Create a candle provider from the gateway's existing connection.
 
-    Returns a callable(symbol, exchange, timeframe, date_str) -> list[Candle]
-    that fetches from the Dhan historical adapter if credentials are available,
-    otherwise returns None (fail-closed — replay will return 503).
+    Shares the gateway's single DhanConnection — no duplicate connection,
+    no extra instrument load, no orphaned HTTP session.
+    Returns None if gateway has no connection (fail-closed — replay returns 503).
     """
-    client_id = os.environ.get("DHAN_CLIENT_ID")
-    access_token = os.environ.get("DHAN_ACCESS_TOKEN")
-    if not client_id or not access_token:
-        logger.warning("DHAN_CLIENT_ID/DHAN_ACCESS_TOKEN not set — replay unavailable")
+    if gateway is None:
+        return None
+    conn = getattr(gateway, "connection", None)
+    if conn is None:
         return None
 
     try:
-        from scalpr.brokers.dhan.connection import DhanConnection
         from scalpr.api.models import Candle
     except Exception as e:
         logger.warning("replay candle provider unavailable: %s", e)
         return None
-
-    # Create and connect the Dhan connection (gets historical adapter)
-    config = {"client_id": client_id, "access_token": access_token}
-    connection = DhanConnection(config)
-    connection.connect()
 
     def provider(symbol: str, exchange: str, timeframe: str, date_str: str) -> list[Candle]:
         try:
@@ -173,14 +167,13 @@ def _create_candle_provider():
             logger.error("replay_provider_invalid_date: %s", date_str)
             return []
 
-        candles = connection.historical.get_ohlcv(
+        candles = conn.historical.get_ohlcv(
             symbol=symbol,
             exchange=exchange,
             timeframe=timeframe,
             from_date=d,
             to_date=d,
         )
-        # Convert to API Candle model (epoch ms, float OHLCV)
         return [
             Candle(
                 t=int(c["timestamp"].timestamp() * 1000),
@@ -219,6 +212,11 @@ async def _lifespan(app: FastAPI):
     if getattr(app.state, "gateway", None):
         try:
             app.state.gateway.disconnect()
+        except Exception:
+            pass
+    if getattr(app.state, "replay_manager", None):
+        try:
+            app.state.replay_manager.shutdown()
         except Exception:
             pass
 
@@ -266,7 +264,7 @@ def create_app() -> FastAPI:
 
     # Replay session manager (with candle provider if gateway available)
     from scalpr.api.replay_manager import ReplaySessionManager
-    candle_provider = _create_candle_provider()
+    candle_provider = _create_candle_provider(gateway)
     app.state.replay_manager = ReplaySessionManager(candle_provider=candle_provider)
 
     return app

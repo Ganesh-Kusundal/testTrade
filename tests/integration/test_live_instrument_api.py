@@ -28,7 +28,7 @@ def test_instrument_resolution():
         tcs = gw.instrument("TCS:NSE")
         print(f"✓ Resolved: {tcs.symbol} on {tcs.exchange}")
         print(f"  Security ID: {tcs.resolved.security_id}")
-        print(f"  Wire segment: {tcs.resolved.dhan_exchange_segment}")
+        print(f"  Wire segment: {tcs.resolved.wire_segment}")
         print(f"  Lot size: {tcs.resolved.lot_size}")
         assert tcs.symbol == "TCS"
         assert tcs.exchange == "NSE"
@@ -136,7 +136,7 @@ def test_index_instrument():
         nifty = gw.instrument("NIFTY:NSE")
         print(f"✓ Resolved: {nifty.symbol} on {nifty.exchange}")
         print(f"  Security ID: {nifty.resolved.security_id}")
-        print(f"  Wire segment: {nifty.resolved.dhan_exchange_segment}")
+        print(f"  Wire segment: {nifty.resolved.wire_segment}")
         ltp = nifty.ltp()
         print(f"  LTP: ₹{ltp}")
         return True
