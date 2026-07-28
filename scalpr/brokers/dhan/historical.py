@@ -10,11 +10,15 @@ import logging
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from scalpr.brokers.dhan.http_client import DhanHttpClient
 from scalpr.brokers.dhan.resolver import SymbolResolver
 
 logger = logging.getLogger(__name__)
+
+# Indian Standard Time — all timestamps returned to users in IST
+_IST = ZoneInfo("Asia/Kolkata")
 
 # Dhan v2 intraday intervals (minutes). Verified live 2026-07-27:
 # the API serves 1/3/5/15/25/60 only — no 2/10/30/120/240, no weekly/monthly.
@@ -229,7 +233,7 @@ class HistoricalDataAdapter:
 
         candles = [
             {
-                "timestamp": datetime.fromtimestamp(float(ts), tz=timezone.utc),
+                "timestamp": datetime.fromtimestamp(float(ts), tz=timezone.utc).astimezone(_IST),
                 "open": Decimal(str(o)),
                 "high": Decimal(str(h)),
                 "low": Decimal(str(low)),

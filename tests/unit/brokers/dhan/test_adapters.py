@@ -1158,7 +1158,8 @@ class TestHistoricalDataAdapter:
         assert isinstance(candles[0]["low"], Decimal)
         assert isinstance(candles[0]["close"], Decimal)
         assert isinstance(candles[0]["volume"], int)
-        assert candles[0]["timestamp"].tzinfo == timezone.utc
+        from zoneinfo import ZoneInfo
+        assert candles[0]["timestamp"].tzinfo == ZoneInfo("Asia/Kolkata")
 
     def test_should_truncate_to_shortest_column_on_length_mismatch(self, historical_adapter):
         response = {

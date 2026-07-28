@@ -139,7 +139,7 @@ class TestInstrumentHandleHistorical:
             market_data_adapter=MagicMock(),
             historical_adapter=mock_hist,
         )
-        result = handle.historical(interval="1D")
+        result = handle.historical(interval="1D", as_json=True)
         assert len(result) == 1
         assert result[0]["open"] == Decimal("3400")
         mock_hist.get_ohlcv.assert_called_once()

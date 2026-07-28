@@ -115,17 +115,24 @@ class InstrumentHandle:
         interval: str = "1D",
         start: date | datetime | str | None = None,
         end: date | datetime | str | None = None,
-    ) -> list[dict[str, Any]]:
+        as_json: bool = False,
+    ) -> Any:
         """Fetch historical OHLCV candles.
 
         Args:
             interval: Candle interval (e.g. "1D", "5m", "1h")
             start: Start date (defaults to 90 days ago)
             end: End date (defaults to today)
+            as_json: If True, return list[dict]. Default returns pandas DataFrame
+                     with IST-indexed timestamps.
 
         Returns:
-            List of candle dicts with timestamp, open, high, low, close, volume
+            pandas.DataFrame (default) with columns:
+                open, high, low, close, volume — indexed by timestamp (IST).
+            Or list[dict] if as_json=True.
         """
+        import pandas as pd
+
         # Parse string dates FIRST so defaults derive from the real end date
         if isinstance(start, str):
             start = date.fromisoformat(start)
@@ -138,13 +145,24 @@ class InstrumentHandle:
             end_d = end.date() if isinstance(end, datetime) else end
             start = end_d - timedelta(days=90)
 
-        return self._historical.get_ohlcv(
+        candles = self._historical.get_ohlcv(
             self.symbol,
             self.exchange,
             interval,
             start,
             end,
         )
+
+        if as_json:
+            return candles
+
+        if not candles:
+            return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
+
+        df = pd.DataFrame(candles)
+        df.set_index("timestamp", inplace=True)
+        df.sort_index(inplace=True)
+        return df
 
     def option_chain(
         self,
