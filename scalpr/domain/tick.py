@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
+from typing import Union
 
 
 @dataclass(slots=True, frozen=True)
@@ -57,3 +58,19 @@ class OHLCV:
             raise ValueError("bar_open_time must be timezone-aware")
         if self.bar_open_time.tzinfo != timezone.utc:
             raise ValueError("bar_open_time must be timezone-aware UTC")
+
+
+@dataclass(frozen=True)
+class Candle:
+    """Normalized OHLCV candle for historical data.
+
+    Provider-independent: timestamps are always UTC-aware datetimes,
+    prices are Decimals, volume/OI are optional ints.
+    """
+    timestamp: datetime
+    open: Decimal
+    high: Decimal
+    low: Decimal
+    close: Decimal
+    volume: int | None = None
+    open_interest: int | None = None

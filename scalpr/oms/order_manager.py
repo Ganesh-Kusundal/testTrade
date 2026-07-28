@@ -85,6 +85,19 @@ class OrderManager:
 
             if order_id not in self.fills:
                 self.fills[order_id] = []
+
+            # Idempotency: silently ignore duplicate fill_id (broker may resend)
+            existing_ids = {f.fill_id for f in self.fills[order_id]}
+            if fill.fill_id in existing_ids:
+                return order
+
+            prospective_total = sum(f.quantity for f in self.fills[order_id]) + fill.quantity
+            if prospective_total > order.quantity:
+                raise ValueError(
+                    f"Overfill rejected: fill {fill.fill_id} would push "
+                    f"filled_quantity to {prospective_total}, exceeding order quantity {order.quantity}"
+                )
+
             self.fills[order_id].append(fill)
 
             total_filled = sum(f.quantity for f in self.fills[order_id])
