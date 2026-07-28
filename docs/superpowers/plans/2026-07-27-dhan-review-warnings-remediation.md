@@ -22,7 +22,29 @@ Tasks 3, 4, 5 and the (1→2) chain and the (6→7) chain may run in parallel.
 
 **Baseline (must hold after every task):** `python -m pytest tests/unit/brokers/ tests/unit/domain/ tests/contract/ -q` → 516+ passed, exactly these 5 pre-existing failures allowed: `test_option_chain.py::test_scanner_accepts_adapter_output`, 2× `test_rate_limit_async.py::TestAsyncHttpClientWiring`, 2× `test_clock_and_types.py::TestSignalExtensions`.
 
-**Commits:** Do NOT commit — the user has not authorized commits. Verify with the test suite after each task instead.
+**Commits:** Do NOT commit — the user has not authorized commits. Verify with the test suite after each task instead. **DO stage** (`git add`) after every task GREEN per the Revert Anomaly Recovery Protocol (bottom of this document).
+
+---
+
+## ULTRA-PLAN STATUS (updated 2026-07-27, post revert #4 recovery)
+
+| Task | Status | Evidence |
+|------|--------|----------|
+| Task 1 (W2) wire pairs | ✅ DONE ×2 (re-applied after revert #4) | 4 pairs in `_WIRE_BY_EXCHANGE_SEGMENT`; tests in `TestToDhanWire` |
+| Task 2 (W1) consolidation | ✅ DONE ×2 (re-applied after revert #4) | `wire_segment_for` delegates to `to_dhan_wire`; `TestWireSegmentForConsolidation` |
+| Task 3 (W6) handle honesty | ✅ DONE | date-parse-first, depth `levels != 5` guard, gateway `instrument()` override guard; `TestInstrumentHandleParamHonesty` |
+| Task 4 (W7) fail-loud | ✅ DONE | by-id raise-on-missing + batch skip logging; legacy zero-decimals test converted to raise-expectation + 2 by-id tests |
+| C1/C2/C3 criticals | ✅ RE-APPLIED (revert #3+#4 recovery) | mapper/orders override, strict normalise, by-id delegation all verified |
+| **Ground truth** | **529 passed / 5 pre-existing failures** | full scoped suite, 2026-07-27 |
+| Staged snapshot | ✅ all completed work `git add`-ed (not committed) | recoverable via `git diff --staged` |
+| Task 5 (W3) error translation | ⏳ NEXT | plan section verified fresh vs gateway.py:511–517 |
+| Task 6 (W4) WS lock | ⏳ PENDING | verified vs gateway.py:402–420 (`threading` already imported) |
+| Task 7 (W5) mode plumbing | ⏳ PENDING after 6 | verified vs ws_manager.py:310–330, subscribe_feed:553–559 |
+| Final gate | ⏳ PENDING | suite + live E2E + grep guard + spec/quality review subagents |
+
+**Remaining dependency graph:** `Task 5` ∥ `(Task 6 → Task 7)` — Task 5 touches only `Gateway.instrument` + imports; Tasks 6/7 touch the streaming block. All three edit `gateway.py`, so within this single session they execute sequentially (5 → 6 → 7) to avoid self-conflicts; their test files may be appended in any order.
+
+**Post-task ritual (every task):** RED → GREEN → canary grep → baseline suite → `git add` touched files.
 
 ---
 
