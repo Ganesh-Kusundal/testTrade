@@ -12,7 +12,11 @@ from datetime import date
 from decimal import Decimal
 from typing import NamedTuple
 
-from scalpr.brokers.dhan.segments import _COMPACT_SEGMENT_MAP, SEGMENT_TO_EXCHANGE
+from scalpr.brokers.dhan.segments import (
+    _COMPACT_SEGMENT_MAP,
+    SEGMENT_TO_EXCHANGE,
+    to_dhan_wire,
+)
 from scalpr.domain.instrument import Exchange, Instrument, OptionType, Segment
 
 
@@ -121,7 +125,15 @@ def map_row(row: dict) -> MappedInstrument | None:
 
 
 def wire_segment_for(exchange: Exchange, segment: Segment) -> str:
-    """Fallback wire segment for instruments not sourced from the CSV."""
+    """Fallback wire segment for instruments not sourced from the CSV.
+
+    Delegates to the canonical pair mapping in segments.to_dhan_wire;
+    the legacy heuristics remain only for pairs outside that table.
+    """
+    try:
+        return to_dhan_wire(exchange, segment)
+    except ValueError:
+        pass
     if exchange is Exchange.MCX:
         return "MCX_COMM"
     if exchange is Exchange.NSE_FNO or segment in (Segment.FUTURES, Segment.OPTIONS):

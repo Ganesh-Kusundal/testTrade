@@ -38,6 +38,7 @@ def gateway_with_mock_manager():
     g._config = {}
     g._gateway = create_autospec(IBrokerGateway, instance=True)
     g._stream_callbacks = []
+    g._ws_lock = threading.Lock()
     g._ws_manager = mgr
     loop = asyncio.new_event_loop()
     thread = threading.Thread(target=loop.run_forever, daemon=True)

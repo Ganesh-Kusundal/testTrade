@@ -5,7 +5,7 @@ from decimal import Decimal
 from typing import Any, Generic, TypeVar
 
 from scalpr.brokers.dhan.dtos import DhanOrderRequest, DhanOrderResponse
-from scalpr.brokers.dhan.segments import to_dhan_wire
+from scalpr.brokers.dhan.segments import exchange_to_wire
 from scalpr.domain.fill import Fill
 from scalpr.domain.instrument import Exchange
 from scalpr.domain.order import Order, OrderType
@@ -58,13 +58,23 @@ class DhanMapper:
     """Pure data transformer between Domain objects and Dhan API DTOs."""
 
     @staticmethod
-    def order_to_dhan_request(order: Order, client_id: str, security_id: str) -> Result[DhanOrderRequest, str]:
+    def order_to_dhan_request(
+        order: Order,
+        client_id: str,
+        security_id: str,
+        exchange_segment: str | None = None,
+    ) -> Result[DhanOrderRequest, str]:
         try:
-            # Single source of segment truth (segments.py)
-            try:
-                segment = to_dhan_wire(order.exchange)
-            except ValueError:
-                return Result.failure(f"Unsupported exchange: {order.exchange}")
+            # Prefer the resolver-derived wire segment (segment-aware, e.g.
+            # BSE_FNO for SENSEX options). Fall back to the exchange-only
+            # mapping for callers that cannot supply one.
+            if exchange_segment:
+                segment = exchange_segment
+            else:
+                try:
+                    segment = exchange_to_wire(order.exchange)
+                except ValueError:
+                    return Result.failure(f"Unsupported exchange: {order.exchange}")
 
             return Result.success(
                 DhanOrderRequest(

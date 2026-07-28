@@ -66,3 +66,33 @@ def test_mapper_segment_equivalence_all_exchanges(exchange, expected_segment):
     result = DhanMapper.order_to_dhan_request(order, "c", "s")
     assert result.is_ok
     assert result.value.exchangeSegment == expected_segment
+
+
+# C1 guard: the order path must honor the resolver-derived wire segment so
+# derivative orders are never mis-routed to the equity segment.
+def test_mapper_uses_resolved_exchange_segment_override():
+    """A BSE option order (SENSEX) must go to BSE_FNO, not BSE_EQ."""
+    order = Order(
+        order_id="bse_opt_1", symbol="SENSEX2570881000CE",
+        exchange=Exchange.BSE, side=OrderSide.BUY,
+        order_type=OrderType.LIMIT, quantity=20,
+        price=Decimal("120.00"), state=OrderState.PENDING,
+    )
+    result = DhanMapper.order_to_dhan_request(
+        order, "client123", "sec999", exchange_segment="BSE_FNO"
+    )
+    assert result.is_ok
+    assert result.value.exchangeSegment == "BSE_FNO"
+
+
+def test_mapper_falls_back_to_exchange_mapping_without_override():
+    """Without an override, the legacy exchange-only mapping still applies."""
+    order = Order(
+        order_id="eq_ord_2", symbol="TCS",
+        exchange=Exchange.NSE, side=OrderSide.BUY,
+        order_type=OrderType.LIMIT, quantity=1,
+        price=Decimal("3500"), state=OrderState.PENDING,
+    )
+    result = DhanMapper.order_to_dhan_request(order, "client123", "11536", exchange_segment=None)
+    assert result.is_ok
+    assert result.value.exchangeSegment == "NSE_EQ"

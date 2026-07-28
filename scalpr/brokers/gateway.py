@@ -20,7 +20,11 @@ from dotenv import load_dotenv
 
 from scalpr.brokers.broker_port import IBrokerGateway
 from scalpr.brokers.contracts import DepthLevel, Funds, Holding, MarketDepth, Quote, Trade
+from scalpr.brokers.dhan.exceptions import InstrumentNotFoundError as _DhanInstrumentNotFound
+from scalpr.brokers.errors import InstrumentNotFound
+from scalpr.brokers.instrument_handle import InstrumentHandle
 from scalpr.brokers.registry import BrokerRegistry
+from scalpr.domain.instrument import MarketFeed, SimpleInstrumentId
 from scalpr.domain.tick import Tick
 
 logger = logging.getLogger(__name__)
@@ -68,6 +72,7 @@ class Gateway:
         self._ws_loop: asyncio.AbstractEventLoop | None = None
         self._ws_thread: threading.Thread | None = None
         self._stream_callbacks: list[Callable] = []
+        self._ws_lock = threading.Lock()
 
         if auto_connect:
             self._gateway.connect()
@@ -312,14 +317,16 @@ class Gateway:
         Returns:
             Funds dataclass with margin details
         """
-        raw_funds = self._gateway.get_fund_limits()
-
+        result = self._gateway.get_fund_limits()
+        # Adapter may return Funds directly or a dict
+        if isinstance(result, Funds):
+            return result
         return Funds(
-            available_margin=Decimal(str(raw_funds.get("available_margin", 0))),
-            used_margin=Decimal(str(raw_funds.get("used_margin", 0))),
-            total_balance=Decimal(str(raw_funds.get("total_balance", 0))),
-            collateral=Decimal(str(raw_funds.get("collateral", 0))),
-            realtime=raw_funds.get("realtime", True),
+            available_margin=Decimal(str(result.get("available_margin", 0))),
+            used_margin=Decimal(str(result.get("used_margin", 0))),
+            total_balance=Decimal(str(result.get("total_balance", 0))),
+            collateral=Decimal(str(result.get("collateral", 0))),
+            realtime=result.get("realtime", True),
         )
 
     # ------------------------------------------------------------------
@@ -383,37 +390,49 @@ class Gateway:
         if callback:
             self._stream_callbacks.append(callback)
 
-        # Initialize WebSocket manager if not already done
-        if self._ws_manager is None:
-            self._init_websocket_manager()
+        # Initialize WebSocket manager if not already done (lock guards
+        # concurrent init/teardown races)
+        with self._ws_lock:
+            if self._ws_manager is None:
+                self._init_websocket_manager()
+            manager, loop = self._ws_manager, self._ws_loop
 
         # Subscribe on the manager's event loop, preserving the exchange
         asyncio.run_coroutine_threadsafe(
-            self._ws_manager.subscribe_pairs([(s, exchange) for s in symbols]),
-            self._ws_loop,
+            manager.subscribe_pairs([(s, exchange) for s in symbols]),
+            loop,
         ).result(timeout=15)
 
         logger.info(f"stream_subscribed: {symbols}")
 
     def stop_stream(self) -> None:
         """Stop all streaming subscriptions and the background loop."""
-        if not self._ws_manager:
-            return
-        try:
-            asyncio.run_coroutine_threadsafe(
-                self._ws_manager.stop(), self._ws_loop
-            ).result(timeout=15)
-        except Exception as exc:
-            logger.error(f"ws_manager_stop_failed: {exc}")
-        finally:
-            self._ws_loop.call_soon_threadsafe(self._ws_loop.stop)
-            self._ws_thread.join(timeout=5)
-            self._ws_loop.close()
+        with self._ws_lock:
+            manager, loop, thread = self._ws_manager, self._ws_loop, self._ws_thread
             self._ws_manager = None
             self._ws_loop = None
             self._ws_thread = None
             self._stream_callbacks.clear()
-            logger.info("stream_stopped")
+        if manager is None or loop is None:
+            return
+        try:
+            asyncio.run_coroutine_threadsafe(
+                manager.stop(), loop
+            ).result(timeout=15)
+        except Exception as exc:
+            logger.error(f"ws_manager_stop_failed: {exc}")
+        finally:
+            try:
+                loop.call_soon_threadsafe(loop.stop)
+            except RuntimeError:
+                pass  # loop already closed/dead
+            if thread is not None:
+                thread.join(timeout=5)
+            if thread is None or not thread.is_alive():
+                loop.close()
+                logger.info("stream_stopped")
+            else:
+                logger.warning("ws_thread_did_not_exit: leaving loop unclosed")
 
     def is_streaming(self) -> bool:
         """Check if streaming is active.
@@ -472,6 +491,113 @@ class Gateway:
             self._ws_manager.start(), self._ws_loop
         ).result(timeout=15)
         logger.info("websocket_manager_initialized")
+
+    # ------------------------------------------------------------------
+    # v0/v1 domain API
+    # ------------------------------------------------------------------
+
+    def instrument(
+        self,
+        identifier: str | SimpleInstrumentId,
+        exchange: str | None = None,
+        segment: str | None = None,
+    ) -> InstrumentHandle:
+        """Resolve instrument and return handle with scoped operations.
+
+        Args:
+            identifier: Qualified symbol (e.g. "TCS:NSE") or SimpleInstrumentId
+            exchange: Not supported — raises ValueError if provided
+            segment: Not supported — raises ValueError if provided
+
+        Returns:
+            InstrumentHandle with .historical(), .quote(), .ltp(), .depth()
+
+        Usage::
+
+            tcs = gw.instrument("TCS:NSE")
+            candles = tcs.historical(interval="1D", start="2025-01-01")
+            quote = tcs.quote()
+        """
+        if exchange is not None or segment is not None:
+            raise ValueError(
+                "exchange/segment overrides are not supported; encode the "
+                "exchange in the identifier, e.g. 'TCS:NSE'"
+            )
+        conn = self._get_dhan_connection()
+
+        try:
+            if isinstance(identifier, str):
+                inst_id = SimpleInstrumentId.parse(identifier)
+                resolved = conn.resolver.resolve_full(inst_id.symbol, inst_id.exchange.value)
+            else:
+                resolved = conn.resolver.resolve_full(identifier.symbol, identifier.exchange.value)
+        except _DhanInstrumentNotFound as exc:
+            raise InstrumentNotFound(str(exc)) from exc
+
+        return InstrumentHandle(
+            resolved=resolved,
+            market_data_adapter=conn.market_data,
+            historical_adapter=conn.historical,
+        )
+
+    def subscribe_feed(
+        self,
+        mode: MarketFeed,
+        instruments: str | list[str],
+        on_event: Callable[[Any], None] | None = None,
+    ) -> None:
+        """Subscribe to live market data feed.
+
+        Args:
+            mode: Subscription depth (MarketFeed.LTP, QUOTE, or FULL)
+            instruments: Qualified symbol(s), e.g. "TCS:NSE" or ["TCS:NSE", "RELIANCE:NSE"]
+            on_event: Optional callback for market events
+
+        Usage::
+
+            gw.subscribe_feed(MarketFeed.FULL, ["TCS:NSE", "RELIANCE:NSE"], on_event=handle_tick)
+        """
+        mode = MarketFeed(mode)  # accept plain strings like "full"
+        if isinstance(instruments, str):
+            instruments = [instruments]
+
+        pairs = []
+        for inst_str in instruments:
+            inst_id = SimpleInstrumentId.parse(inst_str)
+            pairs.append((inst_id.symbol, inst_id.exchange.value))
+
+        with self._ws_lock:
+            if self._ws_manager is None:
+                self._init_websocket_manager()
+            manager, loop = self._ws_manager, self._ws_loop
+
+        # Register the callback BEFORE subscribing so no early ticks are dropped
+        if on_event:
+            self._stream_callbacks.append(on_event)
+
+        try:
+            asyncio.run_coroutine_threadsafe(
+                manager.subscribe_pairs(pairs, mode=mode.value),
+                loop,
+            ).result(timeout=15)
+        except Exception:
+            # Unwind: a failed subscribe must not leave a live callback behind
+            if on_event and on_event in self._stream_callbacks:
+                self._stream_callbacks.remove(on_event)
+            raise
+
+        logger.info(f"feed_subscribed: {instruments} mode={mode.value}")
+
+    def _get_dhan_connection(self):
+        """Access the underlying DhanConnection (Dhan only)."""
+        gw = self._gateway
+        if hasattr(gw, 'connection'):
+            return gw.connection
+        if hasattr(gw, '_connection'):
+            return gw._connection
+        raise NotImplementedError(
+            "instrument() requires a broker that exposes a connection with adapters"
+        )
 
     # ------------------------------------------------------------------
     # Lifecycle

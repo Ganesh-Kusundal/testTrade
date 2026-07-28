@@ -87,17 +87,24 @@ class OrdersAdapter:
         try:
             self._validate_order(order)
 
-            # ── Resolve security_id ────────────────────────────────────
+            # ── Resolve security_id + segment-aware wire segment ──────
             try:
                 inst = self._resolver.resolve(order.symbol, order.exchange.value)
                 security_id = inst.security_id
+                # Segment-aware wire segment: a BSE option must route to
+                # BSE_FNO, never the exchange-only BSE_EQ fallback.
+                exchange_segment = self._resolver.wire_segment_of(
+                    order.symbol, order.exchange.value
+                )
             except Exception as exc:
                 raise OrderError(
                     f"Cannot resolve security_id for {order.symbol} on {order.exchange}: {exc}"
                 ) from exc
 
             # ── Map domain → Dhan DTO ─────────────────────────────────
-            dhan_req_result = DhanMapper.order_to_dhan_request(order, self._client.client_id, security_id)
+            dhan_req_result = DhanMapper.order_to_dhan_request(
+                order, self._client.client_id, security_id, exchange_segment=exchange_segment
+            )
             if not dhan_req_result.is_ok:
                 raise OrderError(f"Order mapping failed: {dhan_req_result.error}")
 

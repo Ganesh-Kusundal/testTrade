@@ -15,7 +15,7 @@ from unittest.mock import MagicMock, patch
 from scalpr.brokers.dhan.mapper import DhanMapper
 from scalpr.brokers.dhan.orders import OrdersAdapter
 from scalpr.brokers.dhan.connection import DhanConnection
-from scalpr.brokers.dhan.http_client import _RATE_LIMITS
+from scalpr.brokers.rate_limit import DHAN_RATE_LIMITS
 from scalpr.brokers.dhan.exceptions import BrokerError
 from scalpr.domain.order import Order, OrderSide, OrderType, OrderState
 from scalpr.domain.instrument import Exchange
@@ -81,6 +81,7 @@ class TestDecimalPrecision:
 
         resolver = MagicMock()
         resolver.resolve.return_value = MagicMock(symbol="12345")
+        resolver.wire_segment_of.return_value = "NSE_EQ"
 
         adapter = OrdersAdapter(client=mock_client, resolver=resolver)
 
@@ -228,6 +229,7 @@ class TestMarketOrderFills:
 
         resolver = MagicMock()
         resolver.resolve.return_value = MagicMock(symbol="12345")
+        resolver.wire_segment_of.return_value = "NSE_EQ"
 
         adapter = OrdersAdapter(client=mock_client, resolver=resolver)
 
@@ -261,6 +263,7 @@ class TestMarketOrderFills:
 
         resolver = MagicMock()
         resolver.resolve.return_value = MagicMock(symbol="12345")
+        resolver.wire_segment_of.return_value = "NSE_EQ"
 
         adapter = OrdersAdapter(client=mock_client, resolver=resolver)
 
@@ -293,6 +296,7 @@ class TestMarketOrderFills:
 
         resolver = MagicMock()
         resolver.resolve.return_value = MagicMock(symbol="12345")
+        resolver.wire_segment_of.return_value = "NSE_EQ"
 
         adapter = OrdersAdapter(client=mock_client, resolver=resolver)
 
@@ -321,34 +325,20 @@ class TestRateLimits:
     """Verify rate limits match Dhan API specifications."""
 
     def test_order_api_rate_limit_is_10_per_second(self):
-        """Order API rate limit should be 0.1s (10 req/sec)."""
-        orders_limit = _RATE_LIMITS.get("/orders")
-        assert orders_limit == 0.1, f"Expected 0.1s, got {orders_limit}"
+        """Order bucket sustained_rps should be 10."""
+        assert DHAN_RATE_LIMITS["orders"]["sustained_rps"] == 10.0
 
     def test_quote_api_rate_limit_is_1_per_second(self):
-        """Quote API rate limit should be 1.0s (1 req/sec)."""
-        quote_limit = _RATE_LIMITS.get("/marketfeed/quote")
-        assert quote_limit == 1.0, f"Expected 1.0s, got {quote_limit}"
+        """Quote bucket sustained_rps should be 1."""
+        assert DHAN_RATE_LIMITS["quotes"]["sustained_rps"] == 1.0
 
-    def test_ltp_api_rate_limit_is_5_per_second(self):
-        """LTP API rate limit should be 0.2s (5 req/sec)."""
-        ltp_limit = _RATE_LIMITS.get("/marketfeed/ltp")
-        assert ltp_limit == 0.2, f"Expected 0.2s, got {ltp_limit}"
+    def test_historical_rate_limit_is_5_per_second(self):
+        """Historical bucket sustained_rps should be 5."""
+        assert DHAN_RATE_LIMITS["historical"]["sustained_rps"] == 5.0
 
-    def test_ohlc_api_rate_limit_is_5_per_second(self):
-        """OHLC API rate limit should be 0.2s (5 req/sec)."""
-        ohlc_limit = _RATE_LIMITS.get("/marketfeed/ohlc")
-        assert ohlc_limit == 0.2, f"Expected 0.2s, got {ohlc_limit}"
-
-    def test_option_chain_rate_limit_is_1_per_second(self):
-        """Option chain API rate limit should be 1.0s (1 req/sec)."""
-        option_limit = _RATE_LIMITS.get("/optionchain")
-        assert option_limit == 1.0, f"Expected 1.0s, got {option_limit}"
-
-    def test_charts_rate_limit_is_5_per_second(self):
-        """Charts API rate limit should be 0.2s (5 req/sec)."""
-        charts_limit = _RATE_LIMITS.get("/charts/")
-        assert charts_limit == 0.2, f"Expected 0.2s, got {charts_limit}"
+    def test_optionchain_rate_limit_is_0_33_per_second(self):
+        """Optionchain bucket sustained_rps should be 0.33 (1 per 3s)."""
+        assert DHAN_RATE_LIMITS["optionchain"]["sustained_rps"] == 0.33
 
 
 # ============================================================================
@@ -371,6 +361,7 @@ class TestIntegrationFixes:
 
         resolver = MagicMock()
         resolver.resolve.return_value = MagicMock(symbol="99999")
+        resolver.wire_segment_of.return_value = "MCX_COMM"
 
         adapter = OrdersAdapter(client=mock_client, resolver=resolver)
 

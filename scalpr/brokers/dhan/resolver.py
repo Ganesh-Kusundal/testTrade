@@ -13,8 +13,10 @@ from decimal import Decimal
 
 from scalpr.brokers.dhan.exceptions import InstrumentNotFoundError
 from scalpr.brokers.dhan.instrument_mapper import map_row, wire_segment_for
-from scalpr.brokers.dhan.segments import SEGMENT_TO_EXCHANGE
-from scalpr.domain.instrument import Exchange, Instrument, OptionType, Segment
+from scalpr.brokers.dhan.segments import normalise_exchange, to_dhan_wire
+from scalpr.domain.instrument import (
+    Exchange, Instrument, OptionType, ResolvedInstrument, Segment, SimpleInstrumentId,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +57,34 @@ class SymbolResolver:
                 f"Instrument not found: symbol={symbol!r}, exchange={exchange!r}"
             )
         return inst
+
+    def resolve_full(self, symbol: str, exchange: str) -> ResolvedInstrument:
+        """Resolve symbol to ResolvedInstrument with wire-format mappings.
+
+        Returns a fully-resolved instrument containing everything needed
+        to make API calls without further lookups.
+        """
+        exch = self._normalise_exchange(exchange)
+        inst = self._find(symbol, exch)
+        if inst is None:
+            raise InstrumentNotFoundError(
+                f"Instrument not found: symbol={symbol!r}, exchange={exchange!r}"
+            )
+        wire_seg = self._wire_by_sid.get(inst.security_id) or to_dhan_wire(exch, inst.segment)
+        return ResolvedInstrument(
+            instrument_id=SimpleInstrumentId(symbol=symbol, exchange=exch),
+            security_id=inst.security_id,
+            exchange=exch,
+            segment=inst.segment,
+            trading_symbol=inst.symbol,
+            dhan_exchange_segment=wire_seg,
+            lot_size=inst.lot_size,
+            tick_size=inst.tick_size,
+            freeze_quantity=None,
+            expiry=inst.expiry,
+            strike=inst.strike,
+            option_type=inst.option_type,
+        )
 
     def get_by_symbol(self, symbol: str, exchange: str) -> Instrument | None:
         """Get instrument by symbol, returns None if not found."""
@@ -207,20 +237,8 @@ class SymbolResolver:
 
     @staticmethod
     def _normalise_exchange(exchange: str) -> Exchange:
-        """Normalize exchange string to Exchange enum."""
-        up = exchange.strip().upper()
-        try:
-            return Exchange(up)
-        except ValueError:
-            # Try segment mapping
-            mapped = SEGMENT_TO_EXCHANGE.get(up)
-            if mapped:
-                try:
-                    return Exchange(mapped)
-                except ValueError:
-                    pass
-            # Default to NSE
-            return Exchange.NSE
+        """Normalize exchange string to Exchange enum (strict: typos raise)."""
+        return normalise_exchange(exchange, strict=True)
 
 
 def _generate_alternate_keys(

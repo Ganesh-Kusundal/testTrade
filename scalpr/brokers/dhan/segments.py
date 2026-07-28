@@ -6,7 +6,7 @@ segment strings used in HTTP API requests.
 
 from __future__ import annotations
 
-from scalpr.domain.instrument import Exchange
+from scalpr.domain.instrument import Exchange, Segment
 
 # Default segment for unknown exchanges
 DEFAULT_SEGMENT = "NSE_EQ"
@@ -24,6 +24,8 @@ _DHAN_WIRE: dict[Exchange, str] = {
     Exchange.BSE: "BSE_EQ",
     Exchange.MCX: "MCX_COMM",
     Exchange.NSE_FNO: "NSE_FNO",
+    Exchange.INDEX: "IDX_I",
+    Exchange.CURRENCY: "NSE_CURRENCY",
 }
 
 # Exchange string to Dhan wire segment
@@ -34,6 +36,9 @@ EXCHANGE_TO_SEGMENT: dict[str, str] = {
     "INDEX": "IDX_I",  # For indices like NIFTY, BANKNIFTY
     "NFO": "NSE_FNO",  # NSE F&O
     "BFO": "BSE_FNO",  # BSE F&O
+    "NSE_FNO": "NSE_FNO",
+    "BSE_FNO": "BSE_FNO",
+    "CURRENCY": "NSE_CURRENCY",
 }
 
 # Dhan wire segment to exchange string
@@ -77,8 +82,8 @@ NUMERIC_TO_SEGMENT: dict[int, str] = {
 SEGMENT_TO_NUMERIC: dict[str, int] = {v: k for k, v in NUMERIC_TO_SEGMENT.items()}
 
 
-def to_dhan_wire(exchange: Exchange | str) -> str:
-    """Convert Exchange enum or string to Dhan wire segment string.
+def exchange_to_wire(exchange: Exchange | str) -> str:
+    """Convert Exchange enum or string to Dhan wire segment string (legacy 1-arg).
     
     Args:
         exchange: Exchange enum value or string (e.g., "NSE", "MCX")
@@ -99,6 +104,98 @@ def to_dhan_wire(exchange: Exchange | str) -> str:
     wire = EXCHANGE_TO_SEGMENT.get(exchange.upper())
     if wire is None:
         raise ValueError(f"Unknown exchange: {exchange!r}")
+    return wire
+
+
+# Exchange normalisation: raw broker/user strings -> Exchange enum
+_EXCHANGE_NORMALISE: dict[str, Exchange] = {
+    "NSE": Exchange.NSE,
+    "BSE": Exchange.BSE,
+    "MCX": Exchange.MCX,
+    "NSE_EQ": Exchange.NSE,
+    "BSE_EQ": Exchange.BSE,
+    "MCX_COMM": Exchange.MCX,
+    "NSE_FNO": Exchange.NSE,
+    "BSE_FNO": Exchange.BSE,
+    # Wire strings deliberately map to the enum they name (IDX_I → INDEX,
+    # *_CURRENCY → CURRENCY): the resolver's _find has its own INDEX→NSE
+    # fallback for well-known indices, and callers passing wire strings get
+    # the semantically-true exchange back. Only the SCALPR storage-key
+    # aliases below normalise to the row-storage exchange.
+    "IDX_I": Exchange.INDEX,
+    "NSE_CURRENCY": Exchange.CURRENCY,
+    "BSE_CURRENCY": Exchange.CURRENCY,
+    # Storage-key aliases: index/currency rows are stored under their raw
+    # exchange (NSE/BSE per instrument_mapper), so these identifiers must
+    # normalise to the storage key rather than Exchange.INDEX/CURRENCY.
+    "INDEX": Exchange.NSE,
+    "CURRENCY": Exchange.NSE,
+    "NFO": Exchange.NSE,
+    "BFO": Exchange.BSE,
+}
+
+
+def normalise_exchange(exchange: str | Exchange, *, strict: bool = False) -> Exchange:
+    """Normalise a raw exchange/segment string to an Exchange enum.
+
+    Args:
+        exchange: Raw exchange string (e.g., "NSE", "NSE_EQ", "IDX_I")
+        strict: If True, raise ValueError for unknown strings instead of
+            silently defaulting to NSE (typo protection at API boundaries).
+
+    Returns:
+        Exchange enum value (defaults to NSE for unknown strings unless strict)
+    """
+    if isinstance(exchange, Exchange):
+        return exchange
+    key = str(exchange).strip().upper()
+    exch = _EXCHANGE_NORMALISE.get(key)
+    if exch is None:
+        if strict:
+            raise ValueError(f"Unknown exchange: {exchange!r}")
+        return Exchange.NSE
+    return exch
+
+
+# (Exchange, Segment) -> Dhan wire segment string
+_WIRE_BY_EXCHANGE_SEGMENT: dict[tuple[Exchange, Segment], str] = {
+    (Exchange.NSE, Segment.EQUITY): "NSE_EQ",
+    (Exchange.BSE, Segment.EQUITY): "BSE_EQ",
+    (Exchange.NSE, Segment.FUTURES): "NSE_FNO",
+    (Exchange.NSE, Segment.OPTIONS): "NSE_FNO",
+    (Exchange.BSE, Segment.FUTURES): "BSE_FNO",
+    (Exchange.BSE, Segment.OPTIONS): "BSE_FNO",
+    (Exchange.MCX, Segment.COMMODITY): "MCX_COMM",
+    (Exchange.MCX, Segment.FUTURES): "MCX_COMM",
+    (Exchange.MCX, Segment.OPTIONS): "MCX_COMM",
+    (Exchange.NSE, Segment.INDEX): "IDX_I",
+    (Exchange.BSE, Segment.INDEX): "IDX_I",
+    (Exchange.INDEX, Segment.INDEX): "IDX_I",
+    (Exchange.NSE_FNO, Segment.FUTURES): "NSE_FNO",
+    (Exchange.NSE_FNO, Segment.OPTIONS): "NSE_FNO",
+    (Exchange.NSE, Segment.CURRENCY): "NSE_CURRENCY",
+    (Exchange.CURRENCY, Segment.CURRENCY): "NSE_CURRENCY",
+}
+
+
+def to_dhan_wire(exchange: Exchange, segment: Segment) -> str:
+    """Convert (Exchange, Segment) pair to Dhan wire segment string.
+    
+    Args:
+        exchange: Exchange enum value
+        segment: Segment enum value
+    
+    Returns:
+        Dhan wire segment string (e.g., "NSE_EQ", "NSE_FNO", "IDX_I")
+    
+    Raises:
+        ValueError: If no wire mapping exists for the pair
+    """
+    wire = _WIRE_BY_EXCHANGE_SEGMENT.get((exchange, segment))
+    if wire is None:
+        raise ValueError(
+            f"No Dhan wire mapping for exchange={exchange!r}, segment={segment!r}"
+        )
     return wire
 
 

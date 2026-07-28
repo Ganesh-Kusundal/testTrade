@@ -148,6 +148,16 @@ class TestMarketDataAdapter:
                         "last_price": 2510.50,
                         "net_change": 15.30,
                         "volume": 123456,
+                        "average_price": 2505.25,
+                        "buy_quantity": 50000,
+                        "sell_quantity": 45000,
+                        "last_quantity": 100,
+                        "last_trade_time": 1722345600,
+                        "lower_circuit_limit": 2250.00,
+                        "upper_circuit_limit": 2750.00,
+                        "oi": 1000000,
+                        "oi_day_high": 1200000,
+                        "oi_day_low": 900000,
                         "ohlc": {
                             "open": 2495.00,
                             "high": 2520.00,
@@ -167,13 +177,31 @@ class TestMarketDataAdapter:
         assert quote["close"] == Decimal("2495.20")
         assert quote["volume"] == 123456
         assert quote["change"] == Decimal("15.30")
+        assert quote["average_price"] == Decimal("2505.25")
+        assert quote["buy_quantity"] == 50000
+        assert quote["sell_quantity"] == 45000
+        assert quote["last_quantity"] == 100
+        assert quote["last_trade_time"] == 1722345600
+        assert quote["lower_circuit_limit"] == Decimal("2250.00")
+        assert quote["upper_circuit_limit"] == Decimal("2750.00")
+        assert quote["oi"] == 1000000
+        assert quote["oi_day_high"] == Decimal("1200000")
+        assert quote["oi_day_low"] == Decimal("900000")
 
-    def test_should_return_zero_decimals_when_quote_fields_missing(self, market_adapter, mock_http_client):
+    def test_should_raise_when_quote_entry_empty(self, market_adapter, mock_http_client):
         mock_http_client.post.return_value = {"data": {"NSE_EQ": {"1": {}}}}
-        quote = market_adapter.get_quote("RELIANCE", "NSE")
-        assert quote["ltp"] == Decimal("0")
-        assert quote["open"] == Decimal("0")
-        assert quote["volume"] == 0
+        with pytest.raises(ValueError, match="No quote data"):
+            market_adapter.get_quote("RELIANCE", "NSE")
+
+    def test_quote_by_id_raises_when_entry_missing(self, market_adapter, mock_http_client):
+        mock_http_client.post.return_value = {"data": {"NSE_EQ": {}}}
+        with pytest.raises(ValueError, match="No quote data"):
+            market_adapter.get_quote_by_id(1, "NSE_EQ", symbol="RELIANCE")
+
+    def test_depth_by_id_raises_when_entry_missing(self, market_adapter, mock_http_client):
+        mock_http_client.post.return_value = {"data": {"NSE_EQ": {}}}
+        with pytest.raises(ValueError, match="No depth data"):
+            market_adapter.get_depth_by_id(1, "NSE_EQ", symbol="RELIANCE")
 
     # --- get_depth ---
 

@@ -285,3 +285,157 @@ def test_square_off_all_calls_sell_for_all_long_positions():
     assert fills[0].symbol == "RELIANCE"
     assert fills[0].side == OrderSide.SELL
     assert fills[0].quantity == 10
+
+
+class TestGatewayErrorTranslation:
+    """W3: broker-specific exceptions must not leak through the facade."""
+
+    def test_instrument_not_found_is_broker_agnostic(self):
+        from scalpr.brokers.dhan.exceptions import InstrumentNotFoundError
+        from scalpr.brokers.errors import InstrumentNotFound
+        from scalpr.brokers.gateway import Gateway
+
+        gw = Gateway.__new__(Gateway)  # bypass __init__/connect
+        conn = MagicMock()
+        conn.resolver.resolve_full.side_effect = InstrumentNotFoundError("nope")
+        with patch.object(Gateway, "_get_dhan_connection", return_value=conn):
+            with pytest.raises(InstrumentNotFound):
+                gw.instrument("ZZZZ:NSE")
+
+
+class TestGatewayWsLifecycleSafety:
+    """W4: stop_stream must be idempotent and never deref None loop refs."""
+
+    def _bare_gateway(self):
+        import threading
+        from scalpr.brokers.gateway import Gateway
+        gw = Gateway.__new__(Gateway)
+        gw._ws_manager = None
+        gw._ws_loop = None
+        gw._ws_thread = None
+        gw._stream_callbacks = []
+        gw._ws_lock = threading.Lock()
+        return gw
+
+    def test_stop_stream_noop_when_never_started(self):
+        gw = self._bare_gateway()
+        gw.stop_stream()  # must not raise
+        gw.stop_stream()  # idempotent
+
+    def test_has_ws_lock(self):
+        import inspect
+        from scalpr.brokers.gateway import Gateway
+        src = inspect.getsource(Gateway.__init__)
+        assert "_ws_lock" in src
+
+
+class TestSubscribeFeedMode:
+    """W5: subscribe_feed must honor mode and register callback first."""
+
+    def test_mode_passed_and_callback_registered_before_subscribe(self):
+        import threading
+        from scalpr.brokers.gateway import Gateway
+        from scalpr.domain.instrument import MarketFeed
+
+        gw = Gateway.__new__(Gateway)
+        gw._stream_callbacks = []
+        gw._ws_lock = threading.Lock()
+        gw._ws_manager = MagicMock()
+        gw._ws_loop = MagicMock()
+
+        callbacks_at_subscribe = []
+
+        def fake_run(coro, loop):
+            coro.close()
+            callbacks_at_subscribe.append(len(gw._stream_callbacks))
+            f = MagicMock()
+            f.result.return_value = None
+            return f
+
+        with patch("scalpr.brokers.gateway.asyncio.run_coroutine_threadsafe", side_effect=fake_run):
+            gw.subscribe_feed(MarketFeed.FULL, "TCS:NSE", on_event=lambda evt: None)
+
+        # Callback must already be registered when subscribe fires (no dropped ticks)
+        assert callbacks_at_subscribe == [1]
+        # Mode must reach the manager
+        gw._ws_manager.subscribe_pairs.assert_called_once_with([("TCS", "NSE")], mode="full")
+
+
+class TestStopStreamHardening:
+    """Review I1: teardown must not raise when the loop/thread are wedged."""
+
+    def _gw(self):
+        import threading
+        from scalpr.brokers.gateway import Gateway
+        gw = Gateway.__new__(Gateway)
+        gw._ws_manager = MagicMock()
+        gw._ws_loop = MagicMock()
+        gw._ws_thread = None
+        gw._stream_callbacks = []
+        gw._ws_lock = threading.Lock()
+        return gw
+
+    def test_stop_stream_survives_dead_loop(self):
+        gw = self._gw()
+        gw._ws_loop.call_soon_threadsafe.side_effect = RuntimeError("Event loop is closed")
+        with patch("scalpr.brokers.gateway.asyncio.run_coroutine_threadsafe",
+                   side_effect=RuntimeError("Event loop is closed")):
+            gw.stop_stream()  # must not raise
+
+    def test_stop_stream_leaves_running_loop_unclosed(self):
+        gw = self._gw()
+        loop = gw._ws_loop
+        thread = MagicMock()
+        thread.is_alive.return_value = True
+        gw._ws_thread = thread
+        fut = MagicMock()
+        fut.result.return_value = None
+        with patch("scalpr.brokers.gateway.asyncio.run_coroutine_threadsafe", return_value=fut):
+            gw.stop_stream()
+        loop.close.assert_not_called()
+
+
+class TestSubscribeFeedExceptionSafety:
+    """Review I2: a failed subscribe must not leave the callback registered."""
+
+    def test_failed_subscribe_unregisters_callback(self):
+        import threading
+        from scalpr.brokers.gateway import Gateway
+        from scalpr.domain.instrument import MarketFeed
+
+        gw = Gateway.__new__(Gateway)
+        gw._stream_callbacks = []
+        gw._ws_lock = threading.Lock()
+        gw._ws_manager = MagicMock()
+        gw._ws_loop = MagicMock()
+
+        def fake_run(coro, loop):
+            coro.close()
+            raise RuntimeError("Event loop is closed")
+
+        with patch("scalpr.brokers.gateway.asyncio.run_coroutine_threadsafe", side_effect=fake_run):
+            with pytest.raises(RuntimeError):
+                gw.subscribe_feed(MarketFeed.FULL, "TCS:NSE", on_event=lambda evt: None)
+
+        assert gw._stream_callbacks == []
+
+    def test_plain_string_mode_is_coerced(self):
+        import threading
+        from scalpr.brokers.gateway import Gateway
+
+        gw = Gateway.__new__(Gateway)
+        gw._stream_callbacks = []
+        gw._ws_lock = threading.Lock()
+        gw._ws_manager = MagicMock()
+        gw._ws_loop = MagicMock()
+
+        def fake_run(coro, loop):
+            coro.close()
+            f = MagicMock()
+            f.result.return_value = None
+            return f
+
+        with patch("scalpr.brokers.gateway.asyncio.run_coroutine_threadsafe", side_effect=fake_run):
+            gw.subscribe_feed("full", "TCS:NSE")
+
+        gw._ws_manager.subscribe_pairs.assert_called_once_with([("TCS", "NSE")], mode="full")

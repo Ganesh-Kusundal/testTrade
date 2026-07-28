@@ -243,6 +243,9 @@ class DhanWebSocketManager(IMarketDataFeed):
 
             # Restore persisted subscriptions
             if self._subscriptions:
+                # Modes are not persisted per-pair: restore uses the client
+                # default, so an overridden mode (e.g. "full") is downgraded.
+                logger.warning("Restoring %d subscriptions with client default mode", len(self._subscriptions))
                 await self._ws_client.subscribe(list(self._subscriptions))
                 logger.info("Restored %d subscriptions", len(self._subscriptions))
 
@@ -307,27 +310,28 @@ class DhanWebSocketManager(IMarketDataFeed):
         self._set_status(ConnectionStatus.DISCONNECTED)
         logger.info("Dhan WebSocket manager stopped")
 
-    async def _subscribe_async(self, symbols: list[tuple[str, str]]) -> None:
+    async def _subscribe_async(self, symbols: list[tuple[str, str]], mode: str | None = None) -> None:
         """Add to subscription list and send subscribe to client if running."""
         async with self._lock:
             self._subscriptions.update(symbols)
 
         if self._status == ConnectionStatus.CONNECTED and self._ws_client is not None:
             try:
-                await self._ws_client.subscribe(symbols)
+                await self._ws_client.subscribe(symbols, mode=mode)
                 logger.info("Subscribed to %d symbols", len(symbols))
             except Exception as exc:
                 logger.error("Failed to subscribe: %s", exc)
                 self._metrics.last_error = str(exc)
 
-    async def subscribe_pairs(self, pairs: list[tuple[str, str]]) -> None:
+    async def subscribe_pairs(self, pairs: list[tuple[str, str]], mode: str | None = None) -> None:
         """Subscribe to (symbol, exchange) pairs, preserving the exchange.
 
         Unlike the IMarketDataFeed ``subscribe(list[str])`` (which hardcodes
         NSE), this is the exchange-aware entry point for callers that know
-        the segment.
+        the segment. ``mode`` overrides the client default ("ltp", "quote",
+        "depth", "full"); reconnect resubscription uses the client default.
         """
-        await self._subscribe_async(pairs)
+        await self._subscribe_async(pairs, mode=mode)
 
     async def _unsubscribe_async(self, symbols: set[tuple[str, str]]) -> None:
         """Remove from subscription list and send unsubscribe to client."""
@@ -542,8 +546,10 @@ class DhanWebSocketManager(IMarketDataFeed):
                 self._metrics.reconnect_count += 1
                 self._metrics.connect_time = time.monotonic()
 
-                # Restore subscriptions
+                # Restore subscriptions (client default mode — overridden
+                # modes are not persisted per-pair and get downgraded)
                 if self._subscriptions:
+                    logger.warning("Re-subscribing %d pairs with client default mode", len(self._subscriptions))
                     await self._ws_client.subscribe(list(self._subscriptions))
 
                 logger.info("Reconnection successful (attempt %d)", attempts)

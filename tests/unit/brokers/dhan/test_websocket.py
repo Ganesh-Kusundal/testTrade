@@ -395,3 +395,15 @@ class TestParseSdkData:
         assert second.delta_volume == 100
         assert second.cumulative_volume == 3143634
 
+
+
+class TestSubscribePairsMode:
+    """W5: subscribe_pairs must pass mode through to the ws client."""
+
+    @pytest.mark.asyncio
+    async def test_subscribe_pairs_forwards_mode(self):
+        mgr = _make_manager()
+        mgr._status = ConnectionStatus.CONNECTED
+        mgr._running = True
+        await mgr.subscribe_pairs([("TCS", "NSE")], mode="full")
+        mgr._ws_client.subscribe.assert_awaited_once_with([("TCS", "NSE")], mode="full")

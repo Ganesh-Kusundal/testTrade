@@ -48,17 +48,20 @@ class MarketDataAdapter:
             LTP as Decimal
         """
         security_id, segment = self._resolve_segment(symbol, exchange)
-        
+        return self.get_ltp_by_id(security_id, segment, symbol=symbol)
+
+    def get_ltp_by_id(self, security_id: str | int, segment: str, symbol: str = "") -> Decimal:
+        """Get LTP by pre-resolved security_id + wire segment (no re-resolution)."""
+        security_id = int(security_id)
         data = self._client.post("/marketfeed/ltp", json={segment: [security_id]})
-        segment_data = data.get("data", {}).get(segment, {})
-        entry = segment_data.get(str(security_id))
-        
+        entry = data.get("data", {}).get(segment, {}).get(str(security_id))
+
         if entry is None:
-            logger.warning(f"LTP missing for {symbol} (security_id={security_id}, segment={segment})")
-            raise ValueError(f"No LTP data for {symbol} on {exchange}")
-        
+            logger.warning(f"LTP missing for {symbol or security_id} (security_id={security_id}, segment={segment})")
+            raise ValueError(f"No LTP data for {symbol or security_id} on {segment}")
+
         ltp = Decimal(str(entry.get("last_price", 0)))
-        logger.debug(f"LTP fetched: {symbol} = {ltp}")
+        logger.debug(f"LTP fetched: {symbol or security_id} = {ltp}")
         return ltp
 
     def get_quote(self, symbol: str, exchange: str = "NSE") -> dict[str, Any]:
@@ -69,13 +72,24 @@ class MarketDataAdapter:
             exchange: Exchange
         
         Returns:
-            Quote dict with ltp, open, high, low, close, volume
+            Quote dict with all Dhan fields: ltp, open, high, low, close, volume,
+            change, average_price, buy_quantity, sell_quantity, last_quantity,
+            last_trade_time, lower_circuit_limit, upper_circuit_limit, oi,
+            oi_day_high, oi_day_low
         """
         security_id, segment = self._resolve_segment(symbol, exchange)
-        
+        return self.get_quote_by_id(security_id, segment, symbol=symbol)
+
+    def get_quote_by_id(self, security_id: str | int, segment: str, symbol: str = "") -> dict[str, Any]:
+        """Get full quote by pre-resolved security_id + wire segment."""
+        security_id = int(security_id)
         data = self._client.post("/marketfeed/quote", json={segment: [security_id]})
-        raw = data.get("data", {}).get(segment, {}).get(str(security_id), {})
-        
+        raw = data.get("data", {}).get(segment, {}).get(str(security_id))
+
+        if not raw:
+            logger.warning(f"Quote missing for {symbol or security_id} (security_id={security_id}, segment={segment})")
+            raise ValueError(f"No quote data for {symbol or security_id} on {segment}")
+
         ohlc = raw.get("ohlc", {})
         quote = {
             "symbol": symbol,
@@ -86,6 +100,16 @@ class MarketDataAdapter:
             "close": Decimal(str(ohlc.get("close", 0))),
             "volume": int(raw.get("volume", 0)),
             "change": Decimal(str(raw.get("net_change", 0))),
+            "average_price": Decimal(str(raw.get("average_price", 0))),
+            "buy_quantity": int(raw.get("buy_quantity", 0)),
+            "sell_quantity": int(raw.get("sell_quantity", 0)),
+            "last_quantity": int(raw.get("last_quantity", 0)),
+            "last_trade_time": raw.get("last_trade_time"),
+            "lower_circuit_limit": Decimal(str(raw.get("lower_circuit_limit", 0))),
+            "upper_circuit_limit": Decimal(str(raw.get("upper_circuit_limit", 0))),
+            "oi": int(raw.get("oi", 0)),
+            "oi_day_high": Decimal(str(raw.get("oi_day_high", 0))),
+            "oi_day_low": Decimal(str(raw.get("oi_day_low", 0))),
         }
         
         logger.debug(f"Quote fetched: {symbol} LTP={quote['ltp']}")
@@ -105,10 +129,18 @@ class MarketDataAdapter:
             Depth dict with bids and asks lists
         """
         security_id, segment = self._resolve_segment(symbol, exchange)
-        
+        return self.get_depth_by_id(security_id, segment, symbol=symbol)
+
+    def get_depth_by_id(self, security_id: str | int, segment: str, symbol: str = "") -> dict[str, Any]:
+        """Get 5-level market depth by pre-resolved security_id + wire segment."""
+        security_id = int(security_id)
         data = self._client.post("/marketfeed/quote", json={segment: [security_id]})
-        raw = data.get("data", {}).get(segment, {}).get(str(security_id), {})
-        
+        raw = data.get("data", {}).get(segment, {}).get(str(security_id))
+
+        if not raw:
+            logger.warning(f"Depth missing for {symbol or security_id} (security_id={security_id}, segment={segment})")
+            raise ValueError(f"No depth data for {symbol or security_id} on {segment}")
+
         bids = [
             {
                 "price": Decimal(str(level.get("price", 0))),
@@ -154,7 +186,8 @@ class MarketDataAdapter:
                 security_id, segment = self._resolve_segment(sym, exchange)
                 segment_map.setdefault(segment, []).append(security_id)
                 symbol_map[str(security_id)] = sym  # response keys are strings
-            except Exception:
+            except Exception as exc:
+                logger.warning(f"Batch resolve skipped {sym!r} on {exchange}: {exc}")
                 continue
         
         if not segment_map:
@@ -189,7 +222,8 @@ class MarketDataAdapter:
                 security_id, segment = self._resolve_segment(sym, exchange)
                 segment_map.setdefault(segment, []).append(security_id)
                 symbol_map[str(security_id)] = sym  # response keys are strings
-            except Exception:
+            except Exception as exc:
+                logger.warning(f"Batch resolve skipped {sym!r} on {exchange}: {exc}")
                 continue
         
         if not segment_map:
