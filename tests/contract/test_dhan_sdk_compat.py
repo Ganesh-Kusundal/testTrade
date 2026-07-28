@@ -8,9 +8,9 @@ Every assertion here corresponds to a real call site in
 scalpr/brokers/dhan/ws_client.py.
 
 The installed dhanhq 2.2.x exposes:
-- ``DhanFeed`` class (``MarketFeed`` may or may not exist depending on version)
-- Module-level constants: ``Ticker=15``, ``Quote=17``, ``Full=21``, ``Depth=19``
-- ``DhanFeed.__init__`` accepts ``client_id``, ``access_token``, ``instruments``
+- ``MarketFeed`` class (also aliased as ``DhanFeed`` in some versions)
+- Class attributes: ``MarketFeed.Ticker=15``, ``MarketFeed.Quote=17``, ``MarketFeed.Full=21``
+- ``MarketFeed.__init__`` accepts ``client_id``, ``access_token``, ``instruments``
 """
 import inspect
 
@@ -31,12 +31,12 @@ def test_feed_class_importable():
 
 
 def test_mode_constants_exist_with_v2_wire_values():
-    """Module-level Ticker/Quote/Full must have the v2 wire values."""
-    from dhanhq.marketfeed import Full, Quote, Ticker
+    """Feed class Ticker/Quote/Full attributes must have the v2 wire values."""
+    cls = _feed_cls()
 
-    assert Ticker == 15
-    assert Quote == 17
-    assert Full == 21
+    assert cls.Ticker == 15
+    assert cls.Quote == 17
+    assert cls.Full == 21
 
 
 def test_exchange_segment_constants_exist():

@@ -214,18 +214,22 @@ class Gateway(MarketDataMixin, PortfolioMixin, StreamingMixin):
         underlying: str,
         exchange: str = DEFAULT_EXCHANGE,
         expiry: date | None = None,
-    ) -> list[dict]:
-        """Fetch the flattened option chain for an underlying.
+        as_df: bool = True,
+    ) -> Any:
+        """Fetch the option chain for an underlying.
 
         Args:
             underlying: Underlying symbol (e.g. "NIFTY", "SENSEX").
             exchange: Exchange code (default: "NSE").
             expiry: Specific expiry date. If *None*, the next available
                     expiry is resolved automatically.
+            as_df: If True (default), return Tradehull-compatible
+                ``(atm_strike, DataFrame)`` tuple with 27 columns.
+                If False, return flat ``list[dict]``.
 
         Returns:
-            Flat list of dicts with keys:
-            ``symbol, security_id, strike, bid, ask, oi, volume, delta``.
+            When as_df=True: ``(atm_strike, pd.DataFrame)``
+            When as_df=False: flat list of dicts.
 
         Raises:
             InstrumentNotFound: if the underlying cannot be resolved.
@@ -245,9 +249,91 @@ class Gateway(MarketDataMixin, PortfolioMixin, StreamingMixin):
             )
         adapter = OptionChainAdapter(adapters["http_client"], adapters["resolver"])
         try:
-            return adapter.get_option_chain(underlying, exchange, expiry=expiry)
+            chain = adapter.get_option_chain(underlying, exchange, expiry=expiry)
         except InstrumentNotFound as exc:
             raise InstrumentNotFound(str(exc)) from exc
+
+        if not as_df:
+            return chain
+
+        # Pivot to Tradehull-compatible DataFrame
+        return self._pivot_option_chain(chain, adapters, underlying, exchange)
+
+    def _pivot_option_chain(
+        self,
+        chain: list[dict],
+        adapters: dict,
+        underlying: str,
+        exchange: str,
+    ) -> tuple[Any, Any]:
+        """Pivot flat option chain into Tradehull-compatible DataFrame."""
+        from decimal import Decimal
+
+        import pandas as pd
+
+        if not chain:
+            return Decimal("0"), pd.DataFrame()
+
+        # Get spot price for ATM calculation
+        market_data = adapters.get("market_data")
+        resolver = adapters["resolver"]
+        spot = Decimal("0")
+        if market_data is not None:
+            try:
+                resolved = resolver.resolve(underlying, exchange)
+                spot = Decimal(str(
+                    market_data.get_ltp_by_id(
+                        resolved.security_id,
+                        resolver.wire_segment_of(underlying, exchange),
+                        symbol=underlying,
+                    )
+                ))
+            except Exception:
+                logger.debug("option_chain_spot_fetch_failed", exc_info=True)
+
+        strikes = sorted({Decimal(str(leg["strike"])) for leg in chain})
+        if spot > 0 and strikes:
+            atm_strike = min(strikes, key=lambda s: abs(s - spot))
+        else:
+            atm_strike = strikes[len(strikes) // 2] if strikes else Decimal("0")
+
+        # Default 10 strikes around ATM (matches Tradehull)
+        if strikes and atm_strike:
+            atm_idx = strikes.index(atm_strike) if atm_strike in strikes else len(strikes) // 2
+            lo = max(0, atm_idx - 10)
+            hi = min(len(strikes), atm_idx + 11)
+            selected = set(strikes[lo:hi])
+            chain = [leg for leg in chain if Decimal(str(leg["strike"])) in selected]
+
+        by_strike: dict = {}
+        for leg in chain:
+            strike = Decimal(str(leg["strike"]))
+            opt_type = leg.get("option_type", "")
+            by_strike.setdefault(strike, {})[opt_type] = leg
+
+        rows = []
+        for strike in sorted(by_strike):
+            ce = by_strike[strike].get("CE", {})
+            pe = by_strike[strike].get("PE", {})
+            rows.append({
+                "CE OI": ce.get("oi"), "CE Chg in OI": (ce.get("oi", 0) or 0) - (ce.get("previous_oi", 0) or 0),
+                "CE Volume": ce.get("volume"), "CE IV": ce.get("iv"), "CE LTP": ce.get("ltp"),
+                "CE Bid Qty": ce.get("bid_qty"), "CE Bid": ce.get("bid"),
+                "CE Ask": ce.get("ask"), "CE Ask Qty": ce.get("ask_qty"),
+                "CE Delta": ce.get("delta"), "CE Theta": ce.get("theta"),
+                "CE Gamma": ce.get("gamma"), "CE Vega": ce.get("vega"),
+                "Strike Price": strike,
+                "PE Bid Qty": pe.get("bid_qty"), "PE Bid": pe.get("bid"),
+                "PE Ask": pe.get("ask"), "PE Ask Qty": pe.get("ask_qty"),
+                "PE LTP": pe.get("ltp"), "PE IV": pe.get("iv"),
+                "PE Volume": pe.get("volume"),
+                "PE Chg in OI": (pe.get("oi", 0) or 0) - (pe.get("previous_oi", 0) or 0),
+                "PE OI": pe.get("oi"),
+                "PE Delta": pe.get("delta"), "PE Theta": pe.get("theta"),
+                "PE Gamma": pe.get("gamma"), "PE Vega": pe.get("vega"),
+            })
+
+        return atm_strike, pd.DataFrame(rows)
 
     def close(self) -> None:
         """Shut down WebSocket connections and release resources."""

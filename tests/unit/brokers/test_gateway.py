@@ -494,7 +494,7 @@ class TestGatewayOptionChain:
         AdapterCls = MagicMock(return_value=adapter_instance)
         BrokerRegistry.register_adapter("dhan", "option_chain", AdapterCls)
 
-        result = gw.option_chain("NIFTY", expiry=date(2026, 7, 28))
+        result = gw.option_chain("NIFTY", expiry=date(2026, 7, 28), as_df=False)
 
         AdapterCls.assert_called_once_with(conn.http_client, conn.resolver)
         adapter_instance.get_option_chain.assert_called_once_with(

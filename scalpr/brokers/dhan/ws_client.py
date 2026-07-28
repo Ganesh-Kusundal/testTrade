@@ -45,22 +45,17 @@ def _sdk_mode_constants() -> tuple[int, int, int]:
     """Resolve (Ticker, Quote, Full) mode ints from the installed SDK.
 
     dhanhq 2.2.x exposes the constants as MarketFeed class attributes
-    (Ticker=15, Quote=17, Full=21); some earlier 2.x builds exposed them
-    at module level. Resolve from the SDK so an SDK upgrade that changes
-    wire values cannot silently diverge; hardcode only if no SDK surface
-    exists at all.
+    (Ticker=15, Quote=17, Full=21). Resolve from the SDK so an SDK
+    upgrade that changes wire values cannot silently diverge; hardcode
+    only if no SDK surface exists at all.
     """
     try:
         feed_cls = _sdk_market_feed_class()
         return (feed_cls.Ticker, feed_cls.Quote, feed_cls.Full)
     except (ImportError, AttributeError):
         pass
-    try:
-        from dhanhq.marketfeed import Full, Quote, Ticker  # type: ignore[attr-defined]
-        return (Ticker, Quote, Full)
-    except ImportError:
-        # Last resort: dhanhq v2 wire constants
-        return (15, 17, 21)
+    # Last resort: dhanhq v2 wire constants
+    return (15, 17, 21)
 
 
 def _get_sdk_mode_int(mode_str: str) -> int:

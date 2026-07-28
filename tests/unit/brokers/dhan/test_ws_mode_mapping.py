@@ -41,9 +41,9 @@ class TestGetSdkModeInt:
         assert _sdk_mode_constants() == (15, 17, 21)
 
     def test_mode_constants_sourced_from_installed_sdk(self):
-        """Constants must agree with the installed SDK module-level values."""
-        from dhanhq.marketfeed import Full, Quote, Ticker
-        assert _sdk_mode_constants() == (Ticker, Quote, Full)
+        """Constants must agree with the installed SDK class attribute values."""
+        from dhanhq.marketfeed import MarketFeed
+        assert _sdk_mode_constants() == (MarketFeed.Ticker, MarketFeed.Quote, MarketFeed.Full)
 
 
 class TestSdkMarketFeedClass:

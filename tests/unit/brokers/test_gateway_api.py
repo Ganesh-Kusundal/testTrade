@@ -175,7 +175,7 @@ class TestInstrumentHandleOptionChain:
         # The adapter is created inside instrument(), mock its get_option_chain
         handle._option_chain = MagicMock()
         handle._option_chain.get_option_chain.return_value = [{"strike": 24000}]
-        result = handle.option_chain()
+        result = handle.option_chain(as_df=False)
         assert len(result) == 1
         handle._option_chain.get_option_chain.assert_called_once()
 
@@ -186,7 +186,7 @@ class TestInstrumentHandleOptionChain:
         handle = gw.instrument("NIFTY:NSE")
         handle._option_chain = MagicMock()
         handle._option_chain.get_option_chain.return_value = []
-        result = handle.option_chain(expiry=date(2026, 7, 30))
+        result = handle.option_chain(expiry=date(2026, 7, 30), as_df=False)
         assert result == []
 
 

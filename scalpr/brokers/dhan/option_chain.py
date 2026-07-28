@@ -156,6 +156,10 @@ class OptionChainAdapter:
         each value containing ``ce`` and ``pe`` sub-dicts with option data
         including greeks. Live responses carry ``security_id`` per leg but
         no ``trading_symbol``, so ``symbol`` may be empty.
+
+        Captures all available fields for Tradehull-compatible DataFrame
+        pivoting: oi, previous_oi, volume, iv, ltp, bid/ask prices and
+        quantities, and all greeks (delta, theta, gamma, vega).
         """
         oc = raw.get("data", {}).get("oc", {})
         result: list[dict] = []
@@ -177,12 +181,22 @@ class OptionChainAdapter:
                     "bid": OptionChainAdapter._to_decimal(
                         leg.get("top_bid_price")
                     ),
+                    "bid_qty": int(leg.get("top_bid_quantity", 0) or 0),
                     "ask": OptionChainAdapter._to_decimal(
                         leg.get("top_ask_price")
                     ),
+                    "ask_qty": int(leg.get("top_ask_quantity", 0) or 0),
                     "oi": int(leg.get("oi", 0)),
+                    "previous_oi": int(leg.get("previous_oi", 0) or 0),
                     "volume": int(leg.get("volume", 0)),
-                    "delta": greeks.get("delta"),  # May be None — leave as-is
+                    "iv": leg.get("implied_volatility"),
+                    "ltp": OptionChainAdapter._to_decimal(
+                        leg.get("last_price")
+                    ),
+                    "delta": greeks.get("delta"),
+                    "theta": greeks.get("theta"),
+                    "gamma": greeks.get("gamma"),
+                    "vega": greeks.get("vega"),
                 })
 
         return result

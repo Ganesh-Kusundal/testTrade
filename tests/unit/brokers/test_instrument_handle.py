@@ -1,5 +1,5 @@
 """Tests for InstrumentHandle."""
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from unittest.mock import MagicMock
 
@@ -153,11 +153,14 @@ class TestInstrumentHandleHistorical:
             historical_adapter=mock_hist,
         )
         handle.historical()
-        # Should call with default 90-day range
+        # Should call with default 365-day range (matches Tradehull)
         call_args = mock_hist.get_ohlcv.call_args
         assert call_args[0][0] == "TCS"
         assert call_args[0][1] == "NSE"
         assert call_args[0][2] == "1D"
+        start_arg, end_arg = call_args[0][3], call_args[0][4]
+        assert end_arg == date.today()
+        assert start_arg == date.today() - timedelta(days=365)
 
 
 class TestInstrumentHandleParamHonesty:
@@ -177,7 +180,7 @@ class TestInstrumentHandleParamHonesty:
         call = mock_hist.get_ohlcv.call_args
         start_arg, end_arg = call[0][3], call[0][4]
         assert end_arg == date(2025, 1, 10)
-        assert start_arg == date(2025, 1, 10) - timedelta(days=90)
+        assert start_arg == date(2025, 1, 10) - timedelta(days=365)
         assert start_arg < end_arg
 
     def test_depth_rejects_unsupported_levels(self):
@@ -188,3 +191,88 @@ class TestInstrumentHandleParamHonesty:
         )
         with pytest.raises(ValueError, match="5 levels"):
             handle.depth(levels=20)
+
+
+class TestInstrumentHandleTodayCandle:
+    """historical() appends today's partial candle from live quote."""
+
+    def test_today_candle_appended_when_last_candle_is_yesterday(self):
+        yesterday = date.today() - timedelta(days=1)
+        mock_hist = MagicMock()
+        mock_hist.get_ohlcv.return_value = [
+            {
+                "timestamp": datetime(yesterday.year, yesterday.month, yesterday.day, 9, 15),
+                "open": Decimal("3400"),
+                "high": Decimal("3450"),
+                "low": Decimal("3380"),
+                "close": Decimal("3420"),
+                "volume": 1000000,
+            }
+        ]
+        mock_market = MagicMock()
+        mock_market.get_quote_by_id.return_value = {
+            "open": Decimal("3425"),
+            "high": Decimal("3460"),
+            "low": Decimal("3410"),
+            "ltp": Decimal("3445"),
+            "volume": 500000,
+        }
+        handle = InstrumentHandle(
+            resolved=_make_resolved(),
+            market_data_adapter=mock_market,
+            historical_adapter=mock_hist,
+        )
+        result = handle.historical(interval="1D", as_json=True)
+        assert len(result) == 2
+        # Today's candle should have quote data
+        today_candle = result[-1]
+        assert today_candle["open"] == Decimal("3425")
+        assert today_candle["close"] == Decimal("3445")
+        assert today_candle["volume"] == 500000
+
+    def test_no_today_candle_when_explicit_end(self):
+        yesterday = date.today() - timedelta(days=1)
+        mock_hist = MagicMock()
+        mock_hist.get_ohlcv.return_value = [
+            {
+                "timestamp": datetime(yesterday.year, yesterday.month, yesterday.day),
+                "open": Decimal("3400"),
+                "high": Decimal("3450"),
+                "low": Decimal("3380"),
+                "close": Decimal("3420"),
+                "volume": 1000000,
+            }
+        ]
+        mock_market = MagicMock()
+        handle = InstrumentHandle(
+            resolved=_make_resolved(),
+            market_data_adapter=mock_market,
+            historical_adapter=mock_hist,
+        )
+        result = handle.historical(interval="1D", end=str(yesterday), as_json=True)
+        assert len(result) == 1
+        # get_quote_by_id should NOT be called for today's candle
+        mock_market.get_quote_by_id.assert_not_called()
+
+    def test_no_today_candle_for_intraday(self):
+        yesterday = date.today() - timedelta(days=1)
+        mock_hist = MagicMock()
+        mock_hist.get_ohlcv.return_value = [
+            {
+                "timestamp": datetime(yesterday.year, yesterday.month, yesterday.day, 15, 30),
+                "open": Decimal("3400"),
+                "high": Decimal("3450"),
+                "low": Decimal("3380"),
+                "close": Decimal("3420"),
+                "volume": 1000000,
+            }
+        ]
+        mock_market = MagicMock()
+        handle = InstrumentHandle(
+            resolved=_make_resolved(),
+            market_data_adapter=mock_market,
+            historical_adapter=mock_hist,
+        )
+        result = handle.historical(interval="5m", as_json=True)
+        assert len(result) == 1
+        mock_market.get_quote_by_id.assert_not_called()
