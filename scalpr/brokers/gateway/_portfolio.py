@@ -5,6 +5,7 @@ Provides portfolio operations: positions, holdings, funds, orders, trades.
 from __future__ import annotations
 
 from decimal import Decimal
+from typing import Any
 
 from scalpr.brokers.contracts import Funds, Holding, Trade
 from scalpr.domain.order import Order
@@ -12,7 +13,13 @@ from scalpr.domain.position import Position
 
 
 class PortfolioMixin:
-    """Mixin providing portfolio and order operations."""
+    """Mixin providing portfolio and order operations.
+
+    Expects the composed Gateway class to provide _gateway attribute.
+    """
+
+    # Attribute provided by the composed Gateway class
+    _gateway: Any
 
     def positions(self) -> list[Position]:
         """Fetch current open positions.

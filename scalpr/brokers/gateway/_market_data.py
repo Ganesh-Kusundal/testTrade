@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 from decimal import Decimal
+from typing import Any
 
 import pandas as pd
 
@@ -14,7 +15,13 @@ from scalpr.domain.values import DEFAULT_EXCHANGE
 
 
 class MarketDataMixin:
-    """Mixin providing market data operations."""
+    """Mixin providing market data operations.
+
+    Expects the composed Gateway class to provide _gateway attribute.
+    """
+
+    # Attribute provided by the composed Gateway class
+    _gateway: Any
 
     def ltp(self, symbol: str, exchange: str = DEFAULT_EXCHANGE) -> Decimal:
         """Get Last Traded Price for a symbol.
