@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 import os
 from datetime import date
+from decimal import Decimal
 from typing import Any
 
 from dotenv import load_dotenv
@@ -258,6 +259,111 @@ class Gateway(MarketDataMixin, PortfolioMixin, StreamingMixin):
 
         # Pivot to Tradehull-compatible DataFrame
         return self._pivot_option_chain(chain, adapters, underlying, exchange)
+
+    def future_script(
+        self,
+        underlying: str,
+        exchange: str = DEFAULT_EXCHANGE,
+        expiry_idx: int = 0,
+    ) -> str:
+        """Get the future trading symbol for an underlying.
+
+        Args:
+            underlying: Underlying symbol (e.g. "NIFTY", "RELIANCE").
+            exchange: Exchange code (default: "NSE").
+            expiry_idx: 0=nearest, 1=next, etc.
+
+        Returns:
+            Trading symbol string (e.g. "NIFTY 25 JUL 26 FUT").
+        """
+        adapter = self._get_option_chain_adapter()
+        return adapter.get_future_symbol(underlying, exchange, expiry_idx)
+
+    def strike_selection(
+        self,
+        underlying: str,
+        exchange: str = DEFAULT_EXCHANGE,
+        expiry: date | None = None,
+        mode: str = "ATM",
+        count: int = 10,
+    ) -> list:
+        """Select option strikes by moneyness (ATM/ITM/OTM).
+
+        Args:
+            underlying: Underlying symbol (e.g. "NIFTY").
+            exchange: Exchange code (default: "NSE").
+            expiry: Specific expiry date (None = next expiry).
+            mode: "ATM", "ITM", "OTM", or combined ("ITM,OTM").
+            count: Strikes per mode direction.
+
+        Returns:
+            Sorted list of Decimal strike prices.
+        """
+        adapters = self._gateway.adapters()
+        adapter = self._get_option_chain_adapter()
+
+        # Get spot price from market data adapter
+        spot = Decimal("0")
+        market_data = adapters.get("market_data")
+        if market_data is not None:
+            try:
+                resolved = adapters["resolver"].resolve_full(underlying, exchange)
+                spot = Decimal(str(
+                    market_data.get_ltp_by_id(
+                        resolved.security_id,
+                        adapters["resolver"].wire_segment_of(underlying, exchange),
+                        symbol=underlying,
+                    )
+                ))
+            except Exception:
+                logger.debug("strike_selection_spot_fetch_failed", exc_info=True)
+
+        return adapter.select_strikes(
+            underlying, exchange, expiry=expiry,
+            mode=mode, count=count,
+            spot_price=spot if spot > 0 else None,
+        )
+
+    def option_greeks(
+        self,
+        underlying: str,
+        strike: Decimal,
+        expiry: date,
+        option_type: str,
+        exchange: str = DEFAULT_EXCHANGE,
+    ) -> dict | None:
+        """Get greeks for a specific option.
+
+        Args:
+            underlying: Underlying symbol (e.g. "NIFTY").
+            strike: Strike price.
+            expiry: Expiry date.
+            option_type: "CE" or "PE".
+            exchange: Exchange code (default: "NSE").
+
+        Returns:
+            Dict with greeks or None.
+        """
+        adapter = self._get_option_chain_adapter()
+        return adapter.get_option_greeks(
+            underlying, exchange, strike, expiry, option_type
+        )
+
+    def _get_option_chain_adapter(self) -> Any:
+        """Create an OptionChainAdapter via registry (no direct Dhan import)."""
+        adapters = self._gateway.adapters()
+        if not adapters:
+            raise NotImplementedError(
+                "This operation requires a broker that provides adapters"
+            )
+        OptionChainAdapter = BrokerRegistry.get_adapter(
+            self._broker_name, "option_chain"
+        )
+        if OptionChainAdapter is None:
+            raise NotImplementedError(
+                f"option_chain adapter not available for {self._broker_name}"
+            )
+        return OptionChainAdapter(adapters["http_client"], adapters["resolver"])
 
     def _pivot_option_chain(
         self,

@@ -114,7 +114,7 @@ class MarketDataMixin:
         symbol: str | list[str],
         exchange: str = DEFAULT_EXCHANGE,
         timeframe: str = "1m",
-        lookback_days: int = 90,
+        lookback_days: int = 365,
     ) -> pd.DataFrame:
         """Fetch historical OHLCV candlestick data.
 
@@ -122,7 +122,7 @@ class MarketDataMixin:
             symbol: Single symbol or list of symbols
             exchange: Exchange code (default: "NSE")
             timeframe: Candle interval (default: "1m")
-            lookback_days: Days of history (default: 90)
+            lookback_days: Days of history (default: 365)
 
         Returns:
             DataFrame with columns:

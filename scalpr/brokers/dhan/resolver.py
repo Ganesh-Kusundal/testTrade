@@ -116,6 +116,32 @@ class SymbolResolver:
         inst = self.resolve(symbol, exchange)
         return self._kind_by_sid.get(inst.security_id) or "EQUITY"
 
+    def get_futures_for_underlying(
+        self, underlying: str, exchange: str
+    ) -> list[Instrument]:
+        """Get all future instruments for an underlying, sorted by expiry.
+
+        Pure in-memory lookup — no API calls. Uses the ``_by_underlying``
+        index populated during instrument CSV load.
+
+        Args:
+            underlying: Underlying symbol (e.g., "NIFTY", "RELIANCE").
+            exchange: Exchange code (e.g., "NSE").
+
+        Returns:
+            List of Instrument objects with segment=FUTURES, sorted by
+            expiry date (nearest first). Empty list if no futures exist.
+        """
+        exch = self._normalise_exchange(exchange)
+        key = (underlying.upper(), exch)
+        instruments = self._by_underlying.get(key, [])
+        futures = [
+            inst
+            for inst in instruments
+            if inst.segment == Segment.FUTURES and inst.expiry is not None
+        ]
+        return sorted(futures, key=lambda inst: inst.expiry)
+
     def stats(self) -> dict:
         """Get resolver statistics."""
         return {"loaded": self._loaded, "total": len(self._by_security_id)}

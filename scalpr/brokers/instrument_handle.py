@@ -98,6 +98,94 @@ class InstrumentHandle:
         )
         return list(self._option_chain._expiry_cache.get(cache_key, []))
 
+    def future_script(self, expiry_idx: int = 0) -> str:
+        """Get the future trading symbol for this underlying instrument.
+
+        Args:
+            expiry_idx: Index into sorted future expiry list.
+                0 = nearest (next) month, 1 = next month, etc.
+
+        Returns:
+            Trading symbol string (e.g. "NIFTY 25 JUL 26 FUT").
+
+        Raises:
+            OptionChainNotSupported: If instrument is not optionable.
+            ValueError: If expiry_idx is out of range.
+        """
+        if self._option_chain is None:
+            raise OptionChainNotSupported(
+                f"Future script not available for {self.symbol} "
+                f"— only available for indices and F&O instruments"
+            )
+        return self._option_chain.get_future_symbol(
+            self.symbol, self.exchange, expiry_idx
+        )
+
+    def strike_selection(
+        self,
+        expiry_idx: int = 0,
+        mode: str = "ATM",
+        count: int = 10,
+    ) -> list:
+        """Select option strikes by moneyness (ATM/ITM/OTM).
+
+        Args:
+            expiry_idx: 0=nearest expiry, 1=next, etc.
+            mode: "ATM", "ITM", "OTM", or combined ("ITM,OTM").
+            count: Strikes per mode direction.
+
+        Returns:
+            Sorted list of Decimal strike prices.
+        """
+        if self._option_chain is None:
+            raise OptionChainNotSupported(
+                f"Strike selection not available for {self.symbol}"
+            )
+        # Get spot price from market data
+        spot = self._get_spot_for_chain()
+        # Resolve expiry from the adapter's expiry cache
+        wire_seg = self._resolved.wire_segment
+        cache_key = f"{self._resolved.security_id}:{wire_seg}"
+        self._option_chain._resolve_next_expiry(
+            int(self._resolved.security_id), wire_seg
+        )
+        expiries = self._option_chain._expiry_cache.get(cache_key, [])
+        if expiry_idx >= len(expiries):
+            raise ValueError(
+                f"expiry_idx {expiry_idx} out of range "
+                f"(only {len(expiries)} expiries available)"
+            )
+        expiry = expiries[expiry_idx]
+        return self._option_chain.select_strikes(
+            self.symbol, self.exchange, expiry=expiry,
+            mode=mode, count=count, spot_price=spot,
+        )
+
+    def option_greeks(
+        self,
+        strike: Decimal,
+        expiry: date,
+        option_type: str,
+    ) -> dict[str, Any] | None:
+        """Get greeks for a specific option on this underlying.
+
+        Args:
+            strike: Strike price.
+            expiry: Expiry date.
+            option_type: "CE" or "PE".
+
+        Returns:
+            Dict with greeks (delta, theta, gamma, vega, iv) and market
+            data, or None if the leg is not found.
+        """
+        if self._option_chain is None:
+            raise OptionChainNotSupported(
+                f"Option greeks not available for {self.symbol}"
+            )
+        return self._option_chain.get_option_greeks(
+            self.symbol, self.exchange, strike, expiry, option_type
+        )
+
     def ltp(self) -> Decimal:
         """Get current last traded price (uses pre-resolved security_id)."""
         return self._market_data.get_ltp_by_id(
