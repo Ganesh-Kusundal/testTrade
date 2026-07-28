@@ -21,7 +21,8 @@ from typing import Any
 
 from scalpr.brokers.broker_port import IBrokerGateway
 from scalpr.brokers.dhan.connection import DhanConnection
-from scalpr.brokers.dhan.exceptions import BrokerError
+from scalpr.brokers.dhan.exceptions import BrokerError, RateLimitError as DhanRateLimitError
+from scalpr.brokers.errors import RateLimitError
 from scalpr.brokers.dhan.segments import SEGMENT_TO_EXCHANGE
 from scalpr.domain.fill import Fill
 from scalpr.domain.instrument import Exchange
@@ -148,7 +149,10 @@ class DhanGateway(IBrokerGateway):
         Raises:
             BrokerError: If order placement fails.
         """
-        return self._connection.orders.place_order(order)
+        try:
+            return self._connection.orders.place_order(order)
+        except DhanRateLimitError as exc:
+            raise RateLimitError(str(exc)) from exc
 
     def modify_order(self, order_id: str, price: Decimal, quantity: int, trigger_price: Decimal | None = None) -> bool:
         """Modify an existing order's price, quantity, and/or trigger price.

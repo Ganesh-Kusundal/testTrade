@@ -16,7 +16,7 @@ from scalpr.brokers.dhan.exceptions import BrokerError
 from scalpr.brokers.dhan.http_client import DhanHttpClient
 from scalpr.brokers.dhan.mapper import DhanMapper
 from scalpr.brokers.dhan.resolver import SymbolResolver
-from scalpr.brokers.dhan.segments import SEGMENT_TO_EXCHANGE
+from scalpr.brokers.dhan.segments import SEGMENT_TO_EXCHANGE, normalise_exchange
 from scalpr.domain.instrument import Exchange
 from scalpr.domain.position import Position, PositionSide, PositionState
 
@@ -300,18 +300,5 @@ class PortfolioAdapter:
 
     @staticmethod
     def _normalise_exchange(exchange: str) -> Exchange:
-        """Normalise exchange string to Exchange enum.
-
-        Uses segment mapping for Dhan wire segments, falls back to NSE.
-        """
-        exchange_str = str(exchange).strip().upper()
-        try:
-            return Exchange(exchange_str)
-        except ValueError:
-            mapped = SEGMENT_TO_EXCHANGE.get(exchange_str)
-            if mapped:
-                try:
-                    return Exchange(mapped)
-                except ValueError:
-                    pass
-            return Exchange.NSE
+        """Normalise exchange string to Exchange enum."""
+        return normalise_exchange(exchange)

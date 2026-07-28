@@ -9,6 +9,10 @@ from scalpr.brokers.broker_port import IBrokerGateway
 
 logger = logging.getLogger(__name__)
 
+# Module-level private dict — avoids mutable class-level state that leaks
+# between tests and subclasses. Access only through BrokerRegistry methods.
+_brokers: dict[str, type[IBrokerGateway]] = {}
+
 
 class BrokerRegistry:
     """Registry for broker discovery and instantiation.
@@ -17,7 +21,10 @@ class BrokerRegistry:
     gateway implementations by name.
     """
 
-    _brokers: dict[str, type[IBrokerGateway]] = {}
+    @classmethod
+    def reset(cls) -> None:
+        """Clear all registered brokers. Use in test teardown for isolation."""
+        _brokers.clear()
 
     @classmethod
     def register(cls, name: str, gateway_class: type[IBrokerGateway]) -> None:
@@ -27,7 +34,7 @@ class BrokerRegistry:
             name: Broker name (e.g., "dhan", "paper")
             gateway_class: Gateway class implementing IBrokerGateway
         """
-        cls._brokers[name] = gateway_class
+        _brokers[name] = gateway_class
         logger.info(f"broker_registered: {name}")
 
     @classmethod
@@ -37,7 +44,7 @@ class BrokerRegistry:
         Returns:
             List of broker names
         """
-        return list(cls._brokers.keys())
+        return list(_brokers.keys())
 
     @classmethod
     def get(cls, broker: str, config: dict[str, Any]) -> IBrokerGateway:
@@ -53,13 +60,13 @@ class BrokerRegistry:
         Raises:
             ValueError: If broker is not registered
         """
-        if broker not in cls._brokers:
+        if broker not in _brokers:
             available = ", ".join(cls.list_brokers())
             raise ValueError(
                 f"Unknown broker '{broker}'. Available: {available}"
             )
 
-        gateway_class = cls._brokers[broker]
+        gateway_class = _brokers[broker]
         logger.info(f"broker_instantiated: {broker}")
         return gateway_class(config)
 
@@ -73,7 +80,7 @@ class BrokerRegistry:
         Returns:
             True if broker is registered
         """
-        return broker in cls._brokers
+        return broker in _brokers
 
 
 # Auto-register known brokers

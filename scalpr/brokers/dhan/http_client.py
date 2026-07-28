@@ -20,22 +20,34 @@ from scalpr.brokers.dhan.exceptions import (
     OrderError,
     RateLimitError,
 )
+from scalpr.brokers.rate_limit import (
+    DHAN_RATE_LIMITS,
+    MultiBucketRateLimiter,
+    limiter_from_table,
+)
 
 logger = logging.getLogger(__name__)
 
-# Rate limits per endpoint (seconds between requests)
-# Aligned with Dhan API rate limits:
-# - Order APIs: 10/sec, 250/min
-# - Data APIs: 5/sec
-# - Quote APIs: 1/sec
-_RATE_LIMITS: dict[str, float] = {
-    "/marketfeed/quote": 1.0,   # 1 req/sec (Quote APIs)
-    "/marketfeed/ltp": 0.2,     # 5 req/sec (Data APIs)
-    "/marketfeed/ohlc": 0.2,    # 5 req/sec (Data APIs)
-    "/optionchain": 1.0,        # 1 req/sec (Quote APIs)
-    "/charts/": 0.2,            # 5 req/sec (Data APIs)
-    "/orders": 0.1,             # 10 req/sec (Order APIs)
+# Endpoint prefix → rate-limit bucket name.
+# Single source of truth shared with the async client.
+_ENDPOINT_BUCKETS: dict[str, str] = {
+    "/marketfeed/quote": "quotes",
+    "/marketfeed/ltp": "historical",
+    "/marketfeed/ohlc": "historical",
+    "/optionchain": "optionchain",
+    "/charts/": "historical",
+    "/orders": "orders",
+    "/profile": "admin",
+    "/fundlimit": "admin",
+    "/positions": "admin",
+    "/holdings": "admin",
+    "/orderbook": "admin",
+    "/tradebook": "admin",
 }
+_DEFAULT_BUCKET = "admin"
+
+# Fail-fast timeout for the orders bucket — order path must never block.
+_ORDERS_ACQUIRE_TIMEOUT_S = 0.5
 
 # Retry configuration
 _MAX_RETRIES = 3
@@ -101,6 +113,7 @@ class DhanHttpClient:
         enable_retry: bool = True,
         circuit_breaker: CircuitBreaker | None = None,
         session: requests.Session | None = None,
+        limiter: MultiBucketRateLimiter | None = None,
     ) -> None:
         self.client_id = client_id
         self.access_token = access_token
@@ -124,8 +137,7 @@ class DhanHttpClient:
             "client-id": client_id,
             "access-token": access_token,
         })
-        self._last_request_time: dict[str, float] = {}
-        self._rate_lock = threading.Lock()
+        self._limiter: MultiBucketRateLimiter = limiter or limiter_from_table(DHAN_RATE_LIMITS)
         self._last_refresh_time: float = 0.0
 
     def update_token(self, access_token: str) -> None:
@@ -153,27 +165,15 @@ class DhanHttpClient:
         """DELETE request to Dhan API."""
         return self._request("DELETE", endpoint)
 
-    def _throttle(self, endpoint: str) -> None:
-        """Apply rate limiting for endpoint."""
-        interval = self._match_rate_limit(endpoint, _RATE_LIMITS)
-        if interval <= 0:
-            return
-        with self._rate_lock:
-            last = self._last_request_time.get(endpoint, 0.0)
-            elapsed = time.time() - last
-            if elapsed < interval:
-                time.sleep(interval - elapsed)
-            self._last_request_time[endpoint] = time.time()
-
     @staticmethod
-    def _match_rate_limit(endpoint: str, limits: dict[str, float]) -> float:
-        """Match endpoint against rate limit keys using prefix matching."""
-        if endpoint in limits:
-            return limits[endpoint]
-        for prefix, interval in limits.items():
+    def _bucket_for(endpoint: str) -> str:
+        """Resolve endpoint to rate-limit bucket name via prefix match."""
+        if endpoint in _ENDPOINT_BUCKETS:
+            return _ENDPOINT_BUCKETS[endpoint]
+        for prefix, bucket in _ENDPOINT_BUCKETS.items():
             if endpoint.startswith(prefix):
-                return interval
-        return 0
+                return bucket
+        return _DEFAULT_BUCKET
 
     def _try_refresh_token(self) -> bool:
         """Attempt token refresh. Returns True if successful."""
@@ -204,7 +204,16 @@ class DhanHttpClient:
         if not self._circuit_breaker.allow_request():
             raise BrokerError(f"Circuit breaker open: {method} {endpoint}")
 
-        self._throttle(endpoint)
+        bucket = self._bucket_for(endpoint)
+        if bucket == "orders":
+            # Fail-fast on the order path: bounded wait, then reject.
+            if not self._limiter.acquire(bucket, timeout=_ORDERS_ACQUIRE_TIMEOUT_S):
+                raise RateLimitError(
+                    f"Rate limit budget exhausted for {method} {endpoint} "
+                    f"(orders bucket, waited {_ORDERS_ACQUIRE_TIMEOUT_S}s)"
+                )
+        else:
+            self._limiter.acquire(bucket)
         url = f"{self._base_url}{endpoint}" if endpoint.startswith("/") else endpoint
 
         max_attempts = _MAX_RETRIES if self._enable_retry else 1
@@ -245,16 +254,13 @@ class DhanHttpClient:
                     + (" (DH-906 Invalid Token)" if resp.status_code != 401 else "")
                 )
 
-            # 429 - rate limited
+            # 429 - rate limited: trigger bucket cooldown (halve rate +
+            # mandatory back-off) and fail fast — never retry-in-line.
             if resp.status_code == 429:
-                if attempt < max_attempts:
-                    delay = self._backoff_delay(attempt)
-                    logger.warning("http_rate_limited_retry", extra={
-                        "method": method, "endpoint": endpoint, "attempt": attempt, 
-                        "delay_ms": int(delay * 1000),
-                    })
-                    time.sleep(delay)
-                    continue
+                self._limiter.trigger_cooldown(bucket)
+                logger.warning("http_rate_limited", extra={
+                    "method": method, "endpoint": endpoint, "bucket": bucket,
+                })
                 raise RateLimitError(f"Rate limited: HTTP 429 on {method} {endpoint}")
 
             # 5xx - server error, retry
@@ -302,7 +308,3 @@ class DhanHttpClient:
         """Exponential backoff: 500ms, 1s, 2s, 4s... capped at 5s."""
         delay_ms = min(_BASE_DELAY_MS * (2 ** (attempt - 1)), _MAX_DELAY_MS)
         return delay_ms / 1000.0
-
-    def close(self) -> None:
-        """Close HTTP session."""
-        self._session.close()

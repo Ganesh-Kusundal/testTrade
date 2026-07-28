@@ -14,9 +14,9 @@ from scalpr.domain.order import OrderSide
 
 @dataclass(frozen=True)
 class Quote:
-    """Canonical market quote model.
+    """Canonical market quote model with all Dhan quote fields.
 
-    Returned by Gateway.quote() and Gateway.ltp().
+    Returned by Gateway.quote() and InstrumentHandle.quote().
     """
 
     symbol: str
@@ -30,6 +30,16 @@ class Quote:
     change: Decimal = Decimal("0")
     change_percent: Decimal = Decimal("0")
     timestamp: datetime | None = None
+    average_price: Decimal = Decimal("0")
+    buy_quantity: int = 0
+    sell_quantity: int = 0
+    last_quantity: int = 0
+    last_trade_time: datetime | None = None
+    lower_circuit_limit: Decimal = Decimal("0")
+    upper_circuit_limit: Decimal = Decimal("0")
+    oi: int = 0
+    oi_day_high: Decimal = Decimal("0")
+    oi_day_low: Decimal = Decimal("0")
 
 
 @dataclass(frozen=True)
