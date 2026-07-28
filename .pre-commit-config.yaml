@@ -24,3 +24,15 @@ repos:
         language: system
         pass_filenames: false
         files: '^scalpr/.*\.py$'
+      - id: ruff-check
+        name: ruff check
+        entry: .venv/bin/ruff check scalpr tests
+        language: system
+        pass_filenames: false
+        types: [python]
+      - id: pytest-unit-contract
+        name: pytest unit+contract (pre-push gate)
+        entry: .venv/bin/python -m pytest tests/unit tests/contract -q -x -p no:cacheprovider
+        language: system
+        pass_filenames: false
+        stages: [pre-push]

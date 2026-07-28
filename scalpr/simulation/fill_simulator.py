@@ -31,8 +31,7 @@ class FillSimulator:
             if bar.low <= order.price:
                 return order.price
         # Sell limit fills if high is above or equal to limit price
-        elif order.side == OrderSide.SELL:
-            if bar.high >= order.price:
-                return order.price
+        elif order.side == OrderSide.SELL and bar.high >= order.price:
+            return order.price
 
         return None

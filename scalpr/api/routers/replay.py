@@ -2,16 +2,12 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, Field
-from typing import Annotated, Optional, Union
 
 from scalpr.api.models import (
     CreateReplayBody,
     ReplayControlBody,
     ReplaySession,
     ReplaySessionsResponse,
-    ReplayState,
-    Timeframe,
 )
 
 router = APIRouter(prefix="/replay", tags=["replay"])
@@ -50,8 +46,8 @@ async def create_replay_session(
 @router.get("/sessions", response_model=ReplaySessionsResponse)
 async def list_replay_sessions(
     request: Request,
-    symbol: Optional[str] = None,
-    date: Optional[str] = None,
+    symbol: str | None = None,
+    date: str | None = None,
     manager=Depends(_get_manager),
 ):
     """List replay sessions, optionally filtered by symbol/date."""

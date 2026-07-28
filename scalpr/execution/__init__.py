@@ -1,3 +1,3 @@
-from scalpr.execution.order_router import OrderRouter, RiskCheckFailed, CircuitBreakerTripped
+from scalpr.execution.order_router import CircuitBreakerTripped, OrderRouter, RiskCheckFailed
 
-__all__ = ["OrderRouter", "RiskCheckFailed", "CircuitBreakerTripped"]
+__all__ = ["CircuitBreakerTripped", "OrderRouter", "RiskCheckFailed"]

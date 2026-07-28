@@ -12,12 +12,13 @@ Dhan API expects these fields for POST /orders:
 - triggerPrice: string (Decimal as string)
 - securityId: string (non-empty)
 """
-import pytest
 from decimal import Decimal
-from scalpr.brokers.dhan.mapper import DhanMapper
-from scalpr.domain.order import Order, OrderSide, OrderType, OrderState
-from scalpr.domain.instrument import Exchange
 
+import pytest
+
+from scalpr.brokers.dhan.mapper import DhanMapper
+from scalpr.domain.instrument import Exchange
+from scalpr.domain.order import Order, OrderSide, OrderState, OrderType
 
 REQUIRED_FIELDS = [
     "dhanClientId", "correlationId", "transactionType",

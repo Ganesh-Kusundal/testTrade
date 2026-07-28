@@ -22,9 +22,9 @@ A test name should state the expected behaviour under a condition."
 from __future__ import annotations
 
 import threading
-from decimal import Decimal
 from datetime import date
-from unittest.mock import MagicMock, patch, PropertyMock
+from decimal import Decimal
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -40,7 +40,6 @@ from scalpr.domain.fill import Fill
 from scalpr.domain.instrument import Exchange
 from scalpr.domain.order import Order, OrderSide, OrderState, OrderType
 from scalpr.domain.position import Position, PositionSide
-
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -174,7 +173,7 @@ def mocked_gateway_connection():
     mock_conn.orders = MagicMock()
     mock_conn.portfolio = MagicMock()
     mock_conn.historical = MagicMock()
-    
+
     with patch("scalpr.brokers.dhan.gateway.DhanConnection", return_value=mock_conn):
         gateway = DhanGateway({"client_id": "c1", "access_token": "t1"})
         yield gateway, mock_conn
@@ -249,12 +248,12 @@ class TestDhanConnectionLifecycle:
 
             conn = DhanConnection(valid_config)
             conn.connect()
-            
+
             mock_client.assert_called_once()
 
     def test_should_load_instruments_on_connect(self, fully_mocked_connection):
         """connect() must call _create_resolver to load instrument master."""
-        conn, _, mock_resolver = fully_mocked_connection
+        _conn, _, mock_resolver = fully_mocked_connection
         mock_resolver.assert_called_once()
 
     def test_should_verify_connection_via_profile_endpoint(self, fully_mocked_connection):
@@ -1331,11 +1330,9 @@ class TestDhanGatewayFullDelegationChain:
         # Disconnect - mock must return False after disconnect
         def side_effect_is_connected():
             # After disconnect is called, return False
-            if mock_conn.disconnect.called:
-                return False
-            return True
+            return not mock_conn.disconnect.called
         mock_conn.is_connected.side_effect = side_effect_is_connected
-        
+
         gateway.disconnect()
         assert gateway.is_connected() is False
 

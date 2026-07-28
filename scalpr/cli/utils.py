@@ -1,6 +1,7 @@
 """Shared CLI utilities."""
 
 from rich.console import Console
+
 from scalpr.brokers import Gateway
 
 console = Console()

@@ -6,10 +6,10 @@ from decimal import Decimal
 from typing import Any
 
 from scalpr.brokers.broker_port import IBrokerGateway
+from scalpr.domain.events import FillReceived, IEventBus, PositionUpdated
 from scalpr.domain.fill import Fill
 from scalpr.domain.order import Order, OrderSide, OrderState, OrderType
 from scalpr.domain.position import Position, PositionSide, PositionState
-from scalpr.domain.events import FillReceived, PositionUpdated, IEventBus
 
 
 class PaperOms(IBrokerGateway):
@@ -108,7 +108,7 @@ class PaperOms(IBrokerGateway):
                 self.balance += transaction_value
 
             self._recalculate_peak_drawdown()
-            
+
             # Publish FillReceived event
             if self.event_bus:
                 self.event_bus.publish(
@@ -117,7 +117,7 @@ class PaperOms(IBrokerGateway):
                         fill=fill,
                     )
                 )
-            
+
             # Publish PositionUpdated event if quantity changed
             if self.event_bus and updated_pos.quantity != previous_quantity:
                 self.event_bus.publish(
@@ -127,7 +127,7 @@ class PaperOms(IBrokerGateway):
                         previous_quantity=previous_quantity,
                     )
                 )
-            
+
             return fill
 
     def modify_order(self, order_id: str, price: Decimal, quantity: int) -> bool:

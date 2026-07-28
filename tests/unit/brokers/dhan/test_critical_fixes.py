@@ -8,18 +8,15 @@ Tests verify all P0/P1/P2 fixes:
 - Rate limit compliance
 """
 
-import pytest
 from decimal import Decimal
 from unittest.mock import MagicMock, patch
 
+from scalpr.brokers.dhan.connection import DhanConnection
 from scalpr.brokers.dhan.mapper import DhanMapper
 from scalpr.brokers.dhan.orders import OrdersAdapter
-from scalpr.brokers.dhan.connection import DhanConnection
 from scalpr.brokers.rate_limit import DHAN_RATE_LIMITS
-from scalpr.brokers.dhan.exceptions import BrokerError
-from scalpr.domain.order import Order, OrderSide, OrderType, OrderState
 from scalpr.domain.instrument import Exchange
-
+from scalpr.domain.order import Order, OrderSide, OrderState, OrderType
 
 # ============================================================================
 # TEST 1: MCX Segment Mapping Fix
@@ -176,7 +173,7 @@ class TestProfileValidation:
         """Connection should log active segments from profile."""
         import logging
         caplog.set_level(logging.INFO)
-        
+
         mock_http = MagicMock()
         mock_http.get.return_value = {
             "dataPlan": "active",
@@ -217,7 +214,7 @@ class TestMarketOrderFills:
         """MARKET orders with 0 traded_price should log warning."""
         import logging
         caplog.set_level(logging.WARNING)
-        
+
         mock_client = MagicMock()
         mock_client.client_id = "c1"
         mock_client.post.return_value = {

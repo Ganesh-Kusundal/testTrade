@@ -23,7 +23,7 @@ _COMPACT_CSV_URL = Dhan.INSTRUMENT_CSV
 
 class InstrumentLoader:
     """Downloads and parses Dhan instrument master with daily caching.
-    
+
     Features:
     - Daily cache with 6-hour TTL
     - Automatic cleanup of old cache files
@@ -48,10 +48,10 @@ class InstrumentLoader:
     @staticmethod
     def load_cached(force_refresh: bool = False) -> list[dict]:
         """Load instrument master rows with daily caching.
-        
+
         Args:
             force_refresh: If True, ignore cache and re-download
-        
+
         Returns:
             List of instrument row dicts
         """
@@ -133,7 +133,7 @@ class InstrumentLoader:
             seg = _COMPACT_SEGMENT_MAP.get((exch_id, segment))
             if seg is None:
                 continue
-            
+
             out.append({
                 "SEM_TRADING_SYMBOL": str(getattr(r, "SEM_TRADING_SYMBOL", "")),
                 "SEM_SMST_SECURITY_ID": str(int(getattr(r, "SEM_SMST_SECURITY_ID", 0))),

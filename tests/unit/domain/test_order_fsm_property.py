@@ -1,8 +1,10 @@
 """Property-based tests for Order state machine."""
-import pytest
 from decimal import Decimal
-from scalpr.domain.order import Order, OrderSide, OrderType, OrderState, ORDER_STATE_TRANSITIONS
+
+import pytest
+
 from scalpr.domain.instrument import Exchange
+from scalpr.domain.order import ORDER_STATE_TRANSITIONS, Order, OrderSide, OrderState, OrderType
 
 
 def _make_order(state=OrderState.PENDING):

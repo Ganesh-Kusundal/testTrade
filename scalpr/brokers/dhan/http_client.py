@@ -94,7 +94,7 @@ class CircuitBreaker:
 
 class DhanHttpClient:
     """Sync HTTP client for Dhan API with retry, rate limiting, and circuit breaker.
-    
+
     Features:
     - Automatic retry with exponential backoff
     - Rate limiting per endpoint
@@ -122,7 +122,7 @@ class DhanHttpClient:
         self._token_refresh_fn = token_refresh_fn
         self._enable_retry = enable_retry
         self._circuit_breaker = circuit_breaker or CircuitBreaker()
-        
+
         # Use provided session or create new one
         if session is not None:
             self._session = session
@@ -132,7 +132,7 @@ class DhanHttpClient:
                 "Accept": "application/json",
                 "Content-Type": "application/json",
             })
-        
+
         self._session.headers.update({
             "client-id": client_id,
             "access-token": access_token,
@@ -178,14 +178,14 @@ class DhanHttpClient:
     def _try_refresh_token(self) -> bool:
         """Attempt token refresh. Returns True if successful."""
         now = time.time()
-        
+
         if now - self._last_refresh_time < _REFRESH_COOLDOWN_SECONDS:
             logger.debug("token_refresh_skipped: cooldown_active")
             return False
-            
+
         if self._token_refresh_fn is None:
             return False
-            
+
         try:
             new_token = self._token_refresh_fn()
             if new_token:
@@ -195,7 +195,7 @@ class DhanHttpClient:
                 return True
         except Exception as exc:
             logger.warning("token_refresh_failed", extra={"error": str(exc)})
-            
+
         return False
 
     def _request(self, method: str, endpoint: str, json: dict | None = None) -> dict[str, Any]:
@@ -225,11 +225,11 @@ class DhanHttpClient:
             except requests.RequestException as exc:
                 last_exc = BrokerError(f"HTTP {method} {url} failed: {exc}")
                 self._circuit_breaker.record_failure()
-                
+
                 if attempt < max_attempts:
                     delay = self._backoff_delay(attempt)
                     logger.warning("http_retry", extra={
-                        "method": method, "endpoint": endpoint, "attempt": attempt, 
+                        "method": method, "endpoint": endpoint, "attempt": attempt,
                         "delay_ms": int(delay * 1000),
                     })
                     time.sleep(delay)

@@ -139,9 +139,7 @@ class Position:
             return False
         if self.quantity > 0 and fill_side == OrderSide.SELL:
             return True
-        if self.quantity < 0 and fill_side == OrderSide.BUY:
-            return True
-        return False
+        return bool(self.quantity < 0 and fill_side == OrderSide.BUY)
 
     def notional_value(self) -> Decimal:
         """Return abs(quantity) * ltp as Decimal."""

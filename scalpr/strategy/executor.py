@@ -3,18 +3,17 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import List
 
 from scalpr.domain.tick import OHLCV, Tick
-from scalpr.strategy.strategy_port import IStrategy
 from scalpr.observability.metrics import metrics
+from scalpr.strategy.strategy_port import IStrategy
 
 logger = logging.getLogger(__name__)
 
 
 class StrategyExecutor:
     """Orchestrates strategy execution by routing market ticks and bars to registered strategies.
-    
+
     Features:
     - Async execution with per-strategy timeouts
     - Error isolation (one strategy failure doesn't block others)
@@ -22,7 +21,7 @@ class StrategyExecutor:
     """
 
     def __init__(self, timeout_seconds: float = 0.5) -> None:
-        self.strategies: List[IStrategy] = []
+        self.strategies: list[IStrategy] = []
         self.timeout = timeout_seconds
 
     def get_strategy_info(self) -> list[dict]:
@@ -42,13 +41,13 @@ class StrategyExecutor:
         """Route incoming tick to all strategies with timeout protection."""
         if not self.strategies:
             return
-        
+
         # Launch all strategies in parallel with timeouts
         tasks = [
             asyncio.create_task(self._safe_on_tick(strategy, tick))
             for strategy in self.strategies
         ]
-        
+
         # Wait for all strategies (errors handled per-strategy)
         await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -56,7 +55,7 @@ class StrategyExecutor:
         """Execute single strategy with timeout and error isolation."""
         start_time = time.time()
         strategy_name = strategy.__class__.__name__
-        
+
         try:
             # Check if strategy has async on_tick
             if hasattr(strategy, "on_tick_async") and asyncio.iscoroutinefunction(strategy.on_tick_async):
@@ -70,30 +69,30 @@ class StrategyExecutor:
                     asyncio.to_thread(strategy.on_tick, tick),
                     timeout=self.timeout
                 )
-            
+
             # Record success metrics
             latency_ms = (time.time() - start_time) * 1000
             metrics.get_histogram("strategy_execution_latency_ms").observe(latency_ms)
-            
+
         except asyncio.TimeoutError:
             logger.error(f"Strategy {strategy_name} timed out after {self.timeout}s")
             metrics.get_counter("strategy_timeouts").increment()
-            
+
         except Exception as exc:
-            logger.error(f"Strategy {strategy_name} error: {exc}", exc_info=True)
+            logger.exception(f"Strategy {strategy_name} error: {exc}")
             metrics.get_counter("strategy_errors").increment()
 
     async def on_bar(self, bar: OHLCV) -> None:
         """Route incoming candle bar to all strategies with timeout protection."""
         if not self.strategies:
             return
-        
+
         # Launch all strategies in parallel with timeouts
         tasks = [
             asyncio.create_task(self._safe_on_bar(strategy, bar))
             for strategy in self.strategies
         ]
-        
+
         # Wait for all strategies (errors handled per-strategy)
         await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -101,7 +100,7 @@ class StrategyExecutor:
         """Execute single strategy bar handler with timeout and error isolation."""
         start_time = time.time()
         strategy_name = strategy.__class__.__name__
-        
+
         try:
             # Check if strategy has async on_bar
             if hasattr(strategy, "on_bar_async") and asyncio.iscoroutinefunction(strategy.on_bar_async):
@@ -115,15 +114,15 @@ class StrategyExecutor:
                     asyncio.to_thread(strategy.on_bar, bar),
                     timeout=self.timeout
                 )
-            
+
             # Record success metrics
             latency_ms = (time.time() - start_time) * 1000
             metrics.get_histogram("strategy_execution_latency_ms").observe(latency_ms)
-            
+
         except asyncio.TimeoutError:
             logger.error(f"Strategy {strategy_name} on_bar timed out after {self.timeout}s")
             metrics.get_counter("strategy_timeouts").increment()
-            
+
         except Exception as exc:
-            logger.error(f"Strategy {strategy_name} on_bar error: {exc}", exc_info=True)
+            logger.exception(f"Strategy {strategy_name} on_bar error: {exc}")
             metrics.get_counter("strategy_errors").increment()

@@ -16,8 +16,8 @@ from decimal import Decimal
 
 import pytest
 
-from scalpr.brokers.contracts import Funds
 from scalpr.brokers.broker_port import IBrokerGateway
+from scalpr.brokers.contracts import Funds
 from scalpr.brokers.dhan.exceptions import RateLimitError as DhanRateLimitError
 from scalpr.brokers.dhan.gateway import DhanGateway
 from scalpr.brokers.errors import RateLimitError

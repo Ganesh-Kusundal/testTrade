@@ -9,8 +9,6 @@ import os
 from decimal import Decimal
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 
 def _wire_with_env(live_orders_env: str | None):
     """Call bootstrap.wire() with SCALPR_LIVE_ORDERS set to the given value."""

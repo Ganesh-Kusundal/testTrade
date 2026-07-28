@@ -30,7 +30,7 @@ class OptionsScanner:
 
     def scan(self, spot_price: Decimal, chain_data: list[dict]) -> list[Instrument]:
         """Scan option chain data and return matching sorted instruments.
-        
+
         ATM strike selection: Select strike closest to spot_price.
         Filters by open interest, volume, and bid-ask spreads.
         """

@@ -3,8 +3,8 @@
 import click
 from rich.console import Console
 from rich.table import Table
+
 from scalpr.brokers import BrokerRegistry
-from scalpr.cli.utils import get_gateway
 
 console = Console()
 

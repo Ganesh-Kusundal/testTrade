@@ -3,6 +3,7 @@
 import click
 from rich.console import Console
 from rich.table import Table
+
 from scalpr.cli.utils import get_gateway
 
 console = Console()

@@ -7,10 +7,9 @@ Trading wiring (strategies, feed, OMS) is gated behind SCALPR_TRADING_ENABLED=1
 import asyncio
 import logging
 import os
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
-from decimal import Decimal
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -62,7 +61,7 @@ def wire(
         db_path: SQLite path for OMS persistence.
         events_db_path: SQLite path for the domain event audit log.
     """
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     from scalpr.execution.order_router import OrderRouter
     from scalpr.observability.event_store import EventStore
@@ -121,10 +120,14 @@ async def _start_trading(app: FastAPI) -> None:
 
     ctx = wire(gateway, watchlist)
 
+    from scalpr.brokers.dhan.auth import ensure_fresh_token
+
     feed = DhanWebSocketManager(
         access_token=os.environ.get("DHAN_ACCESS_TOKEN", ""),
         client_id=os.environ.get("DHAN_CLIENT_ID", ""),
         resolver=gateway.connection.resolver,
+        # Reconnects after token expiry (DH-906) force TOTP regeneration
+        token_refresh_fn=lambda: ensure_fresh_token(force=True),
     )
     await feed.start()
     await feed.subscribe_pairs([(s, "NSE") for s in watchlist])
@@ -205,20 +208,14 @@ async def _lifespan(app: FastAPI):
 
     logger.info("SCALPR API shutting down...")
     if getattr(app.state, "feed", None):
-        try:
+        with suppress(Exception):
             await app.state.feed.stop()
-        except Exception:
-            pass
     if getattr(app.state, "gateway", None):
-        try:
+        with suppress(Exception):
             app.state.gateway.disconnect()
-        except Exception:
-            pass
     if getattr(app.state, "replay_manager", None):
-        try:
+        with suppress(Exception):
             app.state.replay_manager.shutdown()
-        except Exception:
-            pass
 
 
 def create_app() -> FastAPI:

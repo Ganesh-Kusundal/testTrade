@@ -1,14 +1,16 @@
-import pytest
 import time
 from decimal import Decimal
 from unittest.mock import MagicMock, patch
-from scalpr.domain.order import Order, OrderSide, OrderType, OrderState
+
+import pytest
+
+from scalpr.brokers.dhan.dtos import DhanOrderResponse
+from scalpr.brokers.dhan.gateway import DhanGateway
+from scalpr.brokers.dhan.mapper import DhanMapper
 from scalpr.domain.fill import Fill
-from scalpr.domain.position import Position
 from scalpr.domain.instrument import Exchange
-from scalpr.brokers.dhan.gateway import DhanGateway, BrokerError
-from scalpr.brokers.dhan.mapper import DhanMapper, Result
-from scalpr.brokers.dhan.dtos import DhanOrderRequest, DhanOrderResponse
+from scalpr.domain.order import Order, OrderSide, OrderState, OrderType
+from scalpr.domain.position import Position
 
 
 class MockHttpClient:
@@ -51,7 +53,7 @@ def _make_gateway(mock_client):
         mock_conn.historical = MagicMock()
         mock_conn.http_client = mock_client
         MockConnection.return_value = mock_conn
-        
+
         gateway = DhanGateway(config={"client_id": "c1", "access_token": "t1"})
         gateway._connection = mock_conn  # Inject mock connection
         return gateway
@@ -61,7 +63,7 @@ def test_gateway_retries_on_transient_error():
     """DhanGateway delegates to orders adapter which handles retry logic."""
     mock_client = MockHttpClient()
     gateway = _make_gateway(mock_client)
-    
+
     order = Order(
         order_id="1",
         symbol="RELIANCE",
@@ -72,7 +74,7 @@ def test_gateway_retries_on_transient_error():
         price=Decimal("2500.00"),
         state=OrderState.PENDING,
     )
-    
+
     # Mock the orders adapter to return a Fill directly
     # (retry logic is in http_client, tested separately in test_adapters.py)
     gateway._connection.orders.place_order.return_value = Fill(
@@ -83,7 +85,7 @@ def test_gateway_retries_on_transient_error():
         quantity=10,
         price=Decimal("2500.00"),
     )
-    
+
     fill = gateway.place_order(order)
     assert fill.fill_id == "dhan_ord_2"
     # Verify delegation occurred
@@ -96,7 +98,7 @@ def test_gateway_does_not_retry_on_400_bad_request():
         Exception("HTTP 400 Bad Request: Invalid Quantity"),
     ])
     gateway = _make_gateway(mock_client)
-    
+
     order = Order(
         order_id="1",
         symbol="RELIANCE",
@@ -107,13 +109,13 @@ def test_gateway_does_not_retry_on_400_bad_request():
         price=Decimal("2500.00"),
         state=OrderState.PENDING,
     )
-    
+
     # Mock the orders adapter to use the http_client
     def mock_place_order(order):
         return gateway._connection.http_client.post("/orders", {})
-    
+
     gateway._connection.orders.place_order = mock_place_order
-    
+
     with pytest.raises(Exception):  # Should raise from http_client
         gateway.place_order(order)
     assert len(mock_client.calls) == 1  # Fails immediately, no retries
@@ -123,7 +125,7 @@ def test_gateway_rate_limiter_blocks_above_25_rps():
     """DhanGateway rate limiter limits calls to 25 RPS (tested here with a lower rate for speed)."""
     mock_client = MockHttpClient()
     gateway = _make_gateway(mock_client)
-    
+
     order = Order(
         order_id="1",
         symbol="RELIANCE",
@@ -134,18 +136,18 @@ def test_gateway_rate_limiter_blocks_above_25_rps():
         price=Decimal("2500.00"),
         state=OrderState.PENDING,
     )
-    
+
     # Mock place_order to call http_client directly
     def mock_place_order(order):
         return gateway._connection.http_client.post("/orders", {})
-    
+
     gateway._connection.orders.place_order = mock_place_order
-    
-    start_time = time.time()
+
+    time.time()
     for _ in range(12):  # Just test that it works
         gateway.place_order(order)
-    end_time = time.time()
-    
+    time.time()
+
     # Since we're using the new architecture, rate limiting is in http_client
     # Just verify all calls succeeded
     assert len(mock_client.calls) == 12
@@ -155,7 +157,7 @@ def test_gateway_opens_circuit_after_5_failures():
     """DhanGateway opens circuit breaker after 5 consecutive failures, fast-failing subsequent requests."""
     mock_client = MockHttpClient()
     gateway = _make_gateway(mock_client)
-    
+
     order = Order(
         order_id="1",
         symbol="RELIANCE",
@@ -166,7 +168,7 @@ def test_gateway_opens_circuit_after_5_failures():
         price=Decimal("2500.00"),
         state=OrderState.PENDING,
     )
-    
+
     # Mock to fail 5 times then succeed
     call_count = [0]
     def mock_place_order(order):
@@ -174,18 +176,18 @@ def test_gateway_opens_circuit_after_5_failures():
         if call_count[0] <= 5:
             raise Exception("Bad Request 400")
         return DhanOrderResponse(orderId="success", orderStatus="FILLED", errorCode="", errorMessage="")
-    
+
     gateway._connection.orders.place_order = mock_place_order
-    
+
     # 5 failures
     for _ in range(5):
         with pytest.raises(Exception):
             gateway.place_order(order)
-    
+
     # Circuit breaker should be OPEN (if implemented in http_client)
     # Sixth call should work or fail based on circuit breaker state
     try:
-        result = gateway.place_order(order)
+        gateway.place_order(order)
         # If circuit breaker not blocking, it will succeed
     except Exception:
         pass  # Circuit breaker may block it
@@ -208,7 +210,7 @@ def test_mapper_price_is_decimal_not_float():
     req = res.value
     assert isinstance(req.price, Decimal)
     assert req.price == Decimal("2500.50")
-    
+
     # Parse a mock position response
     raw_pos = {
         "symbol": "RELIANCE",
@@ -259,28 +261,28 @@ def test_square_off_all_calls_sell_for_all_long_positions():
     """square_off_all generates selling orders for long positions and buying orders for short positions."""
     mock_client = MockHttpClient()
     gateway = _make_gateway(mock_client)
-    
+
     # Mock portfolio to return positions
     mock_positions = [
-        Position(symbol="RELIANCE", exchange=Exchange.NSE, quantity=10, avg_price=Decimal("2500"), 
+        Position(symbol="RELIANCE", exchange=Exchange.NSE, quantity=10, avg_price=Decimal("2500"),
                 ltp=Decimal("2510"), unrealised_pnl=Decimal("100")),
-        Position(symbol="TCS", exchange=Exchange.NSE, quantity=-5, avg_price=Decimal("3500"), 
+        Position(symbol="TCS", exchange=Exchange.NSE, quantity=-5, avg_price=Decimal("3500"),
                 ltp=Decimal("3480"), unrealised_pnl=Decimal("100")),
     ]
     gateway._connection.portfolio.get_positions.return_value = mock_positions
-    
+
     # Mock market_data to return LTP
     gateway._connection.market_data.get_ltp.return_value = Decimal("2510")
-    
+
     # Mock orders adapter
     from datetime import datetime
     gateway._connection.orders.place_order.return_value = Fill(
         fill_id="sq_rel", order_id="1", symbol="RELIANCE", side=OrderSide.SELL, quantity=10,
         price=Decimal("2510"), timestamp=datetime.now()
     )
-    
+
     fills = gateway.square_off_all()
-    
+
     assert len(fills) == 2
     assert fills[0].symbol == "RELIANCE"
     assert fills[0].side == OrderSide.SELL
@@ -308,6 +310,7 @@ class TestGatewayWsLifecycleSafety:
 
     def _bare_gateway(self):
         import threading
+
         from scalpr.brokers.gateway import Gateway
         gw = Gateway.__new__(Gateway)
         gw._ws_manager = None
@@ -324,6 +327,7 @@ class TestGatewayWsLifecycleSafety:
 
     def test_has_ws_lock(self):
         import inspect
+
         from scalpr.brokers.gateway import Gateway
         src = inspect.getsource(Gateway.__init__)
         assert "_ws_lock" in src
@@ -334,6 +338,7 @@ class TestSubscribeFeedMode:
 
     def test_mode_passed_and_callback_registered_before_subscribe(self):
         import threading
+
         from scalpr.brokers.gateway import Gateway
         from scalpr.domain.instrument import MarketFeed
 
@@ -366,6 +371,7 @@ class TestStopStreamHardening:
 
     def _gw(self):
         import threading
+
         from scalpr.brokers.gateway import Gateway
         gw = Gateway.__new__(Gateway)
         gw._ws_manager = MagicMock()
@@ -400,6 +406,7 @@ class TestSubscribeFeedExceptionSafety:
 
     def test_failed_subscribe_unregisters_callback(self):
         import threading
+
         from scalpr.brokers.gateway import Gateway
         from scalpr.domain.instrument import MarketFeed
 
@@ -421,6 +428,7 @@ class TestSubscribeFeedExceptionSafety:
 
     def test_plain_string_mode_is_coerced(self):
         import threading
+
         from scalpr.brokers.gateway import Gateway
 
         gw = Gateway.__new__(Gateway)
@@ -457,6 +465,7 @@ class TestGatewayOptionChain:
 
     def test_option_chain_delegates_to_adapter(self):
         from datetime import date
+
         from scalpr.brokers.gateway import Gateway
 
         gw = self._bare_gateway()
@@ -466,12 +475,11 @@ class TestGatewayOptionChain:
         adapter_instance = MagicMock()
         adapter_instance.get_option_chain.return_value = [{"strike": 24000, "security_id": 1}]
 
-        with patch.object(Gateway, "_get_dhan_connection", return_value=conn):
-            with patch(
-                "scalpr.brokers.gateway.OptionChainAdapter",
-                return_value=adapter_instance,
-            ) as AdapterCls:
-                result = gw.option_chain("NIFTY", expiry=date(2026, 7, 28))
+        with patch.object(Gateway, "_get_dhan_connection", return_value=conn), patch(
+            "scalpr.brokers.gateway.OptionChainAdapter",
+            return_value=adapter_instance,
+        ) as AdapterCls:
+            result = gw.option_chain("NIFTY", expiry=date(2026, 7, 28))
 
         AdapterCls.assert_called_once_with(conn.http_client, conn.resolver)
         adapter_instance.get_option_chain.assert_called_once_with(
@@ -487,12 +495,11 @@ class TestGatewayOptionChain:
         adapter_instance = MagicMock()
         adapter_instance.get_option_chain.return_value = []
 
-        with patch.object(Gateway, "_get_dhan_connection", return_value=conn):
-            with patch(
-                "scalpr.brokers.gateway.OptionChainAdapter",
-                return_value=adapter_instance,
-            ):
-                gw.option_chain("NIFTY")
+        with patch.object(Gateway, "_get_dhan_connection", return_value=conn), patch(
+            "scalpr.brokers.gateway.OptionChainAdapter",
+            return_value=adapter_instance,
+        ):
+            gw.option_chain("NIFTY")
 
         adapter_instance.get_option_chain.assert_called_once_with(
             "NIFTY", "NSE", expiry=None
@@ -508,10 +515,8 @@ class TestGatewayOptionChain:
         adapter_instance = MagicMock()
         adapter_instance.get_option_chain.side_effect = InstrumentNotFoundError("nope")
 
-        with patch.object(Gateway, "_get_dhan_connection", return_value=conn):
-            with patch(
-                "scalpr.brokers.gateway.OptionChainAdapter",
-                return_value=adapter_instance,
-            ):
-                with pytest.raises(InstrumentNotFound):
-                    gw.option_chain("ZZZNOTREAL", "NSE")
+        with patch.object(Gateway, "_get_dhan_connection", return_value=conn), patch(
+            "scalpr.brokers.gateway.OptionChainAdapter",
+            return_value=adapter_instance,
+        ), pytest.raises(InstrumentNotFound):
+            gw.option_chain("ZZZNOTREAL", "NSE")

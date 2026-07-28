@@ -8,16 +8,13 @@ Tests verify:
 - Secrets are never logged in plaintext
 """
 
-import os
 import logging
-import tempfile
+import os
 from pathlib import Path
-from unittest.mock import patch, MagicMock
 
 import pytest
 
 from config.secrets_manager import SecretsManager
-
 
 # ============================================================================
 # FIXTURES
@@ -44,16 +41,16 @@ def env_cleanup():
         "DHAN_CLIENT_ID_FILE", "DHAN_ACCESS_TOKEN_FILE",
         "DHAN_TOTP_SECRET_FILE", "DHAN_PIN_FILE"
     ]
-    
+
     # Store original values
     original_values = {}
     for var in dhan_vars:
         original_values[var] = os.environ.get(var)
         if var in os.environ:
             del os.environ[var]
-    
+
     yield
-    
+
     # Restore original values
     for var, value in original_values.items():
         if value is not None:
@@ -79,17 +76,17 @@ class TestClientIDLoading:
         config_dir = temp_project_root / "config"
         config_dir.mkdir()
         (config_dir / "dhan-client-id.txt").write_text("file_client_456")
-        
+
         assert secrets_manager.get_dhan_client_id() == "file_client_456"
 
     def test_client_id_env_priority_over_file(self, secrets_manager: SecretsManager, env_cleanup, temp_project_root: Path):
         """Env var should take priority over file."""
         os.environ["DHAN_CLIENT_ID"] = "env_client_789"
-        
+
         config_dir = temp_project_root / "config"
         config_dir.mkdir()
         (config_dir / "dhan-client-id.txt").write_text("file_client_000")
-        
+
         assert secrets_manager.get_dhan_client_id() == "env_client_789"
 
     def test_client_id_empty_when_missing(self, secrets_manager: SecretsManager, env_cleanup):
@@ -114,17 +111,17 @@ class TestAccessTokenLoading:
         config_dir = temp_project_root / "config"
         config_dir.mkdir()
         (config_dir / "dhan-access-token.txt").write_text("token_file_xyz")
-        
+
         assert secrets_manager.get_dhan_access_token() == "token_file_xyz"
 
     def test_access_token_env_priority_over_file(self, secrets_manager: SecretsManager, env_cleanup, temp_project_root: Path):
         """Env var should take priority over file."""
         os.environ["DHAN_ACCESS_TOKEN"] = "token_env_priority"
-        
+
         config_dir = temp_project_root / "config"
         config_dir.mkdir()
         (config_dir / "dhan-access-token.txt").write_text("token_file_low")
-        
+
         assert secrets_manager.get_dhan_access_token() == "token_env_priority"
 
     def test_access_token_empty_when_missing(self, secrets_manager: SecretsManager, env_cleanup):
@@ -150,7 +147,7 @@ class TestTOTPSecretLoading:
         config_dir = temp_project_root / "config"
         config_dir.mkdir()
         (config_dir / "dhan-totp-secret.txt").write_text("TOTP_FILE_SECRET123")
-        
+
         result = secrets_manager.get_dhan_totp_secret()
         assert result == "TOTP_FILE_SECRET123"
 
@@ -162,11 +159,11 @@ class TestTOTPSecretLoading:
     def test_totp_env_priority_over_file(self, secrets_manager: SecretsManager, env_cleanup, temp_project_root: Path):
         """Env var should take priority over file."""
         os.environ["DHAN_TOTP_SECRET"] = "TOTP_ENV_PRIORITY"
-        
+
         config_dir = temp_project_root / "config"
         config_dir.mkdir()
         (config_dir / "dhan-totp-secret.txt").write_text("TOTP_FILE_LOW")
-        
+
         assert secrets_manager.get_dhan_totp_secret() == "TOTP_ENV_PRIORITY"
 
 
@@ -188,7 +185,7 @@ class TestPINLoading:
         config_dir = temp_project_root / "config"
         config_dir.mkdir()
         (config_dir / "dhan-pin.txt").write_text("654321")
-        
+
         result = secrets_manager.get_dhan_pin()
         assert result == "654321"
 
@@ -200,11 +197,11 @@ class TestPINLoading:
     def test_pin_env_priority_over_file(self, secrets_manager: SecretsManager, env_cleanup, temp_project_root: Path):
         """Env var should take priority over file."""
         os.environ["DHAN_PIN"] = "999999"
-        
+
         config_dir = temp_project_root / "config"
         config_dir.mkdir()
         (config_dir / "dhan-pin.txt").write_text("000000")
-        
+
         assert secrets_manager.get_dhan_pin() == "999999"
 
 
@@ -266,8 +263,8 @@ class TestSecretsNotLogged:
     """Verify secrets are never logged in plaintext."""
 
     def test_get_methods_do_not_log_secrets(
-        self, 
-        secrets_manager: SecretsManager, 
+        self,
+        secrets_manager: SecretsManager,
         env_cleanup,
         caplog
     ):
@@ -276,13 +273,13 @@ class TestSecretsNotLogged:
         os.environ["DHAN_ACCESS_TOKEN"] = "secret_token_123"
         os.environ["DHAN_TOTP_SECRET"] = "secret_totp"
         os.environ["DHAN_PIN"] = "secret_pin"
-        
+
         with caplog.at_level(logging.DEBUG):
             _ = secrets_manager.get_dhan_client_id()
             _ = secrets_manager.get_dhan_access_token()
             _ = secrets_manager.get_dhan_totp_secret()
             _ = secrets_manager.get_dhan_pin()
-        
+
         # Verify no secret values appear in logs
         for record in caplog.records:
             assert "secret_client_id" not in record.message
@@ -298,12 +295,12 @@ class TestSecretsNotLogged:
     ):
         """require() error message should not log the secret value."""
         os.environ["SENSITIVE_KEY"] = "super_secret_value"
-        
+
         with caplog.at_level(logging.ERROR):
             # Should not raise since value exists
             result = secrets_manager.require("SENSITIVE_KEY")
             assert result == "super_secret_value"
-        
+
         # Verify secret value not in logs
         for record in caplog.records:
             assert "super_secret_value" not in record.message
@@ -317,8 +314,8 @@ class TestCustomFilePaths:
     """Verify custom file path configuration via env vars."""
 
     def test_custom_client_id_file_path(
-        self, 
-        secrets_manager: SecretsManager, 
+        self,
+        secrets_manager: SecretsManager,
         env_cleanup,
         temp_project_root: Path
     ):
@@ -326,9 +323,9 @@ class TestCustomFilePaths:
         custom_dir = temp_project_root / "custom"
         custom_dir.mkdir()
         (custom_dir / "my-client-id.txt").write_text("custom_client_123")
-        
+
         os.environ["DHAN_CLIENT_ID_FILE"] = "custom/my-client-id.txt"
-        
+
         assert secrets_manager.get_dhan_client_id() == "custom_client_123"
 
     def test_custom_token_file_path(
@@ -341,9 +338,9 @@ class TestCustomFilePaths:
         custom_dir = temp_project_root / "secrets"
         custom_dir.mkdir()
         (custom_dir / "token.txt").write_text("custom_token_xyz")
-        
+
         os.environ["DHAN_ACCESS_TOKEN_FILE"] = "secrets/token.txt"
-        
+
         assert secrets_manager.get_dhan_access_token() == "custom_token_xyz"
 
 
@@ -359,7 +356,7 @@ class TestFileContentHandling:
         config_dir = temp_project_root / "config"
         config_dir.mkdir()
         (config_dir / "dhan-client-id.txt").write_text("  client_with_spaces  \n")
-        
+
         assert secrets_manager.get_dhan_client_id() == "client_with_spaces"
 
     def test_file_with_newlines(self, secrets_manager: SecretsManager, env_cleanup, temp_project_root: Path):
@@ -367,7 +364,7 @@ class TestFileContentHandling:
         config_dir = temp_project_root / "config"
         config_dir.mkdir()
         (config_dir / "dhan-access-token.txt").write_text("\ntoken_value\n\n")
-        
+
         assert secrets_manager.get_dhan_access_token() == "token_value"
 
 
@@ -392,11 +389,11 @@ class TestIntegrationPattern:
         """Verify the exact usage pattern from main.py works."""
         os.environ["DHAN_CLIENT_ID"] = "main_client"
         os.environ["DHAN_ACCESS_TOKEN"] = "main_token"
-        
+
         # This is the exact pattern used in main.py
         secrets = SecretsManager()
         client_id = secrets.get_dhan_client_id()
         access_token = secrets.get_dhan_access_token()
-        
+
         assert client_id == "main_client"
         assert access_token == "main_token"

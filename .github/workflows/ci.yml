@@ -1,0 +1,54 @@
+name: CI
+
+# Gate: red means stop. Every push and PR runs the unit + contract suite
+# with the coverage ratchet floor from pyproject ([tool.coverage.report] fail_under).
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Lint (ruff)
+        run: ruff check scalpr tests
+
+      - name: Architecture contracts (import-linter)
+        run: lint-imports --config pyproject.toml
+
+      - name: Unit + contract tests with coverage gate
+        run: >
+          pytest tests/unit tests/contract -q
+          --cov=scalpr
+          -p no:cacheprovider
+
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run build

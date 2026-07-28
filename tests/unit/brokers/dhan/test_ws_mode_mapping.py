@@ -1,51 +1,59 @@
-"""B-005/B-011: WebSocket mode mapping must be correct and resilient."""
-import pytest
+"""B-005/B-011/S-1: WebSocket mode mapping must be correct and resilient.
+
+Constants are asserted against the *installed* SDK surface (MarketFeed class
+attributes in dhanhq 2.2.x), not a copy of them — so an SDK upgrade that
+moves or changes the constants turns these tests red instead of breaking live.
+"""
+
+from scalpr.brokers.dhan.ws_client import (
+    _get_sdk_mode_int,
+    _sdk_market_feed_class,
+    _sdk_mode_constants,
+)
 
 
 class TestGetSdkModeInt:
     """_get_sdk_mode_int() maps mode strings to dhanhq SDK integer constants."""
 
     def test_ltp_returns_ticker_constant(self):
-        from scalpr.brokers.dhan.ws_client import _get_sdk_mode_int
-        from dhanhq.marketfeed import Ticker
-        assert _get_sdk_mode_int("ltp") == Ticker
+        ticker, _, _ = _sdk_mode_constants()
+        assert _get_sdk_mode_int("ltp") == ticker
 
     def test_quote_returns_quote_constant(self):
-        from scalpr.brokers.dhan.ws_client import _get_sdk_mode_int
-        from dhanhq.marketfeed import Quote
-        assert _get_sdk_mode_int("quote") == Quote
+        _, quote, _ = _sdk_mode_constants()
+        assert _get_sdk_mode_int("quote") == quote
 
     def test_depth_returns_quote_constant_not_depth(self):
-        """B-011: depth must map to Quote (17), not Depth (19) — SDK doesn't distinguish."""
-        from scalpr.brokers.dhan.ws_client import _get_sdk_mode_int
-        from dhanhq.marketfeed import Quote
-        assert _get_sdk_mode_int("depth") == Quote  # NOT Depth
+        """B-011: depth must map to Quote, not Depth — SDK doesn't distinguish."""
+        _, quote, _ = _sdk_mode_constants()
+        assert _get_sdk_mode_int("depth") == quote
 
     def test_full_returns_full_constant(self):
-        from scalpr.brokers.dhan.ws_client import _get_sdk_mode_int
-        from dhanhq.marketfeed import Full
-        assert _get_sdk_mode_int("full") == Full
+        _, _, full = _sdk_mode_constants()
+        assert _get_sdk_mode_int("full") == full
 
     def test_unknown_mode_defaults_to_quote(self):
-        from scalpr.brokers.dhan.ws_client import _get_sdk_mode_int
-        from dhanhq.marketfeed import Quote
-        assert _get_sdk_mode_int("unknown") == Quote
+        _, quote, _ = _sdk_mode_constants()
+        assert _get_sdk_mode_int("unknown") == quote
 
-    def test_mode_constants_are_correct_values(self):
-        """Verify the actual wire values: Ticker=15, Quote=17, Depth=19, Full=21."""
-        from dhanhq.marketfeed import Ticker, Quote, Full, Depth
-        assert Ticker == 15
-        assert Quote == 17
-        assert Depth == 19
-        assert Full == 21
+    def test_mode_constants_are_correct_wire_values(self):
+        """Dhan v2 wire values: Ticker=15, Quote=17, Full=21."""
+        assert _sdk_mode_constants() == (15, 17, 21)
+
+    def test_mode_constants_sourced_from_installed_sdk(self):
+        """Constants must agree with the installed SDK class, not a stale copy."""
+        feed_cls = _sdk_market_feed_class()
+        assert _sdk_mode_constants() == (
+            feed_cls.Ticker,
+            feed_cls.Quote,
+            feed_cls.Full,
+        )
 
 
 class TestSdkMarketFeedClass:
     """_sdk_market_feed_class() lazy-imports the SDK feed class."""
 
-    def test_returns_dhan_feed_or_market_feed(self):
-        from scalpr.brokers.dhan.ws_client import _sdk_market_feed_class
+    def test_returns_market_feed_class(self):
         cls = _sdk_market_feed_class()
-        # Must be a class (either DhanFeed or MarketFeed fallback)
         assert cls is not None
         assert isinstance(cls, type)

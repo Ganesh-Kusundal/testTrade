@@ -75,7 +75,7 @@ def _serialize_event(event: DomainEvent) -> dict[str, Any]:
         "event_type": event_type,
         "timestamp": event.timestamp.isoformat(),
     }
-    
+
     # Extract event-specific fields
     for field_name in ("order", "fill", "position", "tick", "bar", "signal",
                        "reason", "error_code", "error_message", "component",
@@ -94,14 +94,14 @@ def _serialize_event(event: DomainEvent) -> dict[str, Any]:
                     data[field_name] = value.isoformat()
                 else:
                     data[field_name] = value
-    
+
     return data
 
 
 def _serialize_domain_object(obj: Any) -> dict[str, Any]:
     """Serialize domain object (Order, Fill, Tick, etc.) to dict."""
     result = {}
-    
+
     # For dataclasses, use __dataclass_fields__
     if hasattr(obj, "__dataclass_fields__"):
         for field_name in obj.__dataclass_fields__:
@@ -121,7 +121,7 @@ def _serialize_domain_object(obj: Any) -> dict[str, Any]:
                 else:
                     result[field_name] = value
             except Exception:
-                pass
+                logger.debug("event_serialize_skip: field=%s", field_name, exc_info=True)
     else:
         # Fallback for non-dataclass objects
         for attr_name in dir(obj):
@@ -141,8 +141,8 @@ def _serialize_domain_object(obj: Any) -> dict[str, Any]:
                 else:
                     result[attr_name] = value
             except Exception:
-                pass
-    
+                logger.debug("event_serialize_skip: attr=%s", attr_name, exc_info=True)
+
     return result
 
 
@@ -150,19 +150,19 @@ def _deserialize_event(data: dict[str, Any]) -> DomainEvent:
     """Deserialize JSON dict back to domain event."""
     event_type = data.pop("event_type")
     event_class = EVENT_TYPE_REGISTRY.get(event_type)
-    
+
     if not event_class:
         raise ValueError(f"Unknown event type: {event_type}")
-    
+
     # Convert timestamp back to datetime
     if "timestamp" in data:
         data["timestamp"] = datetime.fromisoformat(data["timestamp"])
-    
+
     # Reconstruct nested domain objects
     for field_name in ("tick", "order", "fill", "position", "bar", "signal"):
         if field_name in data and isinstance(data[field_name], dict):
             data[field_name] = _reconstruct_domain_object(field_name, data[field_name])
-    
+
     try:
         return event_class(**data)
     except Exception as e:
@@ -172,13 +172,11 @@ def _deserialize_event(data: dict[str, Any]) -> DomainEvent:
 
 def _reconstruct_domain_object(field_name: str, data: dict[str, Any]) -> Any:
     """Reconstruct domain object from dict."""
-    from scalpr.domain.tick import Tick
-    from scalpr.domain.order import Order, OrderSide, OrderType, OrderState
     from scalpr.domain.fill import Fill
-    from scalpr.domain.position import Position, PositionSide
-    from scalpr.domain.signal import Signal, SignalType
     from scalpr.domain.instrument import Exchange
-    
+    from scalpr.domain.order import Order, OrderSide, OrderState, OrderType
+    from scalpr.domain.tick import Tick
+
     try:
         if field_name == "tick":
             return Tick(
@@ -221,21 +219,21 @@ def _reconstruct_domain_object(field_name: str, data: dict[str, Any]) -> Any:
 
 class EventStore:
     """Persistent event store backed by SQLite.
-    
+
     Provides:
     - Append-only event log for audit trail
     - Event stream retrieval for replay
     - Session-based event grouping
     - Fast event lookup by type/time
     """
-    
+
     def __init__(self, db_path: str = "data/events.db") -> None:
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
         self._init_db()
         logger.info(f"EventStore initialized at {db_path}")
-    
+
     def _init_db(self) -> None:
         """Initialize event store schema."""
         with sqlite3.connect(str(self.db_path)) as conn:
@@ -258,37 +256,36 @@ class EventStore:
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_session_seq ON events(session_id, sequence_num)"
             )
-    
+
     def append(self, event: DomainEvent, session_id: str = "default") -> int:
         """Append event to store. Returns sequence number.
-        
+
         Thread-safe. Appends atomically with auto-incrementing sequence.
         """
-        with self._lock:
-            with sqlite3.connect(str(self.db_path)) as conn:
-                # Get next sequence number
-                cursor = conn.execute(
-                    "SELECT COALESCE(MAX(sequence_num), 0) + 1 FROM events WHERE session_id = ?",
-                    (session_id,)
-                )
-                sequence_num = cursor.fetchone()[0]
-                
-                # Serialize and insert
-                payload = json.dumps(_serialize_event(event))
-                conn.execute(
-                    """INSERT INTO events (session_id, event_type, timestamp, sequence_num, payload)
+        with self._lock, sqlite3.connect(str(self.db_path)) as conn:
+            # Get next sequence number
+            cursor = conn.execute(
+                "SELECT COALESCE(MAX(sequence_num), 0) + 1 FROM events WHERE session_id = ?",
+                (session_id,)
+            )
+            sequence_num = cursor.fetchone()[0]
+
+            # Serialize and insert
+            payload = json.dumps(_serialize_event(event))
+            conn.execute(
+                """INSERT INTO events (session_id, event_type, timestamp, sequence_num, payload)
                        VALUES (?, ?, ?, ?, ?)""",
-                    (
-                        session_id,
-                        event.__class__.__name__,
-                        event.timestamp.isoformat(),
-                        sequence_num,
-                        payload,
-                    )
+                (
+                    session_id,
+                    event.__class__.__name__,
+                    event.timestamp.isoformat(),
+                    sequence_num,
+                    payload,
                 )
-                
-                return sequence_num
-    
+            )
+
+            return sequence_num
+
     def get_session_events(
         self,
         session_id: str,
@@ -297,33 +294,33 @@ class EventStore:
         event_type: str | None = None,
     ) -> list[tuple[int, DomainEvent]]:
         """Get events for a session in sequence order.
-        
+
         Args:
             session_id: Session identifier
             from_seq: Starting sequence number (inclusive)
             to_seq: Ending sequence number (inclusive), None for all
             event_type: Filter by event type (optional)
-        
+
         Returns:
             List of (sequence_num, event) tuples
         """
         with sqlite3.connect(str(self.db_path)) as conn:
             query = "SELECT sequence_num, payload FROM events WHERE session_id = ? AND sequence_num >= ?"
             params: list[Any] = [session_id, from_seq]
-            
+
             if to_seq is not None:
                 query += " AND sequence_num <= ?"
                 params.append(to_seq)
-            
+
             if event_type:
                 query += " AND event_type = ?"
                 params.append(event_type)
-            
+
             query += " ORDER BY sequence_num ASC"
-            
+
             cursor = conn.execute(query, params)
             rows = cursor.fetchall()
-        
+
         # Deserialize events
         events = []
         for seq_num, payload_str in rows:
@@ -333,9 +330,9 @@ class EventStore:
                 events.append((seq_num, event))
             except Exception as e:
                 logger.warning(f"Failed to deserialize event at seq {seq_num}: {e}")
-        
+
         return events
-    
+
     def get_latest_sequence(self, session_id: str) -> int:
         """Get the latest sequence number for a session."""
         with sqlite3.connect(str(self.db_path)) as conn:
@@ -344,7 +341,7 @@ class EventStore:
                 (session_id,)
             )
             return cursor.fetchone()[0]
-    
+
     def get_event_count(self, session_id: str) -> int:
         """Get total event count for a session."""
         with sqlite3.connect(str(self.db_path)) as conn:
@@ -353,32 +350,30 @@ class EventStore:
                 (session_id,)
             )
             return cursor.fetchone()[0]
-    
+
     def delete_session(self, session_id: str) -> int:
         """Delete all events for a session. Returns deleted count."""
-        with self._lock:
-            with sqlite3.connect(str(self.db_path)) as conn:
-                cursor = conn.execute(
-                    "DELETE FROM events WHERE session_id = ?",
-                    (session_id,)
-                )
-                count = cursor.rowcount
-                logger.info(f"Deleted {count} events for session {session_id}")
-                return count
-    
+        with self._lock, sqlite3.connect(str(self.db_path)) as conn:
+            cursor = conn.execute(
+                "DELETE FROM events WHERE session_id = ?",
+                (session_id,)
+            )
+            count = cursor.rowcount
+            logger.info(f"Deleted {count} events for session {session_id}")
+            return count
+
     def compact(self, max_age_days: int = 30) -> int:
         """Compact old events. Returns deleted count.
-        
+
         Args:
             max_age_days: Delete events older than this
         """
-        with self._lock:
-            with sqlite3.connect(str(self.db_path)) as conn:
-                cursor = conn.execute(
-                    "DELETE FROM events WHERE created_at < datetime('now', ?)",
-                    (f"-{max_age_days} days",)
-                )
-                count = cursor.rowcount
-                if count > 0:
-                    logger.info(f"Compacted {count} events older than {max_age_days} days")
-                return count
+        with self._lock, sqlite3.connect(str(self.db_path)) as conn:
+            cursor = conn.execute(
+                "DELETE FROM events WHERE created_at < datetime('now', ?)",
+                (f"-{max_age_days} days",)
+            )
+            count = cursor.rowcount
+            if count > 0:
+                logger.info(f"Compacted {count} events older than {max_age_days} days")
+            return count

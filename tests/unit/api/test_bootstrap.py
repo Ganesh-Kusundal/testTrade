@@ -1,5 +1,4 @@
 """Bootstrap factory creates a properly wired FastAPI app."""
-import pytest
 from unittest.mock import MagicMock, create_autospec, patch
 
 from scalpr.brokers.broker_port import IBrokerGateway
@@ -38,6 +37,7 @@ def test_create_app_should_return_fastapi_app():
 def test_create_app_should_not_have_side_effects_on_import():
     """Importing bootstrap must not create network connections."""
     import importlib
+
     import scalpr.api.bootstrap as mod
     importlib.reload(mod)
     assert hasattr(mod, "create_app")
@@ -75,6 +75,7 @@ class TestLifespanGating:
             mock_gw.return_value = (None, "no creds")
 
             from fastapi.testclient import TestClient
+
             from scalpr.api.bootstrap import create_app
 
             app = create_app()

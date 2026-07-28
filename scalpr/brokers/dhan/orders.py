@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import logging
 import threading
-from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
 
@@ -24,7 +23,7 @@ from scalpr.brokers.dhan.http_client import DhanHttpClient
 from scalpr.brokers.dhan.mapper import DhanMapper
 from scalpr.brokers.dhan.resolver import SymbolResolver
 from scalpr.domain.fill import Fill
-from scalpr.domain.order import Order, OrderState, OrderType
+from scalpr.domain.order import Order, OrderType
 
 logger = logging.getLogger(__name__)
 

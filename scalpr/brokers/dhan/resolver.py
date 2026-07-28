@@ -15,7 +15,12 @@ from scalpr.brokers.dhan.exceptions import InstrumentNotFoundError
 from scalpr.brokers.dhan.instrument_mapper import map_row, wire_segment_for
 from scalpr.brokers.dhan.segments import normalise_exchange, to_dhan_wire
 from scalpr.domain.instrument import (
-    Exchange, Instrument, OptionType, ResolvedInstrument, Segment, SimpleInstrumentId,
+    Exchange,
+    Instrument,
+    OptionType,
+    ResolvedInstrument,
+    Segment,
+    SimpleInstrumentId,
 )
 
 logger = logging.getLogger(__name__)
@@ -23,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 class SymbolResolver:
     """Thread-safe O(1) symbol → Instrument resolver.
-    
+
     Provides fast instrument lookup by symbol, security_id, or alternate formats.
     Supports loading from CSV rows with automatic alternate key generation.
     """
@@ -39,14 +44,14 @@ class SymbolResolver:
 
     def resolve(self, symbol: str, exchange: str) -> Instrument:
         """Resolve symbol to Instrument.
-        
+
         Args:
             symbol: Trading symbol (e.g., "RELIANCE", "NIFTY")
             exchange: Exchange code (e.g., "NSE", "MCX", "INDEX")
-        
+
         Returns:
             Instrument object
-        
+
         Raises:
             InstrumentNotFoundError: If symbol cannot be resolved
         """
@@ -121,10 +126,10 @@ class SymbolResolver:
 
     def load_from_rows(self, rows: Iterable[dict]) -> dict[str, int | float]:
         """Load instruments from CSV rows with atomic swap.
-        
+
         Args:
             rows: Iterable of CSV row dicts
-        
+
         Returns:
             Dict with keys: total, skipped, skip_rate
         """
@@ -160,10 +165,7 @@ class SymbolResolver:
             # Register all alternate keys
             for k in alt_keys:
                 existing = new_by_symbol.get((k, inst.exchange))
-                if existing is None:
-                    new_by_symbol[(k, inst.exchange)] = inst
-                # Prefer non-option over option for same key
-                elif existing.segment == Segment.OPTIONS and inst.segment != Segment.OPTIONS:
+                if existing is None or (existing.segment == Segment.OPTIONS and inst.segment != Segment.OPTIONS):
                     new_by_symbol[(k, inst.exchange)] = inst
 
             new_by_sid[inst.security_id] = inst  # Index by numeric security_id
@@ -250,21 +252,21 @@ def _generate_alternate_keys(
 ) -> list[str]:
     """Generate alternate symbol formats for flexible lookup."""
     keys = []
-    
+
     # 1. Primary symbol
     sym_up = symbol.strip().upper()
     keys.append(sym_up)
-    
+
     # 2. Stripped symbol (no spaces, dashes)
     stripped = sym_up.replace(" ", "").replace("-", "").replace("_", "")
     keys.append(stripped)
-    
+
     # 3. Standardize option format
     if sym_up.endswith("CALL"):
         keys.append(sym_up[:-4] + "CE")
     elif sym_up.endswith("PUT"):
         keys.append(sym_up[:-3] + "PE")
-    
+
     # 4. For options/futures, generate common formats
     if segment in (Segment.OPTIONS, Segment.FUTURES) and expiry:
         try:
@@ -273,34 +275,34 @@ def _generate_alternate_keys(
                 dt = datetime.strptime(expiry[:10], "%Y-%m-%d")
             else:
                 dt = datetime.combine(expiry, datetime.min.time())
-            
+
             dd = dt.strftime("%d")
             dd_strip = str(int(dd))
             MMM = dt.strftime("%b").upper()
             yy = dt.strftime("%y")
-            yyyy = dt.strftime("%Y")
-            
+            dt.strftime("%Y")
+
             # Extract underlying (first word of symbol)
             underlying = sym_up.split()[0]
-            
+
             if segment == Segment.OPTIONS and option_type and strike:
                 ce_pe = option_type.value
                 strike_str = str(int(strike)) if strike % 1 == 0 else str(strike)
-                
+
                 # Generate common option formats
                 keys.append(f"{underlying} {dd} {MMM} {yy} {strike_str} {ce_pe}")
                 keys.append(f"{underlying} {dd_strip} {MMM} {yy} {strike_str} {ce_pe}")
                 keys.append(f"{underlying}{dd}{MMM}{yy}{strike_str}{ce_pe}")
                 keys.append(f"{underlying}{dd_strip}{MMM}{yy}{strike_str}{ce_pe}")
-            
+
             elif segment == Segment.FUTURES:
                 keys.append(f"{underlying} {MMM} FUT")
                 keys.append(f"{underlying}{MMM}FUT")
                 keys.append(f"{underlying} {yy} {MMM} FUT")
-        
+
         except Exception as exc:
             logger.debug(f"alternate_key_generation_failed: {exc}")
-    
+
     # Deduplicate
     res = []
     seen = set()
@@ -309,5 +311,5 @@ def _generate_alternate_keys(
         if k_clean and k_clean not in seen:
             seen.add(k_clean)
             res.append(k_clean)
-    
+
     return res

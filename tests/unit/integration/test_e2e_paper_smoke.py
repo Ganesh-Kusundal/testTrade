@@ -8,8 +8,6 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from unittest.mock import create_autospec
 
-import pytest
-
 from scalpr.brokers.broker_port import IBrokerGateway
 from scalpr.domain.fill import Fill
 from scalpr.domain.order import OrderSide

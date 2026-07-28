@@ -2,19 +2,20 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from decimal import Decimal
-import logging
 
+from scalpr.brokers.broker_port import IBrokerGateway
+from scalpr.domain.events import CircuitBreakerTripped as CircuitBreakerTrippedEvent
+from scalpr.domain.events import IEventBus, OrderPlaced
+from scalpr.domain.events import RiskCheckFailed as RiskCheckFailedEvent
+from scalpr.domain.fill import Fill
 from scalpr.domain.order import Order
 from scalpr.domain.position import Position
-from scalpr.domain.fill import Fill
-from scalpr.domain.events import OrderPlaced, RiskCheckFailed as RiskCheckFailedEvent, CircuitBreakerTripped as CircuitBreakerTrippedEvent
-from scalpr.brokers.broker_port import IBrokerGateway
-from scalpr.risk.pre_trade import PreTradeRiskGate
-from scalpr.risk.circuit_breaker import CircuitBreaker
-from scalpr.domain.events import IEventBus
 from scalpr.oms.order_manager import OrderManager
+from scalpr.risk.circuit_breaker import CircuitBreaker
+from scalpr.risk.pre_trade import PreTradeRiskGate
 
 logger = logging.getLogger(__name__)
 
@@ -37,11 +38,11 @@ class PersistenceError(Exception):
 class OrderRouter:
     """
     Mandatory order submission router that enforces risk gates.
-    
+
     All strategies MUST submit orders through this router, never directly
     to the broker gateway.
     """
-    
+
     def __init__(
         self,
         gateway: IBrokerGateway,
@@ -55,7 +56,7 @@ class OrderRouter:
         self.circuit_breaker = circuit_breaker
         self.event_bus = event_bus
         self.order_manager = order_manager
-    
+
     def submit_order(
         self,
         order: Order,
@@ -67,7 +68,7 @@ class OrderRouter:
     ) -> Fill:
         """
         Submit order through mandatory risk gates.
-        
+
         Args:
             order: Order to submit
             positions: Current positions
@@ -75,10 +76,10 @@ class OrderRouter:
             daily_loss: Current daily P&L loss
             portfolio_value: Total portfolio value
             drawdown: Current drawdown percentage (as decimal, e.g., 0.03 = 3%)
-            
+
         Returns:
             Fill from broker
-            
+
         Raises:
             CircuitBreakerTripped: If circuit breaker limits exceeded
             RiskCheckFailed: If pre-trade risk check fails
@@ -108,10 +109,10 @@ class OrderRouter:
             raise CircuitBreakerTripped(
                 f"Circuit breaker tripped: daily_loss={daily_loss}"
             )
-        
+
         # 2. Pre-trade risk check (order-specific safety)
         order_notional = order.price * Decimal(order.quantity) if order.price else Decimal('0')
-        
+
         allowed, reason = self.risk_gate.check_order(
             order=order,
             positions=positions,
@@ -119,7 +120,7 @@ class OrderRouter:
             required_margin=order_notional * Decimal('0.2'),  # 20% margin requirement
             daily_loss=daily_loss,
         )
-        
+
         if not allowed:
             logger.warning(
                 f"Risk check failed for order {order.symbol}: {reason}"
@@ -135,11 +136,11 @@ class OrderRouter:
                     )
                 )
             raise RiskCheckFailed(reason)
-        
+
         # 3. All checks passed - forward to broker
         logger.info(f"Order {order.symbol} passed risk checks, submitting to broker")
         fill = self.gateway.place_order(order)
-        
+
         # Persist order and fill via OrderManager
         if self.order_manager:
             try:
@@ -151,7 +152,7 @@ class OrderRouter:
                 raise PersistenceError(
                     f"Order {order.order_id} placed at broker but persistence failed: {e}"
                 ) from e
-        
+
         # Publish OrderPlaced event
         if self.event_bus:
             self.event_bus.publish(
@@ -160,5 +161,5 @@ class OrderRouter:
                     order=order,
                 )
             )
-        
+
         return fill

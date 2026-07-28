@@ -1,14 +1,15 @@
-import pytest
+from datetime import date, datetime, timezone
 from decimal import Decimal
-from datetime import datetime, timezone, date
+
+import pytest
+
+from scalpr.domain.fill import Fill
 
 # We import from scalpr.domain, which will fail initially
-from scalpr.domain.instrument import Instrument, Exchange, Segment, OptionType
-from scalpr.domain.order import Order, OrderSide, OrderType, OrderState
-from scalpr.domain.fill import Fill, PartialFill
+from scalpr.domain.instrument import Exchange, Instrument, OptionType, Segment
+from scalpr.domain.order import Order, OrderSide, OrderState, OrderType
 from scalpr.domain.position import Position, PositionSide, PositionState
-from scalpr.domain.tick import Tick, OHLCV
-from scalpr.domain.events import OrderPlaced, FillReceived
+from scalpr.domain.tick import OHLCV, Tick
 
 
 def test_order_state_invalid_transition_raises():
@@ -23,23 +24,23 @@ def test_order_state_invalid_transition_raises():
         price=Decimal("2500.50"),
         state=OrderState.PENDING,
     )
-    
+
     # Valid transition: PENDING -> OPEN
     opened_order = order.transition_to(OrderState.OPEN)
     assert opened_order.state == OrderState.OPEN
-    
+
     # Valid transition: OPEN -> PARTIALLY_FILLED
     partial_order = opened_order.transition_to(OrderState.PARTIALLY_FILLED)
     assert partial_order.state == OrderState.PARTIALLY_FILLED
-    
+
     # Valid transition: PARTIALLY_FILLED -> FILLED
     filled_order = partial_order.transition_to(OrderState.FILLED)
     assert filled_order.state == OrderState.FILLED
-    
+
     # Invalid transition: FILLED -> OPEN should raise ValueError
     with pytest.raises(ValueError, match="Invalid transition"):
         filled_order.transition_to(OrderState.OPEN)
-        
+
     # Invalid transition: CANCELLED -> FILLED should raise ValueError
     cancelled_order = opened_order.transition_to(OrderState.CANCELLED)
     with pytest.raises(ValueError, match="Invalid transition"):
@@ -59,7 +60,7 @@ def test_fill_price_is_decimal_not_float():
     )
     assert isinstance(fill.price, Decimal)
     assert fill.price == Decimal("2500.50")
-    
+
     # Invalid construction with float price
     with pytest.raises(TypeError, match="price must be Decimal"):
         Fill(
@@ -120,7 +121,7 @@ def test_ohlcv_bar_boundary_is_utc():
         is_closed=True,
     )
     assert bar.bar_open_time.tzinfo == timezone.utc
-    
+
     # Passing naive datetime should raise ValueError or TypeError
     naive_dt = datetime.now()
     with pytest.raises(ValueError, match="timezone-aware"):
@@ -148,11 +149,11 @@ def test_position_pnl_calculation():
         position_side=PositionSide.LONG,
         state=PositionState.OPEN,
     )
-    
+
     # Unrealised PnL recalculation on LTP change
     updated_ltp = pos.with_ltp(Decimal("2510.50"))
     assert updated_ltp.unrealised_pnl == Decimal("105.00")  # (2510.50 - 2500.00) * 10
-    
+
     # Realised PnL on partial exit (sell 5 at 2520.00)
     # Position with_fill returns new Position state
     updated_fill = updated_ltp.with_fill(quantity=-5, price=Decimal("2520.00"), side=OrderSide.SELL)

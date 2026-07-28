@@ -12,6 +12,8 @@ from datetime import date
 from decimal import Decimal
 from unittest.mock import MagicMock
 
+import pytest
+
 from scalpr.brokers.dhan.option_chain import OptionChainAdapter
 
 # Shape captured from a live /optionchain response (NIFTY 2026-07-28)
@@ -157,6 +159,87 @@ class TestFlattenChain:
         assert chain[0]["ask"] == Decimal("0")
         assert chain[0]["delta"] is None
 
+
+
+class TestOptionChainValidation:
+    """Option chain must reject non-optionable instruments with clear error."""
+
+    def test_equity_nse_raises_option_chain_not_supported(self):
+        from scalpr.brokers.errors import OptionChainNotSupported
+
+        adapter, _client, resolver = _adapter()
+        resolved = MagicMock()
+        resolved.security_id = 2885
+        resolved.wire_segment = "NSE_EQ"  # plain equity
+        resolver.resolve_full.return_value = resolved
+
+        with pytest.raises(OptionChainNotSupported, match="TCS"):
+            adapter.get_option_chain("TCS", "NSE")
+
+    def test_equity_bse_raises_option_chain_not_supported(self):
+        from scalpr.brokers.errors import OptionChainNotSupported
+
+        adapter, _client, resolver = _adapter()
+        resolved = MagicMock()
+        resolved.security_id = 5000
+        resolved.wire_segment = "BSE_EQ"
+        resolver.resolve_full.return_value = resolved
+
+        with pytest.raises(OptionChainNotSupported, match="RELIANCE"):
+            adapter.get_option_chain("RELIANCE", "BSE")
+
+    def test_index_idx_i_succeeds(self):
+        adapter, client, resolver = _adapter()
+        resolved = MagicMock()
+        resolved.security_id = 13
+        resolved.wire_segment = "IDX_I"
+        resolver.resolve_full.return_value = resolved
+        client.post.side_effect = [
+            {"data": ["2026-07-28"]},
+            LIVE_CHAIN_RESPONSE,
+        ]
+        chain = adapter.get_option_chain("NIFTY", "NSE")
+        assert len(chain) > 0
+
+    def test_fno_nse_fno_succeeds(self):
+        adapter, client, resolver = _adapter()
+        resolved = MagicMock()
+        resolved.security_id = 49081
+        resolved.wire_segment = "NSE_FNO"
+        resolver.resolve_full.return_value = resolved
+        client.post.side_effect = [
+            {"data": ["2026-07-28"]},
+            LIVE_CHAIN_RESPONSE,
+        ]
+        chain = adapter.get_option_chain("TCS", "NSE")
+        assert len(chain) > 0
+
+    def test_mcx_commodity_succeeds(self):
+        adapter, client, resolver = _adapter()
+        resolved = MagicMock()
+        resolved.security_id = 12345
+        resolved.wire_segment = "MCX_COMM"
+        resolver.resolve_full.return_value = resolved
+        client.post.side_effect = [
+            {"data": ["2026-08-01"]},
+            LIVE_CHAIN_RESPONSE,
+        ]
+        chain = adapter.get_option_chain("GOLD", "MCX")
+        assert len(chain) > 0
+
+    def test_error_message_contains_symbol_and_exchange(self):
+        from scalpr.brokers.errors import OptionChainNotSupported
+
+        adapter, _client, resolver = _adapter()
+        resolved = MagicMock()
+        resolved.security_id = 2885
+        resolved.wire_segment = "NSE_EQ"
+        resolver.resolve_full.return_value = resolved
+
+        with pytest.raises(OptionChainNotSupported) as exc_info:
+            adapter.get_option_chain("TCS", "NSE")
+        assert "TCS" in str(exc_info.value)
+        assert "NSE" in str(exc_info.value)
 
 
 class TestScannerAcceptsAdapterOutput:

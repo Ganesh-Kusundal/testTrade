@@ -10,7 +10,7 @@ and nowhere else (plan Task 2: "epoch-ms is a serialization concern").
 """
 from __future__ import annotations
 
-from typing import Annotated, Literal, Optional, Union
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
 
@@ -29,7 +29,7 @@ class SymbolInfo(BaseModel):
     isin: str = ""
     lotSize: int = 1
     tickSize: float = 0.05
-    sector: Optional[str] = None
+    sector: str | None = None
 
 
 class SymbolSearchResponse(BaseModel):
@@ -60,7 +60,7 @@ class Candle(BaseModel):
     t: int
     o: float
     h: float
-    l: float
+    l: float  # noqa: E741 — OHLC wire field name, mirrors frontend contract
     c: float
     v: int
 
@@ -81,7 +81,7 @@ class CandlesResponse(BaseModel):
     exchange: Exchange
     timeframe: Timeframe
     candles: list[Candle]
-    indicators: Optional[IndicatorSeries] = None
+    indicators: IndicatorSeries | None = None
 
 
 class ReplaySession(BaseModel):
@@ -106,8 +106,8 @@ class CreateReplayBody(BaseModel):
     symbol: str
     date: str  # YYYY-MM-DD
     timeframe: Timeframe = "1m"
-    from_t: Optional[int] = None
-    to_t: Optional[int] = None
+    from_t: int | None = None
+    to_t: int | None = None
 
 
 # ── Replay control (client.ts ReplayAction discriminated union) ────────────
@@ -136,7 +136,7 @@ class SetSpeedAction(BaseModel):
 
 
 ReplayControlBody = Annotated[
-    Union[PlayAction, PauseAction, StepAction, SeekAction, SetSpeedAction],
+    PlayAction | PauseAction | StepAction | SeekAction | SetSpeedAction,
     Field(discriminator="action"),
 ]
 
@@ -144,12 +144,12 @@ ReplayControlBody = Annotated[
 class ReplayEvent(BaseModel):
     """Mirror of frontend ReplayEvent — WS message schema for /ws/replay/{id}."""
     type: Literal["replay_candle", "replay_quote", "replay_state", "replay_end", "error"]
-    session_id: Optional[str] = None
-    candle: Optional[Candle] = None
-    ltp: Optional[float] = None
-    ts: Optional[int] = None
-    state: Optional[ReplayState] = None
-    speed: Optional[float] = None
-    cursor_t: Optional[int] = None
-    code: Optional[str] = None
-    message: Optional[str] = None
+    session_id: str | None = None
+    candle: Candle | None = None
+    ltp: float | None = None
+    ts: int | None = None
+    state: ReplayState | None = None
+    speed: float | None = None
+    cursor_t: int | None = None
+    code: str | None = None
+    message: str | None = None

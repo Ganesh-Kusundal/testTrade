@@ -43,7 +43,7 @@ class OrderManager:
                 raise ValueError(f"Duplicate order ID: {order.order_id}")
             self.orders[order.order_id] = order
             self._log_event(order.order_id, f"Created order as {order.state.value}")
-            
+
             # Persist to database if repository available
             if self._repository:
                 try:
@@ -62,7 +62,7 @@ class OrderManager:
             updated = order.transition_to(new_state)
             self.orders[order_id] = updated
             self._log_event(order_id, f"State changed from {order.state.value} to {new_state.value}")
-            
+
             # Persist updated order state
             if self._repository:
                 try:
@@ -128,7 +128,7 @@ class OrderManager:
                 order_id,
                 f"Fill processed: {fill.quantity} @ {fill.price}. Total filled: {total_filled}/{order.quantity}. State: {new_state.value}",
             )
-            
+
             # Persist fill and updated order to database
             if self._repository:
                 try:
@@ -156,23 +156,23 @@ class OrderManager:
             self._event_store.append(event, session_id=self._session_id)
         except Exception as e:
             logger.error(f"Failed to append {event.__class__.__name__} to event store: {e}")
-    
+
     def restore_state(self) -> None:
         """Restore orders and fills from persistence (crash recovery)."""
         if not self._repository:
             return
-        
+
         try:
             restored_orders = self._repository.restore_orders()
-            
+
             with self._lock:
                 self.orders.clear()
                 self.orders.update(restored_orders)
-                
+
             logger.info(f"OMS state restored: {len(restored_orders)} orders recovered")
         except Exception as e:
             logger.warning(f"Failed to restore OMS state: {e}")
-    
+
     def get_orders(self) -> list[Order]:
         """Get all orders as a list."""
         with self._lock:

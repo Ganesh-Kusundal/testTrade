@@ -7,7 +7,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-
 # ── Domain error hierarchy ────────────────────────────────────────────────
 
 class TradingError(Exception):
@@ -28,6 +27,10 @@ class AmbiguousInstrument(TradingError):
 
 class InvalidInstrument(TradingError):
     """Instrument definition is invalid (e.g. OPTIONS without strike)."""
+
+
+class OptionChainNotSupported(TradingError):
+    """Option chain is not available for this instrument."""
 
 
 class InvalidOrder(TradingError):

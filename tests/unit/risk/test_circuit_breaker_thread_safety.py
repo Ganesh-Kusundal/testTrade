@@ -1,6 +1,7 @@
 """Thread safety tests for CircuitBreaker."""
 import threading
 from decimal import Decimal
+
 from scalpr.risk.circuit_breaker import CircuitBreaker
 
 

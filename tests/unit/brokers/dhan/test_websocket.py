@@ -9,24 +9,20 @@ Tests cover:
 Total: 30+ test methods.
 """
 
-import asyncio
-import json
 import logging
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from decimal import Decimal
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from scalpr.brokers.dhan.ws_manager import (
-    DhanWebSocketManager,
-    ConnectionStatus,
-    HealthMetrics,
-)
 from scalpr.brokers.dhan.ws_client import DhanWebSocketClient
+from scalpr.brokers.dhan.ws_manager import (
+    ConnectionStatus,
+    DhanWebSocketManager,
+)
 from scalpr.domain.tick import Tick
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # DhanWebSocketManager Tests
@@ -58,13 +54,15 @@ class TestManagerSubscriberManagement:
 
     def test_add_subscriber_sync(self):
         mgr = _make_manager()
-        cb = lambda t: None
+        def cb(t):
+            return None
         mgr.add_subscriber(cb)
         assert cb in mgr._subscribers or len(mgr._subscribers) >= 1
 
     def test_remove_subscriber_sync(self):
         mgr = _make_manager()
-        cb = lambda t: None
+        def cb(t):
+            return None
         mgr._subscribers.append(cb)
         mgr.remove_subscriber(cb)
         assert cb not in mgr._subscribers
@@ -93,7 +91,8 @@ class TestManagerSubscriberManagement:
 
     def test_on_tick_is_alias(self):
         mgr = _make_manager()
-        cb = lambda t: None
+        def cb(t):
+            return None
         mgr.on_tick(cb)
         assert cb in mgr._subscribers or len(mgr._subscribers) >= 1
 

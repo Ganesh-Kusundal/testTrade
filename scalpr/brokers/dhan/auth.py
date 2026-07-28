@@ -23,7 +23,7 @@ from scalpr.brokers.dhan.exceptions import AuthenticationError, ConfigurationErr
 
 logger = logging.getLogger(__name__)
 
-TOKEN_URL = "https://auth.dhan.co/app/generateAccessToken"
+TOKEN_URL = "https://auth.dhan.co/app/generateAccessToken"  # noqa: S105 — endpoint URL, not a secret
 EXPIRY_BUFFER = timedelta(minutes=15)
 
 

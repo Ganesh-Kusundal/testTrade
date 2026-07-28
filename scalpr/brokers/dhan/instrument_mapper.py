@@ -7,6 +7,7 @@ Patterns ported from Trade_XV2 v2 instrument adapter.
 
 from __future__ import annotations
 
+import contextlib
 import re
 from datetime import date
 from decimal import Decimal
@@ -93,10 +94,8 @@ def map_row(row: dict) -> MappedInstrument | None:
     if segment in (Segment.OPTIONS, Segment.FUTURES):
         expiry_str = row.get("SEM_EXPIRY_DATE")
         if expiry_str:
-            try:
+            with contextlib.suppress(ValueError):
                 expiry = date.fromisoformat(str(expiry_str)[:10])
-            except ValueError:
-                pass
         underlying = _derive_underlying(row, symbol)
 
         if segment == Segment.OPTIONS:

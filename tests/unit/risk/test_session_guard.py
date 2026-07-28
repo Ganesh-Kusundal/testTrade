@@ -1,12 +1,12 @@
 """Comprehensive tests for SessionGuard timezone logic bug fix."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from decimal import Decimal
 from unittest.mock import Mock
 
 import pytest
 
-from scalpr.risk.session_guard import SessionGuard, IST
+from scalpr.risk.session_guard import IST, SessionGuard
 
 
 class TestSessionGuardNSE:

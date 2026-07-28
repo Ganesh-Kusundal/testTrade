@@ -1,11 +1,11 @@
 """OrderRouter must raise on persistence failure after order placed."""
 from decimal import Decimal
-from datetime import datetime, timezone
 from unittest.mock import MagicMock
-from scalpr.execution.order_router import OrderRouter, PersistenceError
-from scalpr.domain.order import Order, OrderSide, OrderType, OrderState
+
 from scalpr.domain.fill import Fill
 from scalpr.domain.instrument import Exchange
+from scalpr.domain.order import Order, OrderSide, OrderState, OrderType
+from scalpr.execution.order_router import OrderRouter, PersistenceError
 
 
 def _make_order():

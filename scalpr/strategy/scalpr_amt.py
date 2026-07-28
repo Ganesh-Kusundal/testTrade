@@ -52,7 +52,7 @@ class ScalprAmtStrategy(IStrategy):
             under_daily_cap=(self._trade_count < 10),
         )
 
-        passed, reason, results = GateFSM.evaluate(gate_state)
+        passed, reason, _results = GateFSM.evaluate(gate_state)
 
         if passed:
             logger.info(f"AMT Strategy: Setup Triggered! Reason: {reason}")
@@ -73,7 +73,7 @@ class ScalprAmtStrategy(IStrategy):
                     state=OrderState.PENDING,
                 )
                 logger.info(f"AMT Strategy: Submitting order {order.order_id}")
-                
+
                 # Submit through OrderRouter (enforces risk checks)
                 try:
                     margins = self.order_router.gateway.get_margins()

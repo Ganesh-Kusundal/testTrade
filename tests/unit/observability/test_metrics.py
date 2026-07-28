@@ -1,13 +1,15 @@
 """Tests for observability foundation (metrics, logging, tracing)."""
 
-import logging
 import json
-from datetime import datetime, timezone
+import logging
 
-import pytest
-
-from scalpr.observability.logging import JsonFormatter, setup_logging
-from scalpr.observability.metrics import MetricsRegistry, CounterMetric, HistogramMetric, GaugeMetric
+from scalpr.observability.logging import JsonFormatter
+from scalpr.observability.metrics import (
+    CounterMetric,
+    GaugeMetric,
+    HistogramMetric,
+    MetricsRegistry,
+)
 from scalpr.observability.tracing import TraceContext
 
 
@@ -45,14 +47,14 @@ class TestHistogramMetric:
         hist = HistogramMetric("test_hist")
         for val in [10, 20, 30, 40, 50]:
             hist.observe(float(val))
-        
+
         assert hist.p50() == 30.0
 
     def test_p50_even_count(self):
         hist = HistogramMetric("test_hist")
         for val in [10, 20, 30, 40]:
             hist.observe(float(val))
-        
+
         # p50 for even count: index = 4 // 2 = 2 (0-indexed)
         assert hist.p50() == 30.0
 
@@ -60,7 +62,7 @@ class TestHistogramMetric:
         hist = HistogramMetric("test_hist")
         for i in range(100):
             hist.observe(float(i))
-        
+
         # p99 should be 99th value
         assert hist.p99() == 99.0
 
@@ -111,28 +113,28 @@ class TestMetricsRegistry:
         """Test that counter values persist across get calls."""
         registry = MetricsRegistry()
         registry.register_counter("test_counter")
-        
+
         counter1 = registry.get_counter("test_counter")
         counter1.increment(5)
-        
+
         counter2 = registry.get_counter("test_counter")
         assert counter2.value == 5
 
     def test_snapshot(self):
         registry = MetricsRegistry()
-        
+
         # Add some data
         registry.get_counter("orders_submitted").increment(10)
         registry.get_histogram("order_routing_latency_ms").observe(5.0)
         registry.get_gauge("active_positions").set(3.0)
-        
+
         snapshot = registry.snapshot()
-        
+
         assert "counters" in snapshot
         assert "histograms" in snapshot
         assert "gauges" in snapshot
         assert "timestamp" in snapshot
-        
+
         assert snapshot["counters"]["orders_submitted"] == 10
         assert snapshot["histograms"]["order_routing_latency_ms"]["count"] == 1
         assert snapshot["gauges"]["active_positions"] == 3.0
@@ -140,16 +142,16 @@ class TestMetricsRegistry:
     def test_core_metrics_initialized(self):
         """Test that core trading metrics are initialized on startup."""
         registry = MetricsRegistry()
-        
+
         # Verify counters
         assert registry.get_counter("orders_submitted") is not None
         assert registry.get_counter("strategy_ticks") is not None
         assert registry.get_counter("strategy_errors") is not None
-        
+
         # Verify histograms
         assert registry.get_histogram("order_routing_latency_ms") is not None
         assert registry.get_histogram("tick_processing_latency_ms") is not None
-        
+
         # Verify gauges
         assert registry.get_gauge("active_positions") is not None
         assert registry.get_gauge("circuit_breaker_state") is not None
@@ -169,10 +171,10 @@ class TestJsonFormatter:
             args=(),
             exc_info=None
         )
-        
+
         output = formatter.format(record)
         log_entry = json.loads(output)
-        
+
         assert log_entry["message"] == "Test message"
         assert log_entry["level"] == "INFO"
         assert log_entry["service"] == "scalpr"
@@ -190,10 +192,10 @@ class TestJsonFormatter:
             exc_info=None
         )
         record.trace_id = "abc12345"
-        
+
         output = formatter.format(record)
         log_entry = json.loads(output)
-        
+
         assert log_entry["trace_id"] == "abc12345"
 
 
@@ -202,7 +204,7 @@ class TestTraceContext:
 
     def test_start_creates_context(self):
         ctx = TraceContext.start("RELIANCE-EQ")
-        
+
         assert ctx.symbol == "RELIANCE-EQ"
         assert ctx.trace_id is not None
         assert ctx.tick_id is not None
@@ -211,19 +213,19 @@ class TestTraceContext:
     def test_trace_id_is_short(self):
         """Trace ID should be first 8 chars of UUID."""
         ctx = TraceContext.start("RELIANCE-EQ")
-        
+
         assert len(ctx.trace_id) == 8
 
     def test_context_var_propagation(self):
         """Test that context vars are set correctly."""
         ctx = TraceContext.start("RELIANCE-EQ")
-        
+
         assert ctx.get_trace_id() == ctx.trace_id
         assert ctx.get_tick_id() == ctx.tick_id
 
     def test_different_symbols_different_contexts(self):
         ctx1 = TraceContext.start("RELIANCE-EQ")
         ctx2 = TraceContext.start("TCS-EQ")
-        
+
         assert ctx1.symbol != ctx2.symbol
         assert ctx1.trace_id != ctx2.trace_id

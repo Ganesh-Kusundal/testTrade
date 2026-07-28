@@ -75,16 +75,16 @@ SEGMENT_TO_NUMERIC: dict[str, int] = {v: k for k, v in NUMERIC_TO_SEGMENT.items(
 
 def exchange_to_wire(exchange: Exchange | str) -> str:
     """Convert Exchange enum or string to Dhan wire segment string (legacy 1-arg).
-    
+
     Delegates to the canonical pair-based _WIRE_BY_EXCHANGE_SEGMENT using
     a default segment per exchange.
-    
+
     Args:
         exchange: Exchange enum value or string (e.g., "NSE", "MCX")
-    
+
     Returns:
         Dhan wire segment string (e.g., "NSE_EQ", "MCX_COMM")
-    
+
     Raises:
         ValueError: If exchange is not recognized
     """
@@ -100,7 +100,7 @@ def exchange_to_wire(exchange: Exchange | str) -> str:
         if seg is None:
             raise ValueError(f"No wire segment for exchange: {exchange}")
         return _WIRE_BY_EXCHANGE_SEGMENT[(exchange, seg)]
-    
+
     # String lookup
     wire = EXCHANGE_TO_SEGMENT.get(exchange.upper())
     if wire is None:
@@ -172,14 +172,14 @@ _WIRE_BY_EXCHANGE_SEGMENT: dict[tuple[Exchange, Segment], str] = {
 
 def to_dhan_wire(exchange: Exchange, segment: Segment) -> str:
     """Convert (Exchange, Segment) pair to Dhan wire segment string.
-    
+
     Args:
         exchange: Exchange enum value
         segment: Segment enum value
-    
+
     Returns:
         Dhan wire segment string (e.g., "NSE_EQ", "NSE_FNO", "IDX_I")
-    
+
     Raises:
         ValueError: If no wire mapping exists for the pair
     """
@@ -193,11 +193,11 @@ def to_dhan_wire(exchange: Exchange, segment: Segment) -> str:
 
 def segment_to_exchange(segment: str, default: str = "NSE") -> Exchange:
     """Convert Dhan wire segment to Exchange enum.
-    
+
     Args:
         segment: Dhan wire segment (e.g., "NSE_EQ", "MCX_COMM")
         default: Default exchange if segment not recognized
-    
+
     Returns:
         Exchange enum value
     """
@@ -211,24 +211,24 @@ def segment_to_exchange(segment: str, default: str = "NSE") -> Exchange:
 
 def parse_segment(value: str) -> str | None:
     """Parse user/broker input to canonical segment string.
-    
+
     Args:
         value: Segment string or exchange name
-    
+
     Returns:
         Canonical segment string or None if not recognized
     """
     if not value:
         return None
-    
+
     value_upper = value.strip().upper()
-    
+
     # Direct mapping
     if value_upper in EXCHANGE_TO_SEGMENT:
         return EXCHANGE_TO_SEGMENT[value_upper]
-    
+
     # Already a wire segment
     if value_upper in SEGMENT_TO_EXCHANGE:
         return value_upper
-    
+
     return None

@@ -14,7 +14,6 @@ Usage:
 """
 
 import sys
-from pathlib import Path
 
 import click
 from dotenv import load_dotenv
@@ -33,11 +32,20 @@ def cli():
     """
     # Auto-load .env for all commands
     load_dotenv()
-    pass
 
 
 # Register subcommands
-from scalpr.cli.commands import broker, funds, holdings, positions, orders, trades, history, quote, stream
+from scalpr.cli.commands import (  # noqa: E402 — registration must follow group definition
+    broker,
+    funds,
+    history,
+    holdings,
+    orders,
+    positions,
+    quote,
+    stream,
+    trades,
+)
 
 cli.add_command(broker.broker)
 cli.add_command(funds.funds)

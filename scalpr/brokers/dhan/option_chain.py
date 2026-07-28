@@ -17,8 +17,12 @@ from typing import Any
 
 from scalpr.brokers.dhan.http_client import DhanHttpClient
 from scalpr.brokers.dhan.resolver import SymbolResolver
+from scalpr.brokers.errors import OptionChainNotSupported
 
 logger = logging.getLogger(__name__)
+
+# Wire segments that support option chain queries
+_OPTIONABLE_SEGMENTS = frozenset({"NSE_FNO", "BSE_FNO", "IDX_I", "MCX_COMM"})
 
 
 class OptionChainAdapter:
@@ -57,6 +61,12 @@ class OptionChainAdapter:
             ``symbol, security_id, strike, bid, ask, oi, volume, delta``.
         """
         security_id, segment = self._resolve_underlying(underlying_symbol, exchange)
+
+        if segment not in _OPTIONABLE_SEGMENTS:
+            raise OptionChainNotSupported(
+                f"Option chain not supported for {underlying_symbol} ({exchange}) "
+                f"— only available for indices and F&O instruments"
+            )
 
         if expiry is None:
             expiry = self._resolve_next_expiry(security_id, segment)

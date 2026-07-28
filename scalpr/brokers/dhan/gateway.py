@@ -14,6 +14,7 @@ a system that is slow and right." — delegation over duplication.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from datetime import date, datetime
 from decimal import Decimal
@@ -21,9 +22,10 @@ from typing import Any
 
 from scalpr.brokers.broker_port import IBrokerGateway
 from scalpr.brokers.dhan.connection import DhanConnection
-from scalpr.brokers.dhan.exceptions import BrokerError, RateLimitError as DhanRateLimitError
-from scalpr.brokers.errors import RateLimitError
+from scalpr.brokers.dhan.exceptions import BrokerError
+from scalpr.brokers.dhan.exceptions import RateLimitError as DhanRateLimitError
 from scalpr.brokers.dhan.segments import SEGMENT_TO_EXCHANGE
+from scalpr.brokers.errors import RateLimitError
 from scalpr.domain.fill import Fill
 from scalpr.domain.instrument import Exchange
 from scalpr.domain.order import Order, OrderSide, OrderState, OrderType
@@ -470,10 +472,8 @@ class DhanGateway(IBrokerGateway):
         trade_date_str = raw.get("trade_date", "")
         timestamp = None
         if trade_date_str:
-            try:
+            with contextlib.suppress(ValueError, TypeError):
                 timestamp = datetime.fromisoformat(trade_date_str)
-            except (ValueError, TypeError):
-                pass
 
         return Fill(
             fill_id=raw.get("trade_id", ""),

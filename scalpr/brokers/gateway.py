@@ -11,9 +11,10 @@ import asyncio
 import logging
 import os
 import threading
-from datetime import date, datetime, timedelta
+from collections.abc import Callable
+from datetime import date, timedelta
 from decimal import Decimal
-from typing import Any, Callable
+from typing import Any
 
 import pandas as pd
 from dotenv import load_dotenv
@@ -221,10 +222,7 @@ class Gateway:
             DataFrame with columns:
             timestamp, open, high, low, close, volume, oi, symbol, exchange, timeframe
         """
-        if isinstance(symbol, str):
-            symbols = [symbol]
-        else:
-            symbols = symbol
+        symbols = [symbol] if isinstance(symbol, str) else symbol
 
         all_candles = []
 
@@ -459,10 +457,10 @@ class Gateway:
         """
         try:
             from scalpr.brokers.dhan.ws_manager import DhanWebSocketManager
-        except ImportError:
+        except ImportError as exc:
             raise NotImplementedError(
                 f"Streaming not available for {self._broker_name}"
-            )
+            ) from exc
 
         if not hasattr(self._gateway, "connection"):
             raise ValueError(
@@ -483,6 +481,7 @@ class Gateway:
             access_token=self._config.get("access_token", ""),
             client_id=self._config.get("client_id", ""),
             resolver=resolver,
+            token_refresh_fn=self._config.get("token_refresh_fn"),
         )
         # Registered before start(): no loop running in this thread, so
         # add_subscriber takes its synchronous append path.
@@ -558,10 +557,23 @@ class Gateway:
         except _DhanInstrumentNotFound as exc:
             raise InstrumentNotFound(str(exc)) from exc
 
+        # Build option chain adapter (shared connection, lazy per-call)
+        oc_adapter = OptionChainAdapter(conn.http_client, conn.resolver)
+
+        # WS manager/loop may not be initialised yet (first subscribe
+        # triggers _init_websocket_manager). Pass what we have.
+        ws_mgr = None
+        ws_loop = None
+        if self._ws_manager is not None:
+            ws_mgr, ws_loop = self._ws_manager, self._ws_loop
+
         return InstrumentHandle(
             resolved=resolved,
             market_data_adapter=conn.market_data,
             historical_adapter=conn.historical,
+            option_chain_adapter=oc_adapter,
+            ws_manager=ws_mgr,
+            ws_loop=ws_loop,
         )
 
     def subscribe_feed(
@@ -611,6 +623,58 @@ class Gateway:
             raise
 
         logger.info(f"feed_subscribed: {instruments} mode={mode.value}")
+
+    def unsubscribe(
+        self,
+        instruments: str | list[str],
+    ) -> None:
+        """Unsubscribe from live market data feed.
+
+        Args:
+            instruments: Qualified symbol(s), e.g. "TCS:NSE" or ["TCS:NSE", "RELIANCE:NSE"]
+        """
+        if isinstance(instruments, str):
+            instruments = [instruments]
+
+        with self._ws_lock:
+            if self._ws_manager is None:
+                return  # nothing to unsubscribe from
+            manager, loop = self._ws_manager, self._ws_loop
+
+        pairs = []
+        for inst_str in instruments:
+            inst_id = SimpleInstrumentId.parse(inst_str)
+            pairs.append((inst_id.symbol, inst_id.exchange.value))
+
+        try:
+            asyncio.run_coroutine_threadsafe(
+                manager.unsubscribe_pairs(pairs),
+                loop,
+            ).result(timeout=15)
+        except Exception:
+            logger.warning(f"unsubscribe_failed: {instruments}", exc_info=True)
+            raise
+
+        logger.info(f"feed_unsubscribed: {instruments}")
+
+    def close(self) -> None:
+        """Shut down WebSocket connections and release resources."""
+        with self._ws_lock:
+            if self._ws_manager is not None:
+                manager = self._ws_manager
+                loop = self._ws_loop
+                try:
+                    if loop is not None and loop.is_running():
+                        asyncio.run_coroutine_threadsafe(
+                            manager.stop(), loop,
+                        ).result(timeout=10)
+                except Exception:
+                    logger.warning("ws_close_failed", exc_info=True)
+                self._ws_manager = None
+                self._ws_loop = None
+
+        self._stream_callbacks.clear()
+        logger.info("gateway_closed")
 
     def option_chain(
         self,

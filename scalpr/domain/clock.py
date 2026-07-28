@@ -49,4 +49,4 @@ class SimulatedClock:
         self._current = self._current + delta
 
 
-__all__ = ["IClock", "WallClock", "SimulatedClock"]
+__all__ = ["IClock", "SimulatedClock", "WallClock"]

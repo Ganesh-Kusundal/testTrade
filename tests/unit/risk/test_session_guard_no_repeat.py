@@ -1,7 +1,7 @@
 """SessionGuard must not call square_off_all more than once per cutoff."""
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
-from decimal import Decimal
+
 from scalpr.risk.session_guard import SessionGuard
 
 IST = timezone(timedelta(hours=5, minutes=30))

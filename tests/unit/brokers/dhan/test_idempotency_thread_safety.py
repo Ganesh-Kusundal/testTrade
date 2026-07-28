@@ -1,10 +1,12 @@
 """Thread safety tests for OrdersAdapter idempotency cache."""
+import contextlib
 import threading
-from unittest.mock import MagicMock
 from decimal import Decimal
+from unittest.mock import MagicMock
+
 from scalpr.brokers.dhan.orders import OrdersAdapter
-from scalpr.domain.order import Order, OrderSide, OrderType, OrderState
 from scalpr.domain.instrument import Exchange
+from scalpr.domain.order import Order, OrderSide, OrderState, OrderType
 
 
 def _make_order(order_id: str) -> Order:
@@ -41,10 +43,8 @@ def test_concurrent_place_order_should_not_duplicate_idempotency_check():
 
     def place():
         # All threads start at the same instant to maximise race window
-        try:
+        with contextlib.suppress(threading.BrokenBarrierError):
             barrier.wait(timeout=5)
-        except threading.BrokenBarrierError:
-            pass
         try:
             adapter.place_order(order)
             with lock:

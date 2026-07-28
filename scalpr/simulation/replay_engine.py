@@ -32,22 +32,22 @@ class ReplayEngine:
         event_types: tuple[str, ...] = ("TickReceived",),
     ) -> int:
         """Load ticks from event store for replay.
-        
+
         Args:
             events: List of (sequence_num, event) tuples from EventStore
             event_types: Which event types to extract ticks from
-        
+
         Returns:
             Number of ticks loaded
         """
         self.ticks = []
-        
+
         for seq_num, event in events:
             event_type = event.__class__.__name__
-            
+
             if event_type in event_types and hasattr(event, "tick"):
                 self.ticks.append(event.tick)
-        
+
         self.cursor = 0
         logger.info(f"ReplayEngine: Loaded {len(self.ticks)} ticks from {len(events)} events")
         return len(self.ticks)

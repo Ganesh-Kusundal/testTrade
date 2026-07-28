@@ -1,26 +1,27 @@
-import pytest
 import os
-from unittest.mock import MagicMock
 import tempfile
 from decimal import Decimal
-from datetime import datetime, timezone
-from scalpr.domain.order import Order, OrderSide, OrderType, OrderState
+from unittest.mock import MagicMock
+
+import pytest
+
 from scalpr.domain.fill import Fill
-from scalpr.domain.position import Position, PositionSide, PositionState
 from scalpr.domain.instrument import Exchange
+from scalpr.domain.order import Order, OrderSide, OrderState, OrderType
+from scalpr.domain.position import Position, PositionSide, PositionState
 from scalpr.oms.order_manager import OrderManager
-from scalpr.oms.persistence import OmsRepository
 from scalpr.oms.paper_oms import PaperOms
+from scalpr.oms.persistence import OmsRepository
+from scalpr.risk.circuit_breaker import CircuitBreaker
+from scalpr.risk.position_sizer import AtrPositionSizer
 from scalpr.risk.pre_trade import PreTradeRiskGate
 from scalpr.risk.session_guard import SessionGuard
-from scalpr.risk.position_sizer import AtrPositionSizer
-from scalpr.risk.circuit_breaker import CircuitBreaker
 
 
 def test_order_manager_fill_accumulation():
     """OrderManager accumulates partial fills and transitions order to FILLED once completed."""
     om = OrderManager()
-    
+
     order = Order(
         order_id="ord_1",
         symbol="RELIANCE",
@@ -97,7 +98,7 @@ def test_oms_repository_save_restore():
 def test_paper_oms_drawdown_calculation():
     """PaperOms executes fills and tracks current drawdown based on mark-to-market prices."""
     oms = PaperOms(initial_balance=Decimal("100000.00"))
-    
+
     # 1. Place a long order of 10 shares of RELIANCE at 2500.00
     order = Order(
         order_id="p_ord_1",
@@ -108,17 +109,17 @@ def test_paper_oms_drawdown_calculation():
         quantity=10,
         price=Decimal("2500.00"),
     )
-    
+
     # Simulate feed price
     oms.set_last_price("RELIANCE", Decimal("2500.00"))
     oms.place_order(order)
-    
+
     # Current cash: 100000 - 10 * 2500.05 (with default 1 tick slippage) = 74999.50
     assert oms.balance == Decimal("74999.50")
-    
+
     # Mark price down to 2400.00
     oms.set_last_price("RELIANCE", Decimal("2400.00"))
-    
+
     # Portfolio value: 74999.50 + 10 * (2400 - 2500.05) = 74999.50 + (-1000.50) = 73999.00
     # Peak balance: 100000.00
     # Drawdown: (100000 - 73999) / 100000 = 0.26001 (26%)
@@ -131,7 +132,7 @@ def test_pre_trade_risk_gate():
         portfolio_value=Decimal("100000.00"),
         max_open_positions=2,
     )
-    
+
     # Order exceeding 1% of portfolio notional (capital risk check)
     order_too_large = Order(
         order_id="large",
@@ -184,7 +185,7 @@ def test_session_guard_loss_tripping():
 def test_atr_position_sizer():
     """AtrPositionSizer computes contract lot size aligned trading quantity based on ATR."""
     sizer = AtrPositionSizer(max_quantity_cap=1000)
-    
+
     # Portfolio value: 100,000 => Risk amount: 1,000 (1%)
     # ATR: 5.00, multiplier: 2.00, lot_size: 50
     # Risk per lot: 5.00 * 2.00 * 50 = 500
@@ -203,7 +204,7 @@ def test_atr_position_sizer():
 def test_circuit_breaker_limits():
     """CircuitBreaker trips on exceeding daily loss or drawdown limits and halts all execution."""
     cb = CircuitBreaker(daily_loss_limit_pct=0.03, drawdown_limit_pct=0.05)
-    
+
     # 1. Passed check
     assert cb.check_limits(
         portfolio_value=Decimal("100000.00"),
@@ -223,7 +224,7 @@ def test_circuit_breaker_limits():
     # 3. Requires manual reset
     cb.reset()
     assert not cb.is_tripped
-    
+
     # 4. Exceeding drawdown trips breaker
     assert not cb.check_limits(
         portfolio_value=Decimal("100000.00"),

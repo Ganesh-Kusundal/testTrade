@@ -46,7 +46,7 @@ class SessionGuard:
         if hour == 15 and 0 <= minute < 15 and not self._warned_nse:
             logger.warning("SessionGuard Alert: NSE Intraday square-off in 15 minutes!")
             self._warned_nse = True
-        
+
         # Square-off at 15:15+ IST
         if hour == 15 and minute >= 15 and not self._squared_off_nse:
             self._squared_off_nse = True
@@ -60,7 +60,7 @@ class SessionGuard:
         if hour == 23 and 0 <= minute < 15 and not self._warned_mcx:
             logger.warning("SessionGuard Alert: MCX Intraday square-off in 15 minutes!")
             self._warned_mcx = True
-        
+
         # Square-off at 23:15+ IST
         if hour == 23 and minute >= 15 and not self._squared_off_mcx:
             self._squared_off_mcx = True

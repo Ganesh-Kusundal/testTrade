@@ -1,6 +1,6 @@
 """B-002: Market data routes must forward exchange query param to gateway."""
-from unittest.mock import MagicMock
 from decimal import Decimal
+from unittest.mock import MagicMock
 
 import pytest
 from fastapi import FastAPI

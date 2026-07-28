@@ -242,7 +242,7 @@ class HistoricalDataAdapter:
                 data.get("high", []),
                 data.get("low", []),
                 data.get("close", []),
-                data.get("volume", []),
+                data.get("volume", []), strict=False,
             )
         ]
 

@@ -4,8 +4,8 @@ from decimal import Decimal
 import pytest
 
 from scalpr.brokers.dhan.mapper import DhanMapper
-from scalpr.domain.order import Order, OrderSide, OrderType, OrderState
 from scalpr.domain.instrument import Exchange
+from scalpr.domain.order import Order, OrderSide, OrderState, OrderType
 
 
 def test_mapper_should_handle_nse_fno_exchange_segment():

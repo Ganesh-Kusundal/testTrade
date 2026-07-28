@@ -11,13 +11,12 @@ Catches regressions for the 4 critical bugs fixed in Phase 1:
 """
 
 from decimal import Decimal
-from datetime import date
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
+
 import pytest
 
-from scalpr.domain.instrument import Instrument, Exchange, Segment
 from scalpr.brokers.dhan.ws_client import DhanWebSocketClient
-
+from scalpr.domain.instrument import Exchange, Instrument, Segment
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -25,7 +24,7 @@ from scalpr.brokers.dhan.ws_client import DhanWebSocketClient
 def mock_resolver():
     """Create a mock SymbolResolver that returns real instruments."""
     resolver = MagicMock()
-    
+
     def resolve(symbol, exchange="NSE"):
         # Simulate real instrument resolution
         instruments = {
@@ -50,7 +49,7 @@ def mock_resolver():
         if inst is None:
             raise ValueError(f"Unknown symbol: {symbol}")
         return inst
-    
+
     resolver.resolve.side_effect = resolve
     return resolver
 
@@ -70,18 +69,18 @@ class TestWebSocketSecurityIdResolution:
             client_id="test_client",
             resolver=mock_resolver,
         )
-        
+
         # Mock the SDK feed to capture subscription calls
         mock_feed = MagicMock()
         client._feed = mock_feed
         client._connected = True
-        
+
         # Subscribe to RELIANCE
         result = await client.subscribe([("RELIANCE", "NSE")])
-        
+
         # Verify resolver was called with correct arguments
         mock_resolver.resolve.assert_called_once_with("RELIANCE", "NSE")
-        assert result is True
+        assert result == {("RELIANCE", "NSE"): True}
 
     @pytest.mark.asyncio
     async def test_subscribe_uses_string_security_id(self, mock_resolver):
@@ -92,51 +91,48 @@ class TestWebSocketSecurityIdResolution:
             client_id="test_client",
             resolver=mock_resolver,
         )
-        
+
         mock_feed = MagicMock()
         client._feed = mock_feed
         client._connected = True
-        
+
         await client.subscribe([("RELIANCE", "NSE")])
-        
+
         # Verify SDK feed received subscription with string security_id
         call_args = mock_feed.subscribe_symbols.call_args
         assert call_args is not None, "subscribe_symbols should be called"
-        
+
         instruments = call_args[0][0] if call_args[0] else []
         assert len(instruments) > 0, "Should have at least one instrument"
-        
+
         # SDK v2 format: (exchange_int, security_id_str, mode_int)
-        exch_int, sec_id, mode_int = instruments[0]
+        _exch_int, sec_id, _mode_int = instruments[0]
         assert isinstance(sec_id, str), f"security_id must be str, got {type(sec_id)}"
         assert sec_id == "2885", f"Expected RELIANCE security_id='2885', got {sec_id}"
 
     @pytest.mark.asyncio
     async def test_subscribe_handles_resolution_failure_gracefully(self, mock_resolver):
-        """subscribe() should handle resolution failures gracefully (log warning, skip)."""
+        """S-3: resolution failure must be reported as False per-pair, not hidden."""
         # Make resolver raise for unknown symbol
         mock_resolver.resolve.side_effect = ValueError("Unknown symbol: UNKNOWN")
-        
+
         client = DhanWebSocketClient(
             access_token="test_token",
             client_id="test_client",
             resolver=mock_resolver,
         )
-        
+
         mock_feed = MagicMock()
         client._feed = mock_feed
         client._connected = True
-        
-        # Should not raise, just skip the failed symbol
-        # Returns True because empty subscription is considered "success" (no-op)
+
+        # Should not raise, but must report the dropped pair honestly.
         result = await client.subscribe([("UNKNOWN", "NSE")])
-        
-        # Should not crash, just return True (no-op for already-subscribed/empty)
-        assert result is True
-        
+        assert result == {("UNKNOWN", "NSE"): False}
+
         # Verify SDK feed was NOT called (no valid instruments)
         mock_feed.subscribe_symbols.assert_not_called()
-        
+
     @pytest.mark.asyncio
     async def test_subscribe_fallback_without_resolver(self):
         """subscribe() should fallback to int(symbol) if no resolver available."""
@@ -145,16 +141,16 @@ class TestWebSocketSecurityIdResolution:
             client_id="test_client",
             resolver=None,  # No resolver
         )
-        
+
         mock_feed = MagicMock()
         client._feed = mock_feed
         client._connected = True
-        
+
         # Subscribe using security_id directly as symbol (backward compat)
         result = await client.subscribe([("2885", "NSE")])
-        
+
         # Should succeed by parsing "2885" as int
-        assert result is True
+        assert result == {("2885", "NSE"): True}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -167,11 +163,12 @@ class TestOrdersSecurityIdUsage:
     def test_orders_code_uses_security_id_field(self):
         """Orders adapter should reference inst.security_id in source code."""
         import inspect
+
         from scalpr.brokers.dhan.orders import OrdersAdapter
-        
+
         # Get the source code of place_order method
         source = inspect.getsource(OrdersAdapter.place_order)
-        
+
         # Verify it uses security_id, not symbol
         assert "inst.security_id" in source, \
             "OrdersAdapter.place_order should use inst.security_id, not inst.symbol"
@@ -189,11 +186,12 @@ class TestHistoricalSecurityIdUsage:
     def test_historical_code_uses_security_id_field(self):
         """Historical data adapter should reference inst.security_id in source code."""
         import inspect
+
         from scalpr.brokers.dhan.historical import HistoricalDataAdapter
-        
+
         # Get the source code of _resolve_segment method (where security_id is extracted)
         source = inspect.getsource(HistoricalDataAdapter._resolve_segment)
-        
+
         # Verify it uses security_id, not symbol
         assert "inst.security_id" in source, \
             "HistoricalDataAdapter._resolve_segment should use inst.security_id, not inst.symbol"
@@ -209,23 +207,24 @@ class TestOptionsScannerSecurityIds:
     def test_scanner_accepts_resolver_parameter(self):
         """OptionsScanner should accept resolver parameter."""
         from scalpr.scanner.options_scanner import OptionsScanner
-        
+
         mock_resolver = MagicMock()
         scanner = OptionsScanner(resolver=mock_resolver)
-        
+
         assert scanner._resolver is mock_resolver
 
     def test_scanner_code_resolves_instruments(self):
         """OptionsScanner scan method should use resolver to get instruments."""
         import inspect
+
         from scalpr.scanner.options_scanner import OptionsScanner
-        
+
         source = inspect.getsource(OptionsScanner.scan)
-        
+
         # Should reference resolver
         assert "self._resolver" in source or "resolver" in source, \
             "OptionsScanner.scan should use resolver to get real instruments"
-        
+
         # Should NOT create fake security_ids like "NIFTY_ID"
         assert "_ID" not in source or "security_id" in source, \
             "OptionsScanner should not create fake security_id strings ending with _ID"
@@ -246,27 +245,27 @@ class TestEndToEndSecurityIdFlow:
             client_id="test_client",
             resolver=mock_resolver,
         )
-        
+
         mock_feed = MagicMock()
         client._feed = mock_feed
         client._connected = True
-        
+
         # Subscribe to RELIANCE
         await client.subscribe([("RELIANCE", "NSE")])
-        
+
         # Verify the complete chain
         # 1. Resolver was called
         mock_resolver.resolve.assert_called_once_with("RELIANCE", "NSE")
-        
+
         # 2. SDK received correct subscription
         call_args = mock_feed.subscribe_symbols.call_args
         instruments = call_args[0][0]
-        exch_int, sec_id, mode_int = instruments[0]
-        
+        _exch_int, sec_id, mode_int = instruments[0]
+
         # 3. Security ID is the correct string (SDK v2 JSON packet requires str)
         assert sec_id == "2885"
         assert isinstance(sec_id, str)
-        
+
         # 4. Mode is valid SDK integer (15=Ticker, 17=Quote, 21=Full)
         assert mode_int in (15, 17, 21), f"Invalid SDK mode: {mode_int}"
 
@@ -278,16 +277,16 @@ class TestEndToEndSecurityIdFlow:
             client_id="test_client",
             resolver=mock_resolver,
         )
-        
+
         mock_feed = MagicMock()
         client._feed = mock_feed
         client._connected = True
-        
+
         await client.subscribe([("TCS", "NSE")])
-        
+
         call_args = mock_feed.subscribe_symbols.call_args
         instruments = call_args[0][0]
-        exch_int, sec_id, mode_int = instruments[0]
-        
+        _exch_int, sec_id, _mode_int = instruments[0]
+
         # TCS security_id is "11536" (string — SDK v2 JSON packet)
         assert sec_id == "11536"

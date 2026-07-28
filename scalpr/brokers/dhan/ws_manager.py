@@ -111,6 +111,7 @@ class DhanWebSocketManager(IMarketDataFeed):
         max_reconnect_attempts: int = 10,
         message_rate_window: float = 10.0,
         resolver: Any = None,  # NEW: SymbolResolver for security_id resolution
+        token_refresh_fn: Callable[[], str] | None = None,
     ):
         self._access_token = access_token
         self._client_id = client_id
@@ -119,6 +120,8 @@ class DhanWebSocketManager(IMarketDataFeed):
         self._max_reconnect_attempts = max_reconnect_attempts
         self._message_rate_window = message_rate_window
         self._resolver = resolver  # NEW: Store resolver
+        # Threaded down to ws_client so reconnects pick up rotated tokens
+        self._token_refresh_fn = token_refresh_fn
 
         # Mutable state protected by asyncio.Lock
         self._status = ConnectionStatus.DISCONNECTED
@@ -317,8 +320,16 @@ class DhanWebSocketManager(IMarketDataFeed):
 
         if self._status == ConnectionStatus.CONNECTED and self._ws_client is not None:
             try:
-                await self._ws_client.subscribe(symbols, mode=mode)
-                logger.info("Subscribed to %d symbols", len(symbols))
+                results = await self._ws_client.subscribe(symbols, mode=mode)
+                failed = sorted(p for p, ok in results.items() if not ok)
+                if failed:
+                    # Failed pairs must not linger as phantom subscriptions —
+                    # they would be replayed forever on every reconnect.
+                    async with self._lock:
+                        self._subscriptions -= set(failed)
+                    self._metrics.last_error = f"subscribe dropped {len(failed)} pairs: {failed}"
+                    logger.error("Subscribe dropped %d/%d pairs: %s", len(failed), len(symbols), failed)
+                logger.info("Subscribed to %d/%d symbols", len(symbols) - len(failed), len(symbols))
             except Exception as exc:
                 logger.error("Failed to subscribe: %s", exc)
                 self._metrics.last_error = str(exc)
@@ -332,6 +343,10 @@ class DhanWebSocketManager(IMarketDataFeed):
         "depth", "full"); reconnect resubscription uses the client default.
         """
         await self._subscribe_async(pairs, mode=mode)
+
+    async def unsubscribe_pairs(self, pairs: list[tuple[str, str]]) -> None:
+        """Unsubscribe (symbol, exchange) pairs, preserving exchange awareness."""
+        await self._unsubscribe_async(set(pairs))
 
     async def _unsubscribe_async(self, symbols: set[tuple[str, str]]) -> None:
         """Remove from subscription list and send unsubscribe to client."""
@@ -629,7 +644,7 @@ class DhanWebSocketManager(IMarketDataFeed):
 
         This allows ws_manager to be tested without ws_client
         existing, and allows dependency injection for testing.
-        
+
         Note: ws_parser was removed (SDK handles parsing in ws_client).
         """
         if self._ws_client is not None:
@@ -642,13 +657,14 @@ class DhanWebSocketManager(IMarketDataFeed):
                 access_token=self._access_token,
                 client_id=self._client_id,
                 resolver=self._resolver,
+                token_refresh_fn=self._token_refresh_fn,
             )
             logger.debug("DhanWebSocketClient created via import")
         except ImportError as exc:
             raise ImportError(
                 "scalpr.brokers.dhan.ws_client is required for production use"
             ) from exc
-        
+
         # ws_parser removed: SDK handles all parsing in ws_client._parse_sdk_data()
         self._ws_parser = None
 

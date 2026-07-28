@@ -16,10 +16,10 @@ T0 = datetime(2026, 1, 5, 9, 15, tzinfo=timezone.utc)
 
 
 def _gateway(**overrides) -> SimulatedGateway:
-    kwargs = dict(
-        starting_capital=Decimal("1000000"),
-        clock=SimulatedClock(T0),
-    )
+    kwargs = {
+        "starting_capital": Decimal("1000000"),
+        "clock": SimulatedClock(T0),
+    }
     kwargs.update(overrides)
     gw = SimulatedGateway(**kwargs)
     gw.connect()

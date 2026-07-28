@@ -92,8 +92,8 @@ class OmsRepository:
             conn.execute(
                 """
                 INSERT OR REPLACE INTO orders (
-                    order_id, symbol, exchange, side, order_type, quantity, price, 
-                    trigger_price, state, filled_quantity, avg_price, timestamp, 
+                    order_id, symbol, exchange, side, order_type, quantity, price,
+                    trigger_price, state, filled_quantity, avg_price, timestamp,
                     product_type, validity, reject_reason, correlation_id
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,

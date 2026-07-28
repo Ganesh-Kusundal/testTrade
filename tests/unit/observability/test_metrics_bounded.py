@@ -1,6 +1,7 @@
 """Metrics must be bounded in memory and thread-safe."""
 import threading
-from scalpr.observability.metrics import MetricsRegistry, HistogramMetric
+
+from scalpr.observability.metrics import HistogramMetric, MetricsRegistry
 
 
 def test_histogram_should_bound_values():

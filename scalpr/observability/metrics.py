@@ -1,10 +1,9 @@
 """Thread-safe metrics registry for SCALPR trading platform."""
 
+import threading
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Dict, List
-import threading
 
 
 @dataclass
@@ -61,9 +60,9 @@ class MetricsRegistry:
     """Thread-safe metrics registry for production monitoring."""
 
     def __init__(self):
-        self._counters: Dict[str, CounterMetric] = {}
-        self._histograms: Dict[str, HistogramMetric] = {}
-        self._gauges: Dict[str, GaugeMetric] = {}
+        self._counters: dict[str, CounterMetric] = {}
+        self._histograms: dict[str, HistogramMetric] = {}
+        self._gauges: dict[str, GaugeMetric] = {}
         self._lock = threading.Lock()
 
         # Initialize core metrics

@@ -67,14 +67,14 @@ async def ws_market(websocket: WebSocket):
 @router.websocket("/ws/portfolio")
 async def ws_portfolio(websocket: WebSocket):
     """Push portfolio position updates to the frontend.
-    
+
     Sends initial snapshot on connect, then pushes deltas when positions change.
     Frontend can still poll REST /portfolio/positions as fallback.
     """
     await websocket.accept()
     gateway = getattr(websocket.app.state, "gateway", None)
-    portfolio_manager = getattr(websocket.app.state, "portfolio_manager", None)
-    
+    getattr(websocket.app.state, "portfolio_manager", None)
+
     if gateway is None or not gateway.is_connected():
         await websocket.send_text(serialize({
             "type": "error", "code": "BROKER_UNAVAILABLE",
@@ -82,7 +82,7 @@ async def ws_portfolio(websocket: WebSocket):
         }))
         await websocket.close()
         return
-    
+
     # Send initial snapshot
     try:
         positions = gateway.get_positions()
@@ -110,7 +110,7 @@ async def ws_portfolio(websocket: WebSocket):
             "type": "error", "code": "SNAPSHOT_FAILED",
             "message": str(e),
         }))
-    
+
     # Keep connection alive — frontend will poll REST for now
     # Future: subscribe to domain events and push deltas
     try:

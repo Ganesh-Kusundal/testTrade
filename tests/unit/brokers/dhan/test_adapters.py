@@ -8,22 +8,21 @@ resolution integration.
 
 from __future__ import annotations
 
-import pytest
-from datetime import date, datetime, timezone, timedelta
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from unittest.mock import MagicMock, patch
 
+import pytest
+
+from scalpr.brokers.dhan.exceptions import BrokerError, InstrumentNotFoundError, OrderError
+from scalpr.brokers.dhan.historical import HistoricalDataAdapter
 from scalpr.brokers.dhan.market_data import MarketDataAdapter
 from scalpr.brokers.dhan.orders import OrdersAdapter
 from scalpr.brokers.dhan.portfolio import PortfolioAdapter
-from scalpr.brokers.dhan.historical import HistoricalDataAdapter
-from scalpr.brokers.dhan.exceptions import BrokerError, OrderError, InstrumentNotFoundError
-from scalpr.brokers.dhan.dtos import DhanOrderResponse
-from scalpr.domain.order import Order, OrderSide, OrderType, OrderState
 from scalpr.domain.fill import Fill
-from scalpr.domain.position import Position, PositionSide, PositionState
 from scalpr.domain.instrument import Exchange
-
+from scalpr.domain.order import Order, OrderSide, OrderState, OrderType
+from scalpr.domain.position import Position, PositionSide, PositionState
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -539,7 +538,7 @@ class TestOrdersAdapter:
         orders_adapter.modify_order(
             "dhan_1", Decimal("2600.00"), 20, trigger_price=Decimal("2550.00")
         )
-        args, kwargs = mock_http_client.put.call_args
+        _args, kwargs = mock_http_client.put.call_args
         assert kwargs["json"]["triggerPrice"] == "2550.00"  # Fixed: now string, not float
 
     def test_should_raise_error_when_modify_rejected(self, orders_adapter, mock_http_client):

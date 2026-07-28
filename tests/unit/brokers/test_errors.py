@@ -1,10 +1,11 @@
 """Tests for domain error hierarchy."""
 import pytest
+
 from scalpr.brokers.errors import (
     AmbiguousInstrument,
     AuthenticationError,
-    InsufficientMargin,
     InstrumentNotFound,
+    InsufficientMargin,
     InvalidInstrument,
     InvalidOrder,
     ProviderErrorInfo,

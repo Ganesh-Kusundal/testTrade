@@ -31,8 +31,6 @@ from scalpr.brokers.dhan.exceptions import (
     RateLimitError,
 )
 from scalpr.brokers.dhan.http_client import (
-    _DEFAULT_BUCKET,
-    _ENDPOINT_BUCKETS,
     _MAX_RETRIES,
     _ORDERS_ACQUIRE_TIMEOUT_S,
     _REFRESH_COOLDOWN_SECONDS,

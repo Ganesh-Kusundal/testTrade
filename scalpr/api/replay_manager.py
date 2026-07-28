@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable, Optional
 
 from scalpr.api.models import Candle, ReplaySession
 from scalpr.api.ws_manager import WsFanout
@@ -48,7 +48,7 @@ class _SessionRuntime:
     state: str = IDLE
     speed: float = 1.0
     fanout: WsFanout = field(default_factory=WsFanout)
-    _task: Optional[asyncio.Task] = None
+    _task: asyncio.Task | None = None
 
     @property
     def cursor_t(self) -> int:
@@ -161,7 +161,7 @@ class _SessionRuntime:
 class ReplaySessionManager:
     """Registry + factory for replay sessions (composition-root singleton)."""
 
-    def __init__(self, candle_provider: Optional[CandleProvider] = None) -> None:
+    def __init__(self, candle_provider: CandleProvider | None = None) -> None:
         self._provider = candle_provider
         self._sessions: dict[str, _SessionRuntime] = {}
 

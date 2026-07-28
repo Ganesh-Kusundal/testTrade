@@ -38,6 +38,4 @@ class CvdTracker:
         price_diff = price_end - price_start
 
         # Divergence exists if CVD goes up but price goes down, or vice versa
-        if (cvd_diff > 0 and price_diff < 0) or (cvd_diff < 0 and price_diff > 0):
-            return True
-        return False
+        return bool((cvd_diff > 0 and price_diff < 0) or (cvd_diff < 0 and price_diff > 0))
