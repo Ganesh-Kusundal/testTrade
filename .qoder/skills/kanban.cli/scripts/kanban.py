@@ -1,311 +1,472 @@
 #!/usr/bin/env python3
-"""kanban.cli — living project board and digest.
+"""kanban.cli — project state board for testTrade (tradexv2).
 
-Maintains .kanban/CONTEXT.md, a structured, always-current view of the project:
-architecture & components, tasks and their status, test failures, drift since
-the previous scan, recent commits, module dependencies, data flows, deps and
-technical debt.
+Stdlib-only. One file. Complements graphify (structure graph); this tracks
+project STATE: tasks, bugs, file purposes, components, flows, risks, and
+hash-anchored staleness so rot becomes visible instead of silent. It also
+reports knowledge-graph (graphify) staleness per the repo's AGENTS.md rule.
 
-Truth is split in two:
-  - curated  : .kanban/board.json  (tasks, project summary, flows, component
-               descriptions) — edited via `task` commands or by hand.
-  - derived  : .kanban/scan.json   (file index, drift, git, tests, import
-               graph, dependency lists, graphify graph status) — recomputed
-               by `scan`.
+Usage:
+    python3 .qoder/skills/kanban.cli/scripts/kanban.py <cmd> [args]
 
-`render` combines both into .kanban/CONTEXT.md. `update` = scan + render.
-
-Stdlib only. Runs with any python3 >= 3.11 (tomllib optional, degrades).
-Every evidence source degrades gracefully: missing git / pytest cache /
-pyproject never crashes the tool — sections render an honest "unavailable".
-
-Exit codes: 0 ok, 1 error, 2 board validation failure.
+See SKILL.md and references/commands.md for the full workflow.
 """
-
 from __future__ import annotations
 
 import argparse
-import ast
+import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
+import tomllib
 from datetime import datetime, timezone
 from pathlib import Path
 
-VERSION = "1.2.0"
+# ── constants ────────────────────────────────────────────────────────────────
 
-# Directories pruned from the file inventory (any dot-directory is also pruned).
+VERSION = 1
+SCRIPT_NAME = "kanban"
+STATE_FILENAME = "state.json"
+BOARD_FILENAME = "BOARD.md"
+KANBAN_DIRNAME = ".kanban"
+SCAN_ROOTS = ("scalpr", "tests", "scripts")
+SCAN_FILES = ("pyproject.toml", "Makefile")
 EXCLUDE_DIRS = {
-    "node_modules", "__pycache__", "dist", "build", "graphify-out",
+    "__pycache__", ".venv", "venv", "graphify-out", ".kanban",
+    ".claude", ".git", ".idea", ".mypy_cache", ".pytest_cache",
+    "node_modules", ".agents",
 }
-# Pruned only when directly under the project root (e.g. frontend/src/data stays).
-ROOT_EXCLUDE_DIRS = {"data", "runtime-dev"}
-EXCLUDE_FILES = {".DS_Store", ".coverage", ".stderr.txt"}
+VALID_KINDS = {"feature", "bug", "task", "debt", "chore"}
+VALID_LANES = {"backlog", "in_progress", "blocked", "review", "done"}
+VALID_PRIORITIES = {"P0", "P1", "P2", "P3"}
+VALID_SEVERITIES = {"high", "med", "low"}
+VALID_RISK_STATUS = {"open", "accepted", "resolved"}
+GIT_TIMEOUT = 5
+PYTEST_TIMEOUT = 120
+SCAN_MAX_AGE_HOURS = 24
+MAX_STATUS_LINES = 90
 
-TYPE_PREFIX = {"task": "T", "bug": "B", "feature": "F", "debt": "D", "risk": "R"}
-VALID_TYPES = set(TYPE_PREFIX)
-VALID_STATUSES = {"planned", "backlog", "in_progress", "blocked", "done"}
-
-# Render caps — keep the digest inside a small token budget.
-CAP_FAILING_TESTS = 15
-CAP_DRIFT_LINES = 20
-CAP_COMMITS = 8
-CAP_COMPLETED = 10
-CAP_STALE_FILES = 10
-CAP_HUBS = 8
-
-# Extensions graphify tracks — used to flag new files missing from the graph.
-GRAPH_TRACKED_EXTS = {".py", ".ts", ".tsx", ".js", ".jsx", ".md"}
-
-QUERY_SECTIONS = ("tasks", "tests", "drift", "commits", "imports", "deps", "components",
-                  "graphify")
-
-
-# ── helpers ──────────────────────────────────────────────────────────────
+# ── helpers ──────────────────────────────────────────────────────────────────
 
 
 def now_iso() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def find_root(explicit: str | None) -> Path:
-    """Project root = --root if given, else walk up from this script, then CWD,
-    looking for pyproject.toml."""
-    if explicit:
-        return Path(explicit).resolve()
-    for start in (Path(__file__).resolve().parent, Path.cwd()):
-        for candidate in (start, *start.parents):
-            if (candidate / "pyproject.toml").exists():
-                return candidate
-    return Path.cwd()
+def die(msg: str, code: int = 1) -> None:
+    print(f"{SCRIPT_NAME}: error: {msg}", file=sys.stderr)
+    sys.exit(code)
 
 
-def kanban_dir(root: Path) -> Path:
-    return root / ".kanban"
+def warn(msg: str) -> None:
+    print(f"{SCRIPT_NAME}: warning: {msg}", file=sys.stderr)
 
 
-def atomic_write(path: Path, text: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".tmp-kanban-")
+def sha1_file(path: Path) -> str:
+    h = hashlib.sha1()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def sha1_text(text: str) -> str:
+    return hashlib.sha1(text.encode("utf-8")).hexdigest()
+
+
+def find_kanban_root(cwd: Path | None = None) -> Path:
+    """Walk up from cwd to find a directory containing .kanban/."""
+    start = (cwd or Path.cwd()).resolve()
+    for parent in [start, *start.parents]:
+        if (parent / KANBAN_DIRNAME).is_dir():
+            return parent
+    return start  # init will create here
+
+
+def load_state(root: Path) -> dict:
+    state_path = root / KANBAN_DIRNAME / STATE_FILENAME
+    if not state_path.exists():
+        die(f"no kanban state at {root}. Run `{SCRIPT_NAME} init` first.", 2)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(text)
-        os.replace(tmp, path)
-    except BaseException:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
+        with open(state_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError) as e:
+        die(f"state.json is corrupt or unreadable: {e}", 2)
 
 
-def save_json(path: Path, data: object) -> None:
-    atomic_write(path, json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+def save_state(root: Path, state: dict) -> None:
+    kanban_dir = root / KANBAN_DIRNAME
+    kanban_dir.mkdir(parents=True, exist_ok=True)
+    state_path = kanban_dir / STATE_FILENAME
+    tmp_path = state_path.with_suffix(".json.tmp")
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(state, f, indent=2, sort_keys=True, ensure_ascii=False)
+        f.write("\n")
+    os.replace(tmp_path, state_path)
+    state["project"]["updated"] = now_iso()
+    render_board(root, state)
 
 
-def load_json(path: Path) -> dict | None:
+def render_board(root: Path, state: dict) -> None:
+    kanban_dir = root / KANBAN_DIRNAME
+    kanban_dir.mkdir(parents=True, exist_ok=True)
+    board_path = kanban_dir / BOARD_FILENAME
+    tmp_path = board_path.with_suffix(".md.tmp")
+    lines = _build_board_lines(state)
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+        f.write("\n")
+    os.replace(tmp_path, board_path)
+
+
+def _build_board_lines(state: dict) -> list[str]:
+    g = state["scan"]["git"]
+    c = state["scan"]["counts"]
+    cards = state["cards"]
+    files = state["files"]
+    components = state["components"]
+    flows = state["flows"]
+    risks = state["risks"]
+
+    dirty_str = f" | {len(g['dirty'])} dirty" if g["dirty"] else ""
+    ts = now_iso()
+
+    out = [
+        f"# Kanban Board — {state['project']['name']}",
+        f"> Generated by kanban.cli at {ts} — DO NOT EDIT.",
+        f"> Branch {g['branch']} @ {g['head']}{dirty_str}",
+        "",
+        "## Snapshot",
+        "| Metric | Value |",
+        "|---|---|",
+        f"| src files | {c['src_files']} |",
+        f"| test files | {c['test_files']} |",
+        f"| test functions | {c['test_functions']} |",
+        f"| cards (open) | {sum(1 for c in cards.values() if c['lane'] != 'done')} |",
+        f"| bugs (open) | {sum(1 for c in cards.values() if c['kind'] == 'bug' and c['lane'] != 'done')} |",
+        f"| risks (open) | {sum(1 for r in risks.values() if r['status'] == 'open')} |",
+        f"| stale annotations | {sum(1 for f in files.values() if f.get('purpose') and f['hash'] != f.get('annotated_hash', f['hash']))} |",
+        "",
+    ]
+
+    # Group cards by lane
+    by_lane: dict[str, list[tuple[str, dict]]] = {lane: [] for lane in VALID_LANES}
+    for cid, card in cards.items():
+        by_lane.setdefault(card["lane"], []).append((cid, card))
+
+    for lane in ("in_progress", "blocked", "review", "backlog", "done"):
+        lane_cards = by_lane.get(lane, [])
+        if not lane_cards:
+            continue
+        out.append(f"## {lane.replace('_', ' ').title()}")
+        out.append("| ID | P | Kind | Title | Files | Notes |")
+        out.append("|---|---|---|---|---|---|")
+        if lane == "backlog":
+            lane_cards.sort(key=lambda x: (x[1]["priority"], x[0]))
+        elif lane == "done":
+            lane_cards.sort(key=lambda x: x[1]["updated"], reverse=True)
+            lane_cards = lane_cards[:15]
+        for cid, card in lane_cards:
+            files_str = ", ".join(card.get("files", []))[:40]
+            notes = card.get("blocked_by", "")[:30] if lane == "blocked" else ""
+            out.append(
+                f"| {cid} | {card['priority']} | {card['kind']} | {card['title'][:40]} | {files_str} | {notes} |"
+            )
+        out.append("")
+
+    # Known bugs
+    bugs = [(cid, c) for cid, c in cards.items() if c["kind"] == "bug" and c["lane"] != "done"]
+    if bugs:
+        out.append("## Known Bugs (open)")
+        for cid, card in sorted(bugs, key=lambda x: x[1]["priority"]):
+            out.append(f"- **{cid}** [{card['priority']}] {card['title']}")
+        out.append("")
+
+    # Risks
+    open_risks = [(rid, r) for rid, r in risks.items() if r["status"] == "open"]
+    if open_risks:
+        out.append("## Risks")
+        for rid, r in sorted(open_risks, key=lambda x: 0 if x[1]["severity"] == "high" else 1 if x[1]["severity"] == "med" else 2):
+            out.append(f"- **{rid}** [{r['severity']}] {r['desc'][:60]} — {r['area']}")
+        out.append("")
+
+    # Components
+    if components:
+        out.append("## Components")
+        for name, comp in sorted(components.items()):
+            out.append(f"- **{name}** — {comp.get('purpose', '')[:50]}")
+        out.append("")
+
+    # Flows
+    if flows:
+        out.append("## Flows")
+        for name, flow in sorted(flows.items()):
+            out.append(f"- **{name}** — {flow.get('summary', '')[:50]}")
+        out.append("")
+
+    # Stale annotations
+    stale = [path for path, f in files.items() if f.get("purpose") and f["hash"] != f.get("annotated_hash", f["hash"])]
+    if stale:
+        out.append(f"## Stale Annotations ({len(stale)})")
+        for path in sorted(stale)[:20]:
+            out.append(f"- {path}")
+        out.append("")
+
+    # Knowledge graph (graphify) — AGENTS.md rule 3
+    gf = state.get("scan", {}).get("graphify", {})
+    out.append("## Knowledge Graph (graphify)")
+    if not gf.get("available"):
+        out.append("- not built — run `/graphify`")
+    else:
+        out.append(f"- {gf['nodes']} nodes · {gf['edges']} edges · {gf['communities']} communities (built {gf['built']})")
+        if gf.get("hubs"):
+            out.append("- hubs: " + ", ".join(f"{h['label']}({h['degree']})" for h in gf["hubs"]))
+        if gf.get("fresh"):
+            out.append("- graph is in sync with the file inventory")
+        else:
+            counts = [f"{gf['stale'].get(f'{k}_total', 0)} {k}"
+                      for k in ("modified", "deleted", "new") if gf["stale"].get(f"{k}_total", 0)]
+            out.append(f"- STALE ({', '.join(counts)}) — run `/graphify update`")
+    out.append("")
+
+    return out
+
+
+# ── scan ─────────────────────────────────────────────────────────────────────
+
+
+def git_cmd(args: list[str], cwd: Path) -> str:
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-
-
-# ── board ────────────────────────────────────────────────────────────────
-
-
-def empty_board() -> dict:
-    return {"version": 1, "project_summary": "", "tasks": [], "flows": {}, "components": {}}
-
-
-def load_board(root: Path) -> dict:
-    board = load_json(kanban_dir(root) / "board.json")
-    return board if isinstance(board, dict) else empty_board()
-
-
-def save_board(root: Path, board: dict) -> None:
-    save_json(kanban_dir(root) / "board.json", board)
-
-
-def validate_board(board: dict) -> list[str]:
-    """Return list of problems (empty = valid)."""
-    problems: list[str] = []
-    if not isinstance(board.get("tasks"), list):
-        return ["board.tasks is not a list"]
-    seen: set[str] = set()
-    for t in board["tasks"]:
-        tid = t.get("id", "?")
-        if tid in seen:
-            problems.append(f"duplicate task id {tid}")
-        seen.add(tid)
-        if t.get("type") not in VALID_TYPES:
-            problems.append(f"{tid}: invalid type {t.get('type')!r}")
-        if t.get("status") not in VALID_STATUSES:
-            problems.append(f"{tid}: invalid status {t.get('status')!r}")
-        if not str(t.get("title", "")).strip():
-            problems.append(f"{tid}: empty title")
-        prefix = TYPE_PREFIX.get(t.get("type", ""), "")
-        if prefix and not re.fullmatch(rf"{prefix}-\d+", tid):
-            problems.append(f"{tid}: id does not match type prefix {prefix}-NNN")
-    for key in ("flows", "components"):
-        if not isinstance(board.get(key, {}), dict):
-            problems.append(f"board.{key} is not an object")
-    return problems
-
-
-def next_task_id(board: dict, task_type: str) -> str:
-    prefix = TYPE_PREFIX[task_type]
-    highest = 0
-    for t in board["tasks"]:
-        m = re.fullmatch(rf"{prefix}-(\d+)", t.get("id", ""))
-        if m:
-            highest = max(highest, int(m.group(1)))
-    return f"{prefix}-{highest + 1:03d}"
-
-
-# ── scan pipeline ────────────────────────────────────────────────────────
-
-
-def file_inventory(root: Path) -> dict[str, list]:
-    """Relative path -> [mtime, size] for every tracked file."""
-    index: dict[str, list] = {}
-    for dirpath, dirnames, filenames in os.walk(root):
-        at_root = Path(dirpath) == root
-        dirnames[:] = sorted(
-            d for d in dirnames
-            if not d.startswith(".") and d not in EXCLUDE_DIRS and not d.endswith(".egg-info")
-            and not (at_root and d in ROOT_EXCLUDE_DIRS)
+        result = subprocess.run(
+            ["git"] + args,
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=GIT_TIMEOUT,
         )
-        for name in filenames:
-            if name in EXCLUDE_FILES:
+        return result.stdout.strip()
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return ""
+
+
+def scan_git(root: Path) -> dict:
+    branch = git_cmd(["rev-parse", "--abbrev-ref", "HEAD"], root) or "unknown"
+    head = git_cmd(["rev-parse", "--short", "HEAD"], root) or "unknown"
+    recent_raw = git_cmd(["log", "-10", "--pretty=%h%x09%ad%x09%s", "--date=short", "--", "."], root)
+    recent = []
+    for line in recent_raw.splitlines():
+        parts = line.split("\t")
+        if len(parts) >= 3:
+            recent.append({"sha": parts[0], "date": parts[1], "subject": parts[2]})
+    dirty_raw = git_cmd(["status", "--porcelain", "--", "."], root)
+    dirty = [line[3:].strip() for line in dirty_raw.splitlines() if line.strip()]
+    return {"branch": branch, "head": head, "dirty": dirty, "recent": recent}
+
+
+def scan_files(root: Path, existing: dict) -> tuple[dict, dict]:
+    """Return (files_dict, delta_info)."""
+    new_files: dict[str, dict] = {}
+    all_paths: set[str] = set()
+
+    for sub in SCAN_ROOTS:
+        sub_path = root / sub
+        if not sub_path.is_dir():
+            continue
+        for path in sub_path.rglob("*"):
+            if not path.is_file():
                 continue
-            full = Path(dirpath) / name
-            rel = full.relative_to(root).as_posix()
+            rel = path.relative_to(root).as_posix()
+            if any(part in EXCLUDE_DIRS for part in path.parts):
+                continue
+            if path.suffix != ".py":
+                continue
+            all_paths.add(rel)
             try:
-                st = full.stat()
+                h = sha1_file(path)
+                loc = sum(1 for _ in open(path, "rb"))
             except OSError:
                 continue
-            index[rel] = [round(st.st_mtime, 3), st.st_size]
-    return index
+            old = existing.get(rel, {})
+            new_files[rel] = {
+                "hash": h,
+                "loc": loc,
+                "purpose": old.get("purpose", ""),
+                "component": old.get("component", ""),
+                "annotated_at": old.get("annotated_at", ""),
+                "annotated_hash": old.get("annotated_hash", h),
+            }
 
-
-def compute_drift(previous: dict | None, current: dict[str, list]) -> dict:
-    if not previous:
-        return {"first_scan": True, "added": [], "removed": [], "modified": []}
-    prev_index = previous.get("index", {})
-    added = sorted(set(current) - set(prev_index))
-    removed = sorted(set(prev_index) - set(current))
-    modified = sorted(
-        p for p in set(current) & set(prev_index) if current[p] != prev_index[p]
-    )
-    return {"first_scan": False, "added": added, "removed": removed, "modified": modified}
-
-
-def git_info(root: Path) -> dict:
-    def run(*args: str) -> str:
-        return subprocess.run(
-            ["git", *args], cwd=root, capture_output=True, text=True, timeout=10, check=True
-        ).stdout
-    try:
-        log = run("log", "--oneline", f"-{CAP_COMMITS}")
-        porcelain = run("status", "--porcelain")
-        return {
-            "available": True,
-            "commits": [line for line in log.splitlines() if line.strip()],
-            "uncommitted": len([line for line in porcelain.splitlines() if line.strip()]),
-        }
-    except (OSError, subprocess.SubprocessError):
-        return {"available": False, "commits": [], "uncommitted": 0}
-
-
-def test_results(root: Path) -> dict:
-    cache = root / ".pytest_cache" / "v" / "cache" / "lastfailed"
-    data = load_json(cache)
-    if data is None:
-        return {"available": False, "failing": 0, "tests": [], "as_of": None}
-    # Filter out phantom entries: test IDs whose source file no longer exists
-    # on disk (e.g. after files are deleted/moved). Without this, the failing
-    # count lies about the current state of the suite.
-    live_tests = []
-    for test_id in data:
-        file_part = test_id.split("::", 1)[0]
-        if (root / file_part).is_file():
-            live_tests.append(test_id)
-    live_tests.sort()
-    as_of = None
-    try:
-        as_of = datetime.fromtimestamp(cache.stat().st_mtime, timezone.utc).strftime(
-            "%Y-%m-%dT%H:%M:%SZ"
-        )
-    except OSError:
-        pass
-    return {"available": True, "failing": len(live_tests), "tests": live_tests[:CAP_FAILING_TESTS],
-            "as_of": as_of, "phantom_filtered": len(data) - len(live_tests)}
-
-
-def import_graph(root: Path, package: str = "scalpr") -> dict[str, list[str]]:
-    """Top-level module -> sorted cross-module imports within `package`."""
-    pkg_dir = root / package
-    graph: dict[str, set[str]] = {}
-    if not pkg_dir.is_dir():
-        return {}
-    for py in sorted(pkg_dir.rglob("*.py")):
-        rel_parts = py.relative_to(pkg_dir).with_suffix("").parts
-        if len(rel_parts) < 2:  # files directly under the package root
+    for fname in SCAN_FILES:
+        fpath = root / fname
+        if not fpath.is_file():
             continue
-        source_top = rel_parts[0]
-        # package path containing this file (for resolving relative imports)
-        containing = [package, *rel_parts[:-1]]
+        rel = fname
+        all_paths.add(rel)
         try:
-            tree = ast.parse(py.read_text(encoding="utf-8", errors="replace"))
-        except SyntaxError:
+            h = sha1_file(fpath)
+            loc = sum(1 for _ in open(fpath, "rb"))
+        except OSError:
             continue
-        targets: set[str] = set()
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                for alias in node.names:
-                    targets.add(alias.name)
-            elif isinstance(node, ast.ImportFrom):
-                if node.level == 0:
-                    if node.module:
-                        targets.add(node.module)
-                else:
-                    base = containing[: len(containing) - node.level + 1]
-                    mod = node.module.split(".") if node.module else []
-                    targets.add(".".join(base + mod))
-        for target in targets:
-            parts = target.split(".")
-            if parts[0] == package and len(parts) > 1 and parts[1] != source_top:
-                graph.setdefault(source_top, set()).add(f"{package}.{parts[1]}")
-        graph.setdefault(source_top, set())
-    return {f"{package}.{k}": sorted(v) for k, v in sorted(graph.items())}
+        old = existing.get(rel, {})
+        new_files[rel] = {
+            "hash": h,
+            "loc": loc,
+            "purpose": old.get("purpose", ""),
+            "component": old.get("component", ""),
+            "annotated_at": old.get("annotated_at", ""),
+            "annotated_hash": old.get("annotated_hash", h),
+        }
+
+    # Compute delta
+    old_paths = set(existing.keys())
+    added = all_paths - old_paths
+    removed = old_paths - all_paths
+    changed = [p for p in (all_paths & old_paths) if new_files[p]["hash"] != existing[p]["hash"]]
+    stale_annotations = [
+        p for p in new_files
+        if new_files[p].get("purpose") and new_files[p]["hash"] != new_files[p].get("annotated_hash", new_files[p]["hash"])
+    ]
+
+    delta = {
+        "added": sorted(added),
+        "removed": sorted(removed),
+        "changed": sorted(changed),
+        "stale_annotations": sorted(stale_annotations),
+    }
+    return new_files, delta
 
 
-def dependency_lists(root: Path) -> dict:
-    deps: dict = {"runtime": [], "dev": [], "frontend": []}
+def scan_tests(root: Path) -> tuple[int, int]:
+    """Count test files and test functions (cheap heuristic)."""
+    test_dir = root / "tests"
+    if not test_dir.is_dir():
+        return 0, 0
+    test_files = 0
+    test_functions = 0
+    pattern = re.compile(r"^\s*(?:async\s+)?def\s+test_")
+    for path in test_dir.rglob("test_*.py"):
+        if any(part in EXCLUDE_DIRS for part in path.parts):
+            continue
+        test_files += 1
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    if pattern.match(line):
+                        test_functions += 1
+        except OSError:
+            continue
+    return test_files, test_functions
+
+
+def scan_tests_full(root: Path) -> int | None:
+    """Run pytest --collect-only -q. Returns count or None on failure/timeout."""
     try:
-        import tomllib
-        project = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8")).get(
-            "project", {}
+        result = subprocess.run(
+            [sys.executable, "-m", "pytest", "--collect-only", "-q"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=PYTEST_TIMEOUT,
         )
-        deps["runtime"] = list(project.get("dependencies", []))
-        deps["dev"] = list(project.get("optional-dependencies", {}).get("dev", []))
-    except Exception:  # tomllib missing, file absent, or TOML unparseable — degrade
+        match = re.search(r"(\d+)\s+tests?\s+collected", result.stdout + result.stderr)
+        if match:
+            return int(match.group(1))
+    except (subprocess.TimeoutExpired, FileNotFoundError):
         pass
-    pkg = load_json(root / "frontend" / "package.json")
-    if isinstance(pkg, dict):
-        deps["frontend"] = sorted(pkg.get("dependencies", {}))
-    return deps
+    return None
 
 
-def graphify_info(root: Path, index: dict[str, list]) -> dict:
-    """Read-only status of the graphify knowledge graph: size, hub nodes, and
-    staleness versus the current file inventory. Never rebuilds anything —
-    reading graph.json takes milliseconds; degrades to available=False."""
+def scan_deps(root: Path) -> tuple[dict, dict, str]:
+    pyproject = root / "pyproject.toml"
+    if not pyproject.is_file():
+        return {}, {}, ""
+    try:
+        with open(pyproject, "rb") as f:
+            data = tomllib.load(f)
+    except (tomllib.TOMLDecodeError, OSError):
+        return {}, {}, ""
+
+    runtime = {}
+    for dep in data.get("project", {}).get("dependencies", []):
+        name, spec = _parse_dep(dep)
+        if name:
+            runtime[name] = spec
+
+    dev = {}
+    optional = data.get("project", {}).get("optional-dependencies", {})
+    for group_deps in optional.values():
+        for dep in group_deps:
+            name, spec = _parse_dep(dep)
+            if name:
+                dev[name] = spec
+
+    python_requires = data.get("project", {}).get("requires-python", "")
+    return runtime, dev, python_requires
+
+
+def _parse_dep(dep: str) -> tuple[str, str]:
+    """Parse 'name>=1.0' → ('name', '>=1.0')."""
+    match = re.match(r"^([a-zA-Z0-9_.-]+)\s*(.*)$", dep.strip())
+    if match:
+        return match.group(1).lower(), match.group(2)
+    return dep.strip().lower(), ""
+
+
+# ── graphify staleness ──────────────────────────────────────────────────────
+# Read-only status of the graphify knowledge graph: size, hub nodes, and
+# staleness versus the current file inventory. Per AGENTS.md, a stale graphify
+# must be auto-refreshed (`/graphify update`) before continuing. Reading
+# graph.json is cheap; this never rebuilds anything.
+
+GRAPH_TRACKED_EXTS = {".py", ".ts", ".tsx", ".js", ".jsx", ".md"}
+CAP_HUBS = 8
+CAP_STALE_FILES = 10
+
+
+def _graph_extensions(graph: dict) -> set[str]:
+    """Extensions graphify actually emitted for this graph.
+
+    graphify indexes the whole repo and emits more than just code (e.g. .sh,
+    .json, .toml). The staleness comparator must track exactly that universe,
+    otherwise real-on-disk files of an unlisted extension are misreported as
+    "deleted". Derived from the graph's own source_file set so it can never
+    drift from what graphify scanned.
+    """
+    exts = {Path(n["source_file"]).suffix for n in graph.get("nodes", [])
+            if n.get("source_file")}
+    return exts or set(GRAPH_TRACKED_EXTS)
+
+
+def _graphify_noise_dirs(root: Path) -> set[str]:
+    """Dir names graphify itself ignores/prunes, so the live index mirrors
+    graphify's exact scan scope instead of a hardcoded subset.
+
+    graphify writes its authoritative scope to graphify-out/.graphify_incremental.json
+    ('ignored' + 'pruned_noise_dirs'). Files in those dirs (e.g. .kilo,
+    .import_linter_cache, frontend/.vite) are on disk but never in the graph,
+    so a naive repo-wide walk would misreport them as "new". Mirroring
+    graphify's own scope is the only way the comparator cannot drift. Falls
+    back to EXCLUDE_DIRS when that state file is absent.
+    """
+    dirs = set(EXCLUDE_DIRS)
+    data = _load_json(root / "graphify-out" / ".graphify_incremental.json")
+    if not isinstance(data, dict):
+        return dirs
+    for key in ("ignored", "pruned_noise_dirs"):
+        for d in data.get(key, []):
+            parts = Path(d).parts
+            if parts:
+                dirs.add(parts[-1])
+    return dirs
+
+
+def graphify_info(root: Path) -> dict:
     graph_path = root / "graphify-out" / "graph.json"
-    graph = load_json(graph_path)
+    graph = _load_json(graph_path)
     if not isinstance(graph, dict) or not isinstance(graph.get("nodes"), list):
         return {"available": False}
     try:
@@ -315,13 +476,19 @@ def graphify_info(root: Path, index: dict[str, list]) -> dict:
     nodes = graph["nodes"]
     communities = {n.get("community") for n in nodes if n.get("community") is not None}
     sources = {n.get("source_file") for n in nodes if n.get("source_file")}
-    modified = sorted(p for p in sources if p in index and index[p][0] > built_ts)
-    deleted = sorted(p for p in sources if p not in index)
+    # Live index scope MUST equal graphify's scan scope (whole repo, the
+    # extensions graphify emitted, and the same noise pruning). Hardcoding a
+    # narrower scope here is the root cause of permanent false STALE flags.
+    exts = _graph_extensions(graph)
+    noise = _graphify_noise_dirs(root)
+    live_index = _live_rel_index(root, exts, noise)
+    modified = sorted(p for p in sources if p in live_index and live_index[p] > built_ts)
+    deleted = sorted(p for p in sources if p not in live_index)
     new = sorted(
-        p for p in index
-        if p not in sources and Path(p).suffix in GRAPH_TRACKED_EXTS
+        p for p in live_index
+        if p not in sources and Path(p).suffix in exts
     )
-    analysis = load_json(root / "graphify-out" / ".graphify_analysis.json")
+    analysis = _load_json(root / "graphify-out" / ".graphify_analysis.json")
     gods = analysis.get("gods", []) if isinstance(analysis, dict) else []
     hubs = [{"label": g.get("label", "?"), "degree": g.get("degree", 0)}
             for g in gods[:CAP_HUBS]]
@@ -341,460 +508,1171 @@ def graphify_info(root: Path, index: dict[str, list]) -> dict:
     }
 
 
-def graphify_is_stale(root: Path) -> bool:
-    """Lightweight staleness check: True iff the graphify graph exists but is
-    behind the current file inventory (modified/deleted/new files). Used by
-    `task status` to remind the agent to refresh the graph after closing a
-    task — per AGENTS.md, a stale graphify must be auto-refreshed before
-    continuing."""
-    index = file_inventory(root)
-    info = graphify_info(root, index)
-    if not info.get("available"):
-        return False  # nothing to refresh
-    return not info.get("fresh", True)
+def _load_json(path: Path) -> object | None:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
 
 
-def component_counts(index: dict[str, list], board: dict, root: Path) -> dict[str, dict]:
-    """Component name -> {files, description}. Union of curated components and
-    scalpr/* subpackages discovered on disk (flagged when undescribed)."""
-    curated: dict[str, str] = board.get("components", {})
-    names = set(curated)
-    for rel in index:
-        parts = rel.split("/")
-        if parts[0] == "scalpr" and len(parts) > 2:
-            names.add(f"scalpr/{parts[1]}")
-    out: dict[str, dict] = {}
-    for name in sorted(names):
-        prefix = name + "/"
-        count = sum(1 for rel in index if rel == name or rel.startswith(prefix))
-        desc = curated.get(name) or "(no description — add via board.json)"
-        out[name] = {"files": count, "description": desc}
-    return out
+def _live_rel_index(root: Path, exts: set[str] | None = None,
+                     noise: set[str] | None = None) -> dict[str, float]:
+    """Relative path -> mtime for every graphify-tracked file in the repo.
+
+    graphify scans the whole repo (not just kanban's SCAN_ROOTS), so the live
+    index used to measure graph staleness must match that scope. Reusing
+    SCAN_ROOTS here miscounts every node whose source_file lives outside those
+    dirs (e.g. .qoder/skills, config, frontend, docs) as "deleted", which makes
+    the STALE flag impossible to clear. SCAN_ROOTS stays correctly scoped to
+    the file-purpose inventory; this walk is intentionally repo-wide and driven
+    by graphify's own scan scope (exts + noise) so it cannot drift.
+    """
+    if exts is None:
+        exts = set(GRAPH_TRACKED_EXTS)
+    if noise is None:
+        noise = set(EXCLUDE_DIRS)
+    index: dict[str, float] = {}
+    for path in root.rglob("*"):
+        if not path.is_file() or path.suffix not in exts:
+            continue
+        if any(part in noise for part in path.parts):
+            continue
+        rel = path.relative_to(root).as_posix()
+        try:
+            index[rel] = path.stat().st_mtime
+        except OSError:
+            continue
+    return index
 
 
-def do_scan(root: Path) -> dict:
-    previous = load_json(kanban_dir(root) / "scan.json")
-    index = file_inventory(root)
-    board = load_board(root)
-    scan = {
-        "version": 1,
-        "timestamp": now_iso(),
-        "index": index,
-        "drift": compute_drift(previous, index),
-        "git": git_info(root),
-        "tests": test_results(root),
-        "imports": import_graph(root),
-        "deps": dependency_lists(root),
-        "components": component_counts(index, board, root),
-        "graphify": graphify_info(root, index),
+def cmd_init(args, root: Path) -> None:
+    kanban_dir = root / KANBAN_DIRNAME
+    if (kanban_dir / STATE_FILENAME).exists():
+        die(f"kanban state already exists at {kanban_dir}. Remove it to re-init.")
+    name = args.name or root.name
+    state = {
+        "version": VERSION,
+        "project": {"name": name, "created": now_iso(), "updated": now_iso()},
+        "scan": {
+            "at": now_iso(),
+            "git": {"branch": "unknown", "head": "unknown", "dirty": [], "recent": []},
+            "counts": {"src_files": 0, "test_files": 0, "test_functions": 0, "pytest_collected": None},
+            "deps": {"runtime": {}, "dev": {}},
+            "python_requires": "",
+            "changed_last_run": [],
+            "graphify": {"available": False},
+        },
+        "files": {},
+        "components": {},
+        "cards": {},
+        "flows": {},
+        "risks": {},
+        "next_id": {"card": 1, "risk": 1},
     }
-    save_json(kanban_dir(root) / "scan.json", scan)
-    return scan
+    save_state(root, state)
+    # Run initial scan
+    cmd_scan(argparse.Namespace(full_tests=False), root)
+    print(f"Initialized kanban at {kanban_dir}")
+    print(f"Run `{SCRIPT_NAME} status` to see the board.")
 
 
-# ── render ───────────────────────────────────────────────────────────────
+def cmd_scan(args, root: Path) -> None:
+    state = load_state(root)
+    old_files = state["files"]
+    old_git = state["scan"]["git"]
+
+    # Scan git
+    git_info = scan_git(root)
+    changed_last_run = []
+    if old_git.get("head"):
+        # Determine changed files since last scan HEAD
+        changed_last_run = git_info["dirty"][:]
+
+    # Scan files
+    files, delta = scan_files(root, old_files)
+
+    # Scan tests
+    test_files, test_functions = scan_tests(root)
+    pytest_collected = None
+    if args.full_tests:
+        pytest_collected = scan_tests_full(root)
+
+    # Scan deps
+    runtime_deps, dev_deps, python_requires = scan_deps(root)
+
+    # Graphify staleness (read-only)
+    gf = graphify_info(root)
+
+    state["scan"] = {
+        "at": now_iso(),
+        "git": git_info,
+        "counts": {
+            "src_files": sum(1 for f in files if f.endswith(".py") and not f.startswith(("tests/",))),
+            "test_files": test_files,
+            "test_functions": test_functions,
+            "pytest_collected": pytest_collected,
+        },
+        "deps": {"runtime": runtime_deps, "dev": dev_deps},
+        "python_requires": python_requires,
+        "changed_last_run": changed_last_run,
+        "graphify": gf,
+    }
+    state["files"] = files
+    save_state(root, state)
+
+    # Print delta
+    print(f"Scan complete: {len(files)} files indexed")
+    if delta["added"]:
+        print(f"  +{len(delta['added'])} added")
+    if delta["removed"]:
+        print(f"  -{len(delta['removed'])} removed")
+    if delta["changed"]:
+        print(f"  ~{len(delta['changed'])} changed")
+    if delta["stale_annotations"]:
+        print(f"  *{len(delta['stale_annotations'])} annotations now stale")
+    if gf.get("available") and not gf.get("fresh"):
+        counts = [f"{gf['stale'].get(f'{k}_total', 0)} {k}"
+                  for k in ("modified", "deleted", "new") if gf["stale"].get(f"{k}_total", 0)]
+        print(f"  graphify STALE ({', '.join(counts)}) — run `/graphify update`")
+    if delta["added"] or delta["removed"] or delta["changed"] or delta["stale_annotations"] or (
+            gf.get("available") and not gf.get("fresh")):
+        print(f"  Run `{SCRIPT_NAME} stale` for details.")
 
 
-def task_line(t: dict) -> str:
-    return f"- {t['id']} [{t['type']}/{t['status']}] {t['title']}"
+# ── card commands ────────────────────────────────────────────────────────────
 
 
-def render_context(root: Path, board: dict, scan: dict) -> str:
-    tasks = board.get("tasks", [])
-    lines: list[str] = []
-    add = lines.append
+def cmd_card_add(args, root: Path) -> None:
+    state = load_state(root)
+    cid = f"K-{state['next_id']['card']:03d}"
+    state["next_id"]["card"] += 1
 
-    def section(title: str, body: list[str]) -> None:
-        add(f"## {title}")
-        lines.extend(body if body else ["- none"])
-        add("")
+    files = [f.strip() for f in args.files.split(",")] if args.files else []
+    tags = [t.strip() for t in args.tags.split(",")] if args.tags else []
+    links = [l.strip() for l in args.links.split(",")] if args.links else []
 
-    add(f"# {root.name} — kanban digest ({scan.get('timestamp', now_iso())})")
-    add("")
-    summary = board.get("project_summary", "").strip()
-    if summary:
-        add(summary)
-        add("")
+    state["cards"][cid] = {
+        "title": args.title,
+        "kind": args.kind,
+        "lane": args.lane,
+        "priority": args.priority,
+        "detail": args.detail or "",
+        "files": files,
+        "blocked_by": args.blocked_by or "",
+        "links": links,
+        "tags": tags,
+        "created": now_iso(),
+        "updated": now_iso(),
+        "history": [{"at": now_iso(), "from": "created", "to": args.lane}],
+    }
+    save_state(root, state)
+    print(f"Created {cid}: {args.title}")
 
-    by_status = lambda *st: [task_line(t) for t in tasks if t["status"] in st]  # noqa: E731
-    section("Work in progress", by_status("in_progress"))
-    section("Blocked", by_status("blocked"))
-    section("Planned / backlog", by_status("planned", "backlog"))
 
-    done = [t for t in tasks if t["status"] == "done"]
-    done.sort(key=lambda t: t.get("updated", ""), reverse=True)
-    completed = []
-    for t in done[:CAP_COMPLETED]:
-        when = (t.get("updated") or "")[:10]
-        suffix = f" (completed {when})" if when else ""
-        completed.append(task_line(t) + suffix)
-    section("Recently completed", completed)
+def cmd_card_move(args, root: Path) -> None:
+    state = load_state(root)
+    cid = args.id.upper()
+    if cid not in state["cards"]:
+        die(f"card {cid} not found")
+    card = state["cards"][cid]
+    old_lane = card["lane"]
+    new_lane = args.lane
 
-    tests = scan.get("tests", {})
-    if not tests.get("available"):
-        body = ["- no pytest cache found — run the test suite to populate"]
-    elif tests["failing"] == 0:
-        body = ["- last pytest run: 0 failing"]
+    if new_lane == "blocked" and not args.note:
+        die("moving to 'blocked' requires --note (reason)")
+
+    if old_lane == new_lane:
+        print(f"{cid} already in '{new_lane}'")
+        return
+
+    card["lane"] = new_lane
+    card["updated"] = now_iso()
+    if new_lane == "blocked" and args.note:
+        card["blocked_by"] = args.note
+    card["history"].append({"at": now_iso(), "from": old_lane, "to": new_lane})
+    save_state(root, state)
+    print(f"Moved {cid}: {old_lane} → {new_lane}")
+
+
+def cmd_card_update(args, root: Path) -> None:
+    state = load_state(root)
+    cid = args.id.upper()
+    if cid not in state["cards"]:
+        die(f"card {cid} not found")
+    card = state["cards"][cid]
+    updated = False
+    for field in ("title", "detail", "priority", "kind"):
+        val = getattr(args, field, None)
+        if val is not None:
+            card[field] = val
+            updated = True
+    if args.files is not None:
+        card["files"] = [f.strip() for f in args.files.split(",")] if args.files else []
+        updated = True
+    if args.tags is not None:
+        card["tags"] = [t.strip() for t in args.tags.split(",")] if args.tags else []
+        updated = True
+    if args.links is not None:
+        card["links"] = [l.strip() for l in args.links.split(",")] if args.links else []
+        updated = True
+    if updated:
+        card["updated"] = now_iso()
+        save_state(root, state)
+        print(f"Updated {cid}")
     else:
-        as_of = f" (as of {tests['as_of']})" if tests.get("as_of") else ""
-        body = [f"- last pytest run: {tests['failing']} failing{as_of}"]
-        body += [f"  - {t}" for t in tests["tests"]]
-        extra = tests["failing"] - len(tests["tests"])
-        if extra > 0:
-            body.append(f"  - … +{extra} more")
-    section("Tests", body)
+        print(f"No changes for {cid}")
 
-    drift = scan.get("drift", {})
-    if drift.get("first_scan"):
-        body = ["- first scan — no previous index to compare against"]
-    else:
-        entries = (
-            [("added", p) for p in drift.get("added", [])]
-            + [("removed", p) for p in drift.get("removed", [])]
-            + [("modified", p) for p in drift.get("modified", [])]
-        )
-        body = [f"- {kind}: {p}" for kind, p in entries[:CAP_DRIFT_LINES]]
-        if len(entries) > CAP_DRIFT_LINES:
-            body.append(f"- … +{len(entries) - CAP_DRIFT_LINES} more")
-    section("Drift since previous scan", body)
 
-    git = scan.get("git", {})
-    if not git.get("available"):
-        body = ["- git unavailable"]
-    else:
-        body = [f"- {c}" for c in git["commits"]] or ["- no commits"]
-        body += ["", f"({git['uncommitted']} uncommitted changes in working tree)"]
-    section("Recent commits", body)
+def cmd_card_list(args, root: Path) -> None:
+    state = load_state(root)
+    cards = state["cards"]
+    if args.json:
+        print(json.dumps(cards, indent=2, sort_keys=True))
+        return
+    filtered = cards
+    if args.lane:
+        filtered = {k: v for k, v in cards.items() if v["lane"] == args.lane}
+    if args.kind:
+        filtered = {k: v for k, v in filtered.items() if v["kind"] == args.kind}
+    if not filtered:
+        print("No cards match.")
+        return
+    print(f"{'ID':<8} {'P':<4} {'Kind':<10} {'Lane':<12} Title")
+    print("-" * 70)
+    for cid in sorted(filtered, key=lambda k: (filtered[k]["priority"], k)):
+        c = filtered[cid]
+        print(f"{cid:<8} {c['priority']:<4} {c['kind']:<10} {c['lane']:<12} {c['title'][:40]}")
 
-    components = scan.get("components", {})
-    body = [
-        f"- **{name}** ({info['files']} files): {info['description']}"
-        for name, info in components.items()
+
+def cmd_card_show(args, root: Path) -> None:
+    state = load_state(root)
+    cid = args.id.upper()
+    if cid not in state["cards"]:
+        die(f"card {cid} not found")
+    card = state["cards"][cid]
+    if args.json:
+        print(json.dumps(card, indent=2, sort_keys=True))
+        return
+    files = state["files"]
+    changed_files = [f for f in card.get("files", []) if f in files and files[f]["hash"] != files[f].get("annotated_hash", files[f]["hash"])]
+    print(f"## {cid} — {card['title']}")
+    print(f"  Kind: {card['kind']} | Priority: {card['priority']} | Lane: {card['lane']}")
+    print(f"  Tags: {', '.join(card.get('tags', [])) or '(none)'}")
+    print(f"  Links: {', '.join(card.get('links', [])) or '(none)'}")
+    print(f"  Blocked by: {card.get('blocked_by', '') or '(none)'}")
+    print(f"  Files: {', '.join(card.get('files', [])) or '(none)'}")
+    if changed_files:
+        print(f"  ⚠ Changed files: {', '.join(changed_files)}")
+    print(f"  Detail: {card.get('detail', '') or '(none)'}")
+    print(f"  History:")
+    for h in card.get("history", []):
+        print(f"    {h['at']}: {h['from']} → {h['to']}")
+
+
+# ── file commands ────────────────────────────────────────────────────────────
+
+
+def cmd_file_set_purpose(args, root: Path) -> None:
+    state = load_state(root)
+    path = args.path
+    if path not in state["files"]:
+        die(f"path '{path}' not indexed. Run `{SCRIPT_NAME} scan` first.")
+    state["files"][path]["purpose"] = args.purpose
+    state["files"][path]["annotated_at"] = now_iso()
+    state["files"][path]["annotated_hash"] = state["files"][path]["hash"]
+    if args.component:
+        state["files"][path]["component"] = args.component
+    save_state(root, state)
+    print(f"Set purpose for {path}")
+
+
+def cmd_file_list(args, root: Path) -> None:
+    state = load_state(root)
+    files = state["files"]
+    if args.json:
+        print(json.dumps(files, indent=2, sort_keys=True))
+        return
+    filtered = files
+    if args.component:
+        filtered = {k: v for k, v in files.items() if v.get("component") == args.component}
+    if args.unannotated:
+        filtered = {k: v for k, v in filtered.items() if not v.get("purpose")}
+    print(f"{'Path':<50} {'Component':<12} Purpose")
+    print("-" * 80)
+    for path in sorted(filtered):
+        f = filtered[path]
+        purpose = (f.get("purpose", "") or "(unannotated)")[:30]
+        stale = "*" if f.get("purpose") and f["hash"] != f.get("annotated_hash", f["hash"]) else " "
+        print(f"{stale} {path:<49} {f.get('component', '')[:12]:<12} {purpose}")
+
+
+# ── component / flow / risk commands ─────────────────────────────────────────
+
+
+def cmd_component_add(args, root: Path) -> None:
+    state = load_state(root)
+    name = args.name
+    if name in state["components"]:
+        die(f"component '{name}' already exists. Use update.")
+    paths = [p.strip() for p in args.paths.split(",")] if args.paths else []
+    depends = [d.strip() for d in args.depends_on.split(",")] if args.depends_on else []
+    state["components"][name] = {
+        "purpose": args.purpose or "",
+        "paths": paths,
+        "depends_on": depends,
+        "notes": args.notes or "",
+    }
+    save_state(root, state)
+    print(f"Created component '{name}'")
+
+
+def cmd_component_update(args, root: Path) -> None:
+    state = load_state(root)
+    name = args.name
+    if name not in state["components"]:
+        die(f"component '{name}' not found")
+    comp = state["components"][name]
+    if args.purpose is not None:
+        comp["purpose"] = args.purpose
+    if args.paths is not None:
+        comp["paths"] = [p.strip() for p in args.paths.split(",")] if args.paths else []
+    if args.depends_on is not None:
+        comp["depends_on"] = [d.strip() for d in args.depends_on.split(",")] if args.depends_on else []
+    if args.notes is not None:
+        comp["notes"] = args.notes
+    save_state(root, state)
+    print(f"Updated component '{name}'")
+
+
+def cmd_component_list(args, root: Path) -> None:
+    state = load_state(root)
+    if args.json:
+        print(json.dumps(state["components"], indent=2, sort_keys=True))
+        return
+    print(f"{'Name':<20} Purpose")
+    print("-" * 60)
+    for name in sorted(state["components"]):
+        comp = state["components"][name]
+        print(f"{name:<20} {comp.get('purpose', '')[:40]}")
+
+
+def cmd_flow_add(args, root: Path) -> None:
+    state = load_state(root)
+    name = args.name
+    if name in state["flows"]:
+        die(f"flow '{name}' already exists. Use update.")
+    steps = [s.strip() for s in args.steps.split(";")] if args.steps else []
+    files = [f.strip() for f in args.files.split(",")] if args.files else []
+    state["flows"][name] = {
+        "summary": args.summary or "",
+        "steps": steps,
+        "files": files,
+    }
+    save_state(root, state)
+    print(f"Created flow '{name}'")
+
+
+def cmd_flow_list(args, root: Path) -> None:
+    state = load_state(root)
+    if args.json:
+        print(json.dumps(state["flows"], indent=2, sort_keys=True))
+        return
+    print(f"{'Name':<25} Summary")
+    print("-" * 60)
+    for name in sorted(state["flows"]):
+        flow = state["flows"][name]
+        print(f"{name:<25} {flow.get('summary', '')[:35]}")
+
+
+def cmd_risk_add(args, root: Path) -> None:
+    state = load_state(root)
+    rid = f"R-{state['next_id']['risk']:03d}"
+    state["next_id"]["risk"] += 1
+    state["risks"][rid] = {
+        "desc": args.desc,
+        "severity": args.severity,
+        "area": args.area or "",
+        "mitigation": args.mitigation or "",
+        "status": args.status,
+    }
+    save_state(root, state)
+    print(f"Created {rid}: {args.desc[:50]}")
+
+
+def cmd_risk_update(args, root: Path) -> None:
+    state = load_state(root)
+    rid = args.id.upper()
+    if rid not in state["risks"]:
+        die(f"risk {rid} not found")
+    risk = state["risks"][rid]
+    if args.desc is not None:
+        risk["desc"] = args.desc
+    if args.severity is not None:
+        risk["severity"] = args.severity
+    if args.area is not None:
+        risk["area"] = args.area
+    if args.mitigation is not None:
+        risk["mitigation"] = args.mitigation
+    if args.status is not None:
+        risk["status"] = args.status
+    save_state(root, state)
+    print(f"Updated {rid}")
+
+
+def cmd_risk_list(args, root: Path) -> None:
+    state = load_state(root)
+    if args.json:
+        print(json.dumps(state["risks"], indent=2, sort_keys=True))
+        return
+    print(f"{'ID':<8} {'Sev':<6} {'Area':<15} Status     Description")
+    print("-" * 70)
+    for rid in sorted(state["risks"], key=lambda k: 0 if state["risks"][k]["severity"] == "high" else 1 if state["risks"][k]["severity"] == "med" else 2):
+        r = state["risks"][rid]
+        print(f"{rid:<8} {r['severity']:<6} {r.get('area', '')[:15]:<15} {r['status']:<10} {r['desc'][:30]}")
+
+
+# ── stale / status ───────────────────────────────────────────────────────────
+
+
+def cmd_stale(args, root: Path) -> None:
+    state = load_state(root)
+    files = state["files"]
+    cards = state["cards"]
+    changed_last_run = set(state["scan"].get("changed_last_run", []))
+
+    stale_files = [
+        path for path, f in files.items()
+        if f.get("purpose") and f["hash"] != f.get("annotated_hash", f["hash"])
     ]
-    section("Architecture & components", body)
+    stale_cards = []
+    for cid, card in cards.items():
+        if card["lane"] == "done":
+            continue
+        card_changed_files = set(card.get("files", [])) & changed_last_run
+        if card_changed_files:
+            stale_cards.append((cid, card, sorted(card_changed_files)))
 
-    imports = scan.get("imports", {})
-    body = [f"- {mod} → {', '.join(targets)}" for mod, targets in imports.items() if targets]
-    section("Module dependencies (scalpr, module → imports)", body)
+    # Check scan freshness
+    scan_at = state["scan"].get("at", "")
+    scan_stale = False
+    if scan_at:
+        try:
+            scan_dt = datetime.fromisoformat(scan_at.replace("Z", "+00:00"))
+            age_hours = (datetime.now(timezone.utc) - scan_dt).total_seconds() / 3600
+            scan_stale = age_hours > SCAN_MAX_AGE_HOURS
+        except (ValueError, TypeError):
+            scan_stale = True
 
+    # Check if behind live HEAD
+    live_head = git_cmd(["rev-parse", "--short", "HEAD"], root)
+    head_behind = live_head and live_head != state["scan"]["git"].get("head", "")
+
+    # Knowledge graph staleness (graphify)
+    gf = state["scan"].get("graphify", {})
+    graphify_stale = bool(gf.get("available") and not gf.get("fresh"))
+
+    if args.json:
+        result = {
+            "stale_files": sorted(stale_files),
+            "stale_cards": [{"id": cid, "files_changed": files_changed} for cid, _, files_changed in stale_cards],
+            "scan_stale": scan_stale,
+            "head_behind": bool(head_behind),
+            "graphify_stale": graphify_stale,
+            "graphify": gf,
+        }
+        print(json.dumps(result, indent=2, sort_keys=True))
+        return
+
+    if scan_stale:
+        print("⚠ Scan is stale (>24h old). Run `scan`.")
+    if head_behind:
+        print("⚠ HEAD has moved since last scan. Run `scan`.")
+    if stale_files:
+        print(f"Stale annotations ({len(stale_files)}):")
+        for path in sorted(stale_files):
+            print(f"  {path}")
+    else:
+        print("No stale annotations.")
+    if stale_cards:
+        print(f"\nCards with changed files ({len(stale_cards)}):")
+        for cid, card, files_changed in stale_cards:
+            print(f"  {cid} [{card['priority']}] {card['title'][:40]}")
+            print(f"    Changed: {', '.join(files_changed)}")
+    if graphify_stale:
+        counts = [f"{gf['stale'].get(f'{k}_total', 0)} {k}"
+                  for k in ("modified", "deleted", "new") if gf["stale"].get(f"{k}_total", 0)]
+        print(f"\nKnowledge graph (graphify) STALE ({', '.join(counts)}): run `/graphify update`")
+        for kind in ("modified", "deleted", "new"):
+            for p in gf["stale"].get(kind, []):
+                print(f"  {kind}: {p}")
+
+
+def cmd_status(args, root: Path) -> None:
+    state = load_state(root)
+    if args.json:
+        print(json.dumps(_status_json(state, root), indent=2, sort_keys=True))
+        return
+    lines = _status_lines(state, root)
+    for line in lines[:MAX_STATUS_LINES]:
+        print(line)
+
+
+def _status_json(state: dict, root: Path) -> dict:
+    scan = state["scan"]
+    cards = state["cards"]
+    files = state["files"]
+    risks = state["risks"]
+
+    in_progress = [(cid, c) for cid, c in cards.items() if c["lane"] == "in_progress"]
+    blocked = [(cid, c) for cid, c in cards.items() if c["lane"] == "blocked"]
+    backlog = sorted(
+        [(cid, c) for cid, c in cards.items() if c["lane"] == "backlog"],
+        key=lambda x: (x[1]["priority"], x[0]),
+    )[:5]
+
+    bugs_open = [(cid, c) for cid, c in cards.items() if c["kind"] == "bug" and c["lane"] != "done"]
+    risks_high = [(rid, r) for rid, r in risks.items() if r["severity"] == "high" and r["status"] == "open"]
+
+    stale_files = [
+        path for path, f in files.items()
+        if f.get("purpose") and f["hash"] != f.get("annotated_hash", f["hash"])
+    ]
+
+    # Hints
+    hints = []
+    unannotated = sum(1 for f in files.values() if not f.get("purpose"))
+    if unannotated > 0:
+        hints.append(f"{unannotated} files unannotated")
+
+    # Scan freshness
+    scan_at = scan.get("at", "")
+    scan_stale = False
+    if scan_at:
+        try:
+            scan_dt = datetime.fromisoformat(scan_at.replace("Z", "+00:00"))
+            age_hours = (datetime.now(timezone.utc) - scan_dt).total_seconds() / 3600
+            scan_stale = age_hours > SCAN_MAX_AGE_HOURS
+        except (ValueError, TypeError):
+            scan_stale = True
+
+    live_head = git_cmd(["rev-parse", "--short", "HEAD"], root)
+    head_behind = bool(live_head and live_head != scan["git"].get("head", ""))
+
+    return {
+        "project": state["project"]["name"],
+        "git": scan["git"],
+        "counts": scan["counts"],
+        "scan_stale": scan_stale,
+        "head_behind": head_behind,
+        "in_progress": [{"id": cid, "priority": c["priority"], "kind": c["kind"], "title": c["title"], "files": c.get("files", [])} for cid, c in in_progress],
+        "blocked": [{"id": cid, "priority": c["priority"], "kind": c["kind"], "title": c["title"], "blocked_by": c.get("blocked_by", "")} for cid, c in blocked],
+        "next_up": [{"id": cid, "priority": c["priority"], "kind": c["kind"], "title": c["title"]} for cid, c in backlog],
+        "bugs_open": [{"id": cid, "priority": c["priority"], "title": c["title"]} for cid, c in bugs_open],
+        "risks_high": [{"id": rid, "area": r.get("area", ""), "desc": r["desc"]} for rid, r in risks_high],
+        "stale_files_count": len(stale_files),
+        "stale_files_top5": sorted(stale_files)[:5],
+        "graphify": scan.get("graphify", {"available": False}),
+        "hints": hints,
+    }
+
+
+def _status_lines(state: dict, root: Path) -> list[str]:
+    scan = state["scan"]
+    g = scan["git"]
+    c = scan["counts"]
+    cards = state["cards"]
+    files = state["files"]
+    risks = state["risks"]
+
+    # Scan freshness
+    scan_at = scan.get("at", "")
+    scan_status = "OK"
+    if scan_at:
+        try:
+            scan_dt = datetime.fromisoformat(scan_at.replace("Z", "+00:00"))
+            age_hours = (datetime.now(timezone.utc) - scan_dt).total_seconds() / 3600
+            scan_status = "STALE" if age_hours > SCAN_MAX_AGE_HOURS else "OK"
+        except (ValueError, TypeError):
+            scan_status = "STALE"
+
+    live_head = git_cmd(["rev-parse", "--short", "HEAD"], root)
+    head_behind = bool(live_head and live_head != g.get("head", ""))
+    if head_behind:
+        scan_status = "BEHIND"
+
+    dirty_str = f" | {len(g['dirty'])} dirty" if g["dirty"] else ""
+    lines = [
+        f"== KANBAN STATUS: {state['project']['name']} ={'=' * (60 - len(state['project']['name']))}",
+        f"branch {g['branch']} @ {g['head']}{dirty_str} | scanned {scan_status}",
+        f"src {c['src_files']} files | tests {c['test_files']} files / {c['test_functions']} fns | deps: {', '.join(list(scan['deps']['runtime'].keys())[:5])}",
+        "",
+    ]
+
+    # In progress
+    in_progress = [(cid, c) for cid, c in cards.items() if c["lane"] == "in_progress"]
+    if in_progress:
+        lines.append("IN PROGRESS")
+        for cid, card in sorted(in_progress, key=lambda x: x[1]["priority"]):
+            changed = [f for f in card.get("files", []) if f in files and files[f]["hash"] != files[f].get("annotated_hash", files[f]["hash"])]
+            marker = " *files changed*" if changed else ""
+            lines.append(f"  {cid} {card['priority']} {card['kind']} {card['title'][:40]}{marker}")
+    else:
+        lines.append("IN PROGRESS (none)")
+
+    # Blocked
+    blocked = [(cid, c) for cid, c in cards.items() if c["lane"] == "blocked"]
+    if blocked:
+        lines.append("")
+        lines.append("BLOCKED")
+        for cid, card in sorted(blocked, key=lambda x: x[1]["priority"]):
+            reason = card.get("blocked_by", "")[:30]
+            lines.append(f"  {cid} {card['priority']} {card['kind']} {card['title'][:40]} — {reason}")
+    else:
+        lines.append("")
+        lines.append("BLOCKED (none)")
+
+    # Next up
+    backlog = sorted(
+        [(cid, c) for cid, c in cards.items() if c["lane"] == "backlog"],
+        key=lambda x: (x[1]["priority"], x[0]),
+    )[:5]
+    lines.append("")
+    lines.append("NEXT UP (top 5 backlog by priority)")
+    if backlog:
+        for cid, card in backlog:
+            lines.append(f"  {cid} {card['priority']} {card['kind']} {card['title'][:40]}")
+    else:
+        lines.append("  (backlog empty)")
+
+    # Bugs and risks
+    bugs_open = [(cid, c) for cid, c in cards.items() if c["kind"] == "bug" and c["lane"] != "done"]
+    risks_high = [(rid, r) for rid, r in risks.items() if r["severity"] == "high" and r["status"] == "open"]
+    lines.append("")
+    lines.append(f"OPEN BUGS: {len(bugs_open)} | HIGH RISKS: {len(risks_high)}")
+    for cid, card in sorted(bugs_open, key=lambda x: x[1]["priority"])[:3]:
+        lines.append(f"  {cid} {card['priority']} {card['title'][:50]}")
+    for rid, r in risks_high[:3]:
+        lines.append(f"  {rid} {r.get('area', '')[:12]} {r['desc'][:50]}")
+
+    # Stale annotations
+    stale = [path for path, f in files.items() if f.get("purpose") and f["hash"] != f.get("annotated_hash", f["hash"])]
+    lines.append("")
+    lines.append(f"STALE ANNOTATIONS: {len(stale)} (top 5)")
+    for path in sorted(stale)[:5]:
+        lines.append(f"  {path}")
+
+    # Knowledge graph (graphify) staleness — AGENTS.md rule 3
     gf = scan.get("graphify", {})
+    lines.append("")
+    lines.append("KNOWLEDGE GRAPH (graphify)")
     if not gf.get("available"):
-        body = ["- knowledge graph not built — run `/graphify` for deep-structure tracking"]
+        lines.append("  not built — run `/graphify`")
+    elif gf.get("fresh"):
+        lines.append(f"  in sync ({gf['nodes']} nodes @ {gf['built']})")
     else:
-        body = [f"- {gf['nodes']} nodes · {gf['edges']} edges · {gf['communities']} "
-                f"communities (built {gf['built']})"]
-        if gf.get("hubs"):
-            body.append("- hubs: " + ", ".join(
-                f"{h['label']}({h['degree']})" for h in gf["hubs"]))
-        if gf.get("fresh"):
-            body.append("- graph is in sync with the file inventory")
-        else:
-            stale = gf.get("stale", {})
-            counts = [f"{stale.get(f'{kind}_total', 0)} {kind}"
-                      for kind in ("modified", "deleted", "new")
-                      if stale.get(f"{kind}_total", 0)]
-            body.append(f"- STALE ({', '.join(counts)} since build) — "
-                        "refresh with `/graphify update`")
-            body += [f"  - modified: {p}" for p in stale.get("modified", [])]
-            # Auto-refresh directive: per AGENTS.md, a stale graphify must be
-            # refreshed before continuing. The agent reads CONTEXT.md at
-            # session start; this instruction makes the next action
-            # unambiguous. `task status <id> done` also emits the reminder
-            # on stderr when it closes a task while the graph is stale.
-            body.append(
-                "- AUTO-REFRESH: run `/graphify update` now, then re-run "
-                "`kanban.py update` to refresh this digest."
-            )
-    section("Knowledge graph (graphify)", body)
+        counts = [f"{gf['stale'].get(f'{k}_total', 0)} {k}"
+                  for k in ("modified", "deleted", "new") if gf["stale"].get(f"{k}_total", 0)]
+        lines.append(f"  STALE ({', '.join(counts)}) — run `/graphify update`")
 
-    flows = board.get("flows", {})
-    section("Data / execution flows", [f"- **{k}**: {v}" for k, v in flows.items()])
+    # Recent commits
+    lines.append("")
+    lines.append("RECENT COMMITS (last 5)")
+    for commit in g.get("recent", [])[:5]:
+        lines.append(f"  {commit['sha']} {commit['date']} {commit['subject'][:50]}")
 
-    deps = scan.get("deps", {})
-    body = [f"- {group}: {', '.join(items)}" for group, items in deps.items() if items]
-    section("Dependencies", body or ["- unavailable"])
+    # Hints
+    hints = []
+    unannotated = sum(1 for f in files.values() if not f.get("purpose"))
+    if unannotated > 0:
+        hints.append(f"{unannotated} files unannotated")
+    if scan_status != "OK":
+        hints.append(f"run `{SCRIPT_NAME} scan`")
+    if gf.get("available") and not gf.get("fresh"):
+        hints.append("run `/graphify update`")
+    if hints:
+        lines.append("")
+        lines.append(f"HINTS: {', '.join(hints)}")
 
-    debt = [task_line(t) for t in tasks if t["type"] in ("debt", "risk") and t["status"] != "done"]
-    section("Technical debt & risks", debt)
-
-    add("---")
-    add(
-        f"*Generated by kanban.cli v{VERSION}. Refresh: "
-        "`python3 .qoder/skills/kanban.cli/scripts/kanban.py update`. Do not edit by hand.*"
-    )
-    add("")
-    return "\n".join(lines)
+    return lines
 
 
-def do_render(root: Path) -> Path:
-    board = load_board(root)
-    problems = validate_board(board)
-    if problems:
-        for p in problems:
-            print(f"board.json invalid: {p}", file=sys.stderr)
-        raise SystemExit(2)
-    scan = load_json(kanban_dir(root) / "scan.json")
-    if scan is None:
-        print("no scan.json — running scan first", file=sys.stderr)
-        scan = do_scan(root)
-    out = kanban_dir(root) / "CONTEXT.md"
-    atomic_write(out, render_context(root, board, scan))
-    return out
+# ── board ────────────────────────────────────────────────────────────────────
 
 
-# ── task commands ────────────────────────────────────────────────────────
-
-
-def cmd_task_add(root: Path, task_type: str, title: str, status: str) -> int:
-    board = load_board(root)
-    tid = next_task_id(board, task_type)
-    now = now_iso()
-    board["tasks"].append(
-        {"id": tid, "type": task_type, "status": status, "title": title,
-         "created": now, "updated": now}
-    )
-    problems = validate_board(board)
-    if problems:
-        for p in problems:
-            print(f"refusing to save: {p}", file=sys.stderr)
-        return 2
-    save_board(root, board)
-    print(f"added {tid} [{task_type}/{status}] {title}")
-    return 0
-
-
-def cmd_task_status(root: Path, tid: str, status: str) -> int:
-    board = load_board(root)
-    found = False
-    for t in board["tasks"]:
-        if t["id"] == tid:
-            t["status"] = status
-            t["updated"] = now_iso()
-            found = True
-            break
-    if not found:
-        print(f"no task with id {tid}", file=sys.stderr)
-        return 1
-    save_board(root, board)
-    print(f"{tid} → {status}")
-
-    # Auto-graphify refresh on task completion.
-    # Per AGENTS.md session-start protocol: "If kanban reports graphify STALE,
-    # auto-run `/graphify update` to refresh the knowledge graph before
-    # continuing." Closing a task is the natural trigger to re-check — the
-    # agent just changed the board, so the file inventory may have moved.
-    if status == "done" and graphify_is_stale(root):
-        print(
-            "graphify STALE — run `/graphify update` (or "
-            "`python3 .qoder/skills/kanban.cli/scripts/kanban.py update` "
-            "after the refresh) to keep the knowledge graph in sync.",
-            file=sys.stderr,
-        )
-    return 0
-
-
-def cmd_task_list(root: Path, status: str | None, as_json: bool) -> int:
-    tasks = load_board(root).get("tasks", [])
-    if status:
-        tasks = [t for t in tasks if t["status"] == status]
-    if as_json:
-        print(json.dumps(tasks, indent=2, ensure_ascii=False))
+def cmd_board(args, root: Path) -> None:
+    state = load_state(root)
+    if args.print:
+        lines = _build_board_lines(state)
+        print("\n".join(lines))
     else:
-        for t in tasks:
-            print(task_line(t))
-        if not tasks:
-            print("(no tasks)")
-    return 0
+        board_path = root / KANBAN_DIRNAME / BOARD_FILENAME
+        print(f"Board at {board_path}")
+        print(f"Run `{SCRIPT_NAME} board --print` to view.")
 
 
-# ── query / selfcheck ────────────────────────────────────────────────────
+# ── sync-tracker ─────────────────────────────────────────────────────────────
 
 
-def cmd_query(root: Path, section: str) -> int:
-    scan = load_json(kanban_dir(root) / "scan.json")
-    if section == "tasks":
-        data: object = load_board(root).get("tasks", [])
-    elif scan is None:
-        print("no scan.json — run `scan` first", file=sys.stderr)
-        return 1
-    else:
-        data = scan.get(section)
-    print(json.dumps(data, indent=2, ensure_ascii=False))
-    return 0
+def cmd_sync_tracker(args, root: Path) -> None:
+    state = load_state(root)
+    scan = state["scan"]
+    g = scan["git"]
+    cards = state["cards"]
+    risks = state["risks"]
 
+    in_progress = [(cid, c) for cid, c in cards.items() if c["lane"] == "in_progress"]
+    blocked = [(cid, c) for cid, c in cards.items() if c["lane"] == "blocked"]
+    done = [(cid, c) for cid, c in cards.items() if c["lane"] == "done"]
+    bugs_open = [(cid, c) for cid, c in cards.items() if c["kind"] == "bug" and c["lane"] != "done"]
+    risks_high = [(rid, r) for rid, r in risks.items() if r["severity"] == "high" and r["status"] == "open"]
 
-CONTRACT_SECTIONS = [
-    "## Work in progress", "## Blocked", "## Planned / backlog", "## Recently completed",
-    "## Tests", "## Drift since previous scan", "## Recent commits",
-    "## Architecture & components", "## Module dependencies (scalpr, module → imports)",
-    "## Knowledge graph (graphify)",
-    "## Data / execution flows", "## Dependencies", "## Technical debt & risks",
-]
-
-
-def build_fixture(root: Path) -> None:
-    """Tiny synthetic project used by selfcheck and the test suite."""
-    (root / "scalpr" / "domain").mkdir(parents=True)
-    (root / "scalpr" / "api").mkdir(parents=True)
-    (root / "scalpr" / "__init__.py").write_text("", encoding="utf-8")
-    (root / "scalpr" / "domain" / "__init__.py").write_text("", encoding="utf-8")
-    (root / "scalpr" / "domain" / "order.py").write_text("X = 1\n", encoding="utf-8")
-    (root / "scalpr" / "api" / "__init__.py").write_text("", encoding="utf-8")
-    (root / "scalpr" / "api" / "main.py").write_text(
-        "from scalpr.domain import order\nfrom ..domain.order import X\n", encoding="utf-8"
-    )
-    (root / "pyproject.toml").write_text(
-        '[project]\nname = "fixture"\ndependencies = ["requests>=2"]\n'
-        '[project.optional-dependencies]\ndev = ["pytest>=7"]\n',
-        encoding="utf-8",
-    )
-    cache = root / ".pytest_cache" / "v" / "cache"
-    cache.mkdir(parents=True)
-    (cache / "lastfailed").write_text('{"tests/test_x.py::test_a": true}', encoding="utf-8")
-    # The lastfailed entry points at this file — must exist so the phantom
-    # filter doesn't drop it (see test_tests_section_reads_lastfailed).
-    (root / "tests").mkdir(exist_ok=True)
-    (root / "tests" / "test_x.py").write_text("def test_a(): pass\n", encoding="utf-8")
-    board = empty_board()
-    board["project_summary"] = "Fixture project."
-    board["flows"] = {"demo": "a -> b"}
-    board["components"] = {"scalpr/domain": "domain models", "scalpr/api": "api layer"}
-    now = now_iso()
-    board["tasks"] = [
-        {"id": "T-001", "type": "task", "status": "in_progress", "title": "fixture wip",
-         "created": now, "updated": now},
-        {"id": "D-001", "type": "debt", "status": "backlog", "title": "fixture debt",
-         "created": now, "updated": now},
+    lines = [
+        f"<!-- kanban:begin -->",
+        f"## Kanban Board Summary (auto-generated)",
+        f"",
+        f"**Branch:** `{g['branch']}` @ `{g['head']}` ({len(g['dirty'])} dirty)  ",
+        f"**Scanned:** {scan.get('at', 'never')}  ",
+        f"**src:** {scan['counts']['src_files']} files | **tests:** {scan['counts']['test_files']} files / {scan['counts']['test_functions']} fns",
+        f"",
+        f"### In Progress",
     ]
-    (root / ".kanban").mkdir()
-    save_json(root / ".kanban" / "board.json", board)
-    # minimal graphify output covering every fixture .py file (graph is fresh)
-    gout = root / "graphify-out"
-    gout.mkdir()
-    # Include both scalpr/ and tests/ files so the graph covers every source
-    # the fixture creates (including the lastfailed target tests/test_x.py).
-    py_files = sorted(
-        p.relative_to(root).as_posix()
-        for p in list((root / "scalpr").rglob("*.py")) + list((root / "tests").rglob("*.py"))
-    )
-    gnodes = [{"id": f"n{i}", "label": Path(rel).stem, "source_file": rel, "community": 0}
-              for i, rel in enumerate(py_files)]
-    save_json(gout / "graph.json",
-              {"nodes": gnodes, "links": [{"source": "n0", "target": "n1"}],
-               "built_at_commit": "fixture"})
-    save_json(gout / ".graphify_analysis.json",
-              {"gods": [{"id": "n0", "label": "Order", "degree": 5}]})
-
-
-def cmd_selfcheck(real_root: Path) -> int:
-    failures: list[str] = []
-
-    def check(cond: bool, label: str) -> None:
-        print(f"  [{'ok' if cond else 'FAIL'}] {label}")
-        if not cond:
-            failures.append(label)
-
-    print("selfcheck: real board validation")
-    board_path = kanban_dir(real_root) / "board.json"
-    if board_path.exists():
-        problems = validate_board(load_board(real_root))
-        check(not problems, f"board.json schema valid ({', '.join(problems) or 'no problems'})")
+    if in_progress:
+        for cid, card in sorted(in_progress, key=lambda x: x[1]["priority"]):
+            lines.append(f"- **{cid}** [{card['priority']}] {card['title']} — {', '.join(card.get('files', []))}")
     else:
-        print("  [skip] no board.json yet")
+        lines.append("- (none)")
 
-    print("selfcheck: end-to-end in temp fixture")
-    with tempfile.TemporaryDirectory() as tmp:
-        froot = Path(tmp)
-        build_fixture(froot)
-        do_scan(froot)
-        out = do_render(froot)
-        text = out.read_text(encoding="utf-8")
-        for header in CONTRACT_SECTIONS:
-            check(header in text, f"section present: {header}")
-        check("- T-001 [task/in_progress] fixture wip" in text, "WIP task rendered")
-        check("- D-001 [debt/backlog] fixture debt" in text, "debt task rendered")
-        check("scalpr.api → scalpr.domain" in text, "import graph edge rendered")
-        check("1 failing" in text, "failing test count rendered")
-        check("runtime: requests>=2" in text, "runtime deps rendered")
-        check("Order(5)" in text, "graphify hub rendered")
-        check("graph is in sync" in text, "graphify freshness rendered")
-        # second scan after modifying a file must report drift + graph staleness
-        target = froot / "scalpr" / "api" / "main.py"
-        target.write_text(target.read_text(encoding="utf-8") + "Y = 2\n", encoding="utf-8")
-        os.utime(target, (target.stat().st_atime, target.stat().st_mtime + 5))
-        scan2 = do_scan(froot)
-        check("scalpr/api/main.py" in scan2["drift"]["modified"], "drift detects modified file")
-        check("scalpr/api/main.py" in scan2["graphify"]["stale"]["modified"],
-              "graphify staleness detects modified source")
+    lines.append(f"")
+    lines.append(f"### Blocked")
+    if blocked:
+        for cid, card in sorted(blocked, key=lambda x: x[1]["priority"]):
+            lines.append(f"- **{cid}** [{card['priority']}] {card['title']} — {card.get('blocked_by', '')}")
+    else:
+        lines.append("- (none)")
 
-    print("PASS" if not failures else f"FAIL ({len(failures)} checks failed)")
-    return 0 if not failures else 1
+    lines.append(f"")
+    lines.append(f"### Done This Session")
+    if done:
+        for cid, card in done[:10]:
+            lines.append(f"- **{cid}** [{card['priority']}] {card['title']}")
+    else:
+        lines.append("- (none)")
+
+    lines.append(f"")
+    lines.append(f"### Open Bugs")
+    if bugs_open:
+        for cid, card in sorted(bugs_open, key=lambda x: x[1]["priority"]):
+            lines.append(f"- **{cid}** [{card['priority']}] {card['title']}")
+    else:
+        lines.append("- (none)")
+
+    lines.append(f"")
+    lines.append(f"### High Risks")
+    if risks_high:
+        for rid, r in risks_high:
+            lines.append(f"- **{rid}** {r.get('area', '')}: {r['desc']}")
+    else:
+        lines.append("- (none)")
+
+    lines.append(f"")
+    lines.append(f"<!-- kanban:end -->")
+    print("\n".join(lines))
 
 
-# ── CLI ──────────────────────────────────────────────────────────────────
+# ── check ────────────────────────────────────────────────────────────────────
+
+
+def cmd_check(args, root: Path) -> None:
+    if args.selftest:
+        run_selftest()
+        return
+
+    state = load_state(root)
+    errors = []
+    warnings = []
+
+    # Version
+    if state.get("version") != VERSION:
+        errors.append(f"version mismatch: expected {VERSION}, got {state.get('version')}")
+
+    # next_id
+    max_card = max((int(k.split("-")[1]) for k in state["cards"]), default=0)
+    max_risk = max((int(k.split("-")[1]) for k in state["risks"]), default=0)
+    if state["next_id"]["card"] <= max_card:
+        errors.append(f"next_id.card ({state['next_id']['card']}) <= max card id ({max_card})")
+    if state["next_id"]["risk"] <= max_risk:
+        errors.append(f"next_id.risk ({state['next_id']['risk']}) <= max risk id ({max_risk})")
+
+    # Card validation
+    files_index = set(state["files"].keys())
+    for cid, card in state["cards"].items():
+        if card["kind"] not in VALID_KINDS:
+            errors.append(f"{cid}: invalid kind '{card['kind']}'")
+        if card["lane"] not in VALID_LANES:
+            errors.append(f"{cid}: invalid lane '{card['lane']}'")
+        if card["priority"] not in VALID_PRIORITIES:
+            errors.append(f"{cid}: invalid priority '{card['priority']}'")
+        for f in card.get("files", []):
+            if f not in files_index:
+                warnings.append(f"{cid}: file '{f}' not in index (may be deleted)")
+        for link in card.get("links", []):
+            if link not in state["cards"]:
+                warnings.append(f"{cid}: link '{link}' does not resolve to a card")
+
+    # Risk validation
+    for rid, risk in state["risks"].items():
+        if risk["severity"] not in VALID_SEVERITIES:
+            errors.append(f"{rid}: invalid severity '{risk['severity']}'")
+        if risk["status"] not in VALID_RISK_STATUS:
+            errors.append(f"{rid}: invalid status '{risk['status']}'")
+
+    # Hash validation
+    for path, f in state["files"].items():
+        if not re.match(r"^[0-9a-f]{40}$", f.get("hash", "")):
+            warnings.append(f"file '{path}': invalid hash format")
+
+    # BOARD.md freshness
+    board_path = root / KANBAN_DIRNAME / BOARD_FILENAME
+    if board_path.exists():
+        board_mtime = datetime.fromtimestamp(board_path.stat().st_mtime, tz=timezone.utc)
+        state_updated = state["project"].get("updated", "")
+        if state_updated:
+            try:
+                state_dt = datetime.fromisoformat(state_updated.replace("Z", "+00:00"))
+                if board_mtime < state_dt:
+                    warnings.append("BOARD.md is older than state.json (run `board`)")
+            except (ValueError, TypeError):
+                pass
+    else:
+        warnings.append("BOARD.md missing")
+
+    if errors:
+        for e in errors:
+            print(f"  ERROR: {e}", file=sys.stderr)
+    if warnings:
+        for w in warnings:
+            print(f"  WARN: {w}", file=sys.stderr)
+
+    if errors:
+        die(f"integrity check failed with {len(errors)} errors", 2)
+    print(f"Integrity check passed. {len(warnings)} warnings.")
+
+
+def run_selftest() -> None:
+    """Pytest-free self-test in a temp directory."""
+    asserts = 0
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp = Path(tmpdir)
+
+        # Create fake project (package is `scalpr` in this repo)
+        (tmp / "scalpr").mkdir()
+        (tmp / "scalpr" / "main.py").write_text("def main():\n    pass\n")
+        (tmp / "scalpr" / "utils.py").write_text("def helper():\n    pass\n")
+        (tmp / "tests").mkdir()
+        (tmp / "tests" / "test_main.py").write_text("def test_main():\n    pass\n")
+        (tmp / "pyproject.toml").write_text("[project]\nname = 'testproj'\nversion = '0.1.0'\nrequires-python = '>=3.12'\n")
+
+        # Try git init (optional)
+        try:
+            subprocess.run(["git", "init", "-q"], cwd=tmp, capture_output=True, timeout=5)
+            subprocess.run(["git", "add", "-A"], cwd=tmp, capture_output=True, timeout=5)
+            subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=tmp, capture_output=True, timeout=5)
+            subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp, capture_output=True, timeout=5)
+            subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=tmp, capture_output=True, timeout=5)
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            pass  # git not available, should still work
+
+        # Test init
+        ns = argparse.Namespace(name="testproj")
+        cmd_init(ns, tmp)
+        asserts += 1
+        assert (tmp / KANBAN_DIRNAME / STATE_FILENAME).exists()
+        asserts += 1
+        assert (tmp / KANBAN_DIRNAME / BOARD_FILENAME).exists()
+        asserts += 1
+
+        # Test scan
+        ns = argparse.Namespace(full_tests=False)
+        cmd_scan(ns, tmp)
+        asserts += 1
+        state = load_state(tmp)
+        assert state["scan"]["counts"]["src_files"] == 2, f"expected 2 src files, got {state['scan']['counts']['src_files']}"
+        asserts += 1
+        assert state["scan"]["counts"]["test_files"] == 1
+        asserts += 1
+        assert state["scan"]["counts"]["test_functions"] == 1
+        asserts += 1
+
+        # Test card add
+        ns = argparse.Namespace(
+            title="Test bug", kind="bug", lane="in_progress", priority="P0",
+            detail="repro: run main", files="scalpr/main.py", tags="test",
+            links="", blocked_by="",
+        )
+        cmd_card_add(ns, tmp)
+        asserts += 1
+        state = load_state(tmp)
+        assert "K-001" in state["cards"]
+        asserts += 1
+
+        # Test card move
+        ns = argparse.Namespace(id="K-001", lane="done", note="")
+        cmd_card_move(ns, tmp)
+        asserts += 1
+        state = load_state(tmp)
+        assert state["cards"]["K-001"]["lane"] == "done"
+        asserts += 1
+
+        # Test card move to blocked without note (should fail)
+        ns = argparse.Namespace(id="K-001", lane="blocked", note="")
+        try:
+            cmd_card_move(ns, tmp)
+            assert False, "should have raised"
+        except SystemExit:
+            asserts += 1
+
+        # Re-open K-001 for later tests
+        ns = argparse.Namespace(id="K-001", lane="in_progress", note="")
+        cmd_card_move(ns, tmp)
+
+        # Test file set-purpose
+        ns = argparse.Namespace(path="scalpr/main.py", purpose="Entry point", component="core")
+        cmd_file_set_purpose(ns, tmp)
+        asserts += 1
+        state = load_state(tmp)
+        assert state["files"]["scalpr/main.py"]["purpose"] == "Entry point"
+        asserts += 1
+        assert state["files"]["scalpr/main.py"]["component"] == "core"
+        asserts += 1
+
+        # Test staleness: modify file
+        (tmp / "scalpr" / "main.py").write_text("def main():\n    # changed\n    pass\n")
+        ns = argparse.Namespace(full_tests=False)
+        cmd_scan(ns, tmp)
+        asserts += 1
+        state = load_state(tmp)
+        assert state["files"]["scalpr/main.py"]["hash"] != state["files"]["scalpr/main.py"]["annotated_hash"]
+        asserts += 1
+
+        # Test status
+        ns = argparse.Namespace(json=False)
+        cmd_status(ns, tmp)
+        asserts += 1
+
+        # Test status --json
+        ns = argparse.Namespace(json=True)
+        cmd_status(ns, tmp)
+        asserts += 1
+
+        # Test check
+        ns = argparse.Namespace(selftest=False)
+        cmd_check(ns, tmp)
+        asserts += 1
+
+        # Test component
+        ns = argparse.Namespace(name="core", purpose="Core logic", paths="scalpr/main.py,scalpr/utils.py", depends_on="", notes="")
+        cmd_component_add(ns, tmp)
+        asserts += 1
+
+        # Test flow
+        ns = argparse.Namespace(name="main-flow", summary="Entry point flow", steps="start;main;done", files="scalpr/main.py")
+        cmd_flow_add(ns, tmp)
+        asserts += 1
+
+        # Test risk
+        ns = argparse.Namespace(desc="Test risk", severity="high", area="core", mitigation="none", status="open")
+        cmd_risk_add(ns, tmp)
+        asserts += 1
+
+        # Test sync-tracker
+        cmd_sync_tracker(argparse.Namespace(), tmp)
+        asserts += 1
+
+    print(f"SELFTEST PASS ({asserts} asserts)")
+
+
+# ── argparse ─────────────────────────────────────────────────────────────────
+
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="kanban",
+        description="Project state board for testTrade (tradexv2).",
+    )
+    sub = p.add_subparsers(dest="command", required=True)
+
+    # init
+    sp = sub.add_parser("init", help="Initialize kanban state")
+    sp.add_argument("--name", help="Project name")
+    sp.set_defaults(func=cmd_init)
+
+    # scan
+    sp = sub.add_parser("scan", help="Refresh deterministic facts")
+    sp.add_argument("--full-tests", action="store_true", help="Run pytest --collect-only (slow)")
+    sp.set_defaults(func=cmd_scan)
+
+    # status
+    sp = sub.add_parser("status", help="Agent-facing digest")
+    sp.add_argument("--json", action="store_true")
+    sp.set_defaults(func=cmd_status)
+
+    # board
+    sp = sub.add_parser("board", help="Render/view BOARD.md")
+    sp.add_argument("--print", action="store_true", help="Print board to stdout")
+    sp.set_defaults(func=cmd_board)
+
+    # card
+    sp = sub.add_parser("card", help="Manage cards")
+    card_sub = sp.add_subparsers(dest="card_cmd", required=True)
+
+    sp_add = card_sub.add_parser("add", help="Add a card")
+    sp_add.add_argument("title")
+    sp_add.add_argument("--kind", choices=sorted(VALID_KINDS), default="task")
+    sp_add.add_argument("--lane", choices=sorted(VALID_LANES), default="backlog")
+    sp_add.add_argument("--priority", choices=sorted(VALID_PRIORITIES), default="P2")
+    sp_add.add_argument("--detail", default="")
+    sp_add.add_argument("--files", default="")
+    sp_add.add_argument("--tags", default="")
+    sp_add.add_argument("--links", default="")
+    sp_add.add_argument("--blocked-by", default="")
+    sp_add.set_defaults(func=cmd_card_add)
+
+    sp_move = card_sub.add_parser("move", help="Move card lane")
+    sp_move.add_argument("id")
+    sp_move.add_argument("lane", choices=sorted(VALID_LANES))
+    sp_move.add_argument("--note", default="")
+    sp_move.set_defaults(func=cmd_card_move)
+
+    sp_update = card_sub.add_parser("update", help="Update card fields")
+    sp_update.add_argument("id")
+    sp_update.add_argument("--title")
+    sp_update.add_argument("--detail")
+    sp_update.add_argument("--priority", choices=sorted(VALID_PRIORITIES))
+    sp_update.add_argument("--kind", choices=sorted(VALID_KINDS))
+    sp_update.add_argument("--files")
+    sp_update.add_argument("--tags")
+    sp_update.add_argument("--links")
+    sp_update.set_defaults(func=cmd_card_update)
+
+    sp_list = card_sub.add_parser("list", help="List cards")
+    sp_list.add_argument("--lane", choices=sorted(VALID_LANES))
+    sp_list.add_argument("--kind", choices=sorted(VALID_KINDS))
+    sp_list.add_argument("--json", action="store_true")
+    sp_list.set_defaults(func=cmd_card_list)
+
+    sp_show = card_sub.add_parser("show", help="Show card details")
+    sp_show.add_argument("id")
+    sp_show.add_argument("--json", action="store_true")
+    sp_show.set_defaults(func=cmd_card_show)
+
+    # file
+    sp = sub.add_parser("file", help="Manage file annotations")
+    file_sub = sp.add_subparsers(dest="file_cmd", required=True)
+
+    sp_purpose = file_sub.add_parser("set-purpose", help="Set file purpose")
+    sp_purpose.add_argument("path")
+    sp_purpose.add_argument("purpose")
+    sp_purpose.add_argument("--component")
+    sp_purpose.set_defaults(func=cmd_file_set_purpose)
+
+    sp_list = file_sub.add_parser("list", help="List files")
+    sp_list.add_argument("--component")
+    sp_list.add_argument("--unannotated", action="store_true")
+    sp_list.add_argument("--json", action="store_true")
+    sp_list.set_defaults(func=cmd_file_list)
+
+    # component
+    sp = sub.add_parser("component", help="Manage components")
+    comp_sub = sp.add_subparsers(dest="comp_cmd", required=True)
+
+    sp_add = comp_sub.add_parser("add", help="Add component")
+    sp_add.add_argument("name")
+    sp_add.add_argument("--purpose", default="")
+    sp_add.add_argument("--paths", default="")
+    sp_add.add_argument("--depends-on", default="")
+    sp_add.add_argument("--notes", default="")
+    sp_add.set_defaults(func=cmd_component_add)
+
+    sp_update = comp_sub.add_parser("update", help="Update component")
+    sp_update.add_argument("name")
+    sp_update.add_argument("--purpose")
+    sp_update.add_argument("--paths")
+    sp_update.add_argument("--depends-on")
+    sp_update.add_argument("--notes")
+    sp_update.set_defaults(func=cmd_component_update)
+
+    sp_list = comp_sub.add_parser("list", help="List components")
+    sp_list.add_argument("--json", action="store_true")
+    sp_list.set_defaults(func=cmd_component_list)
+
+    # flow
+    sp = sub.add_parser("flow", help="Manage flows")
+    flow_sub = sp.add_subparsers(dest="flow_cmd", required=True)
+
+    sp_add = flow_sub.add_parser("add", help="Add flow")
+    sp_add.add_argument("name")
+    sp_add.add_argument("--summary", default="")
+    sp_add.add_argument("--steps", default="")
+    sp_add.add_argument("--files", default="")
+    sp_add.set_defaults(func=cmd_flow_add)
+
+    sp_list = flow_sub.add_parser("list", help="List flows")
+    sp_list.add_argument("--json", action="store_true")
+    sp_list.set_defaults(func=cmd_flow_list)
+
+    # risk
+    sp = sub.add_parser("risk", help="Manage risks")
+    risk_sub = sp.add_subparsers(dest="risk_cmd", required=True)
+
+    sp_add = risk_sub.add_parser("add", help="Add risk")
+    sp_add.add_argument("desc")
+    sp_add.add_argument("--severity", choices=sorted(VALID_SEVERITIES), default="med")
+    sp_add.add_argument("--area", default="")
+    sp_add.add_argument("--mitigation", default="")
+    sp_add.add_argument("--status", choices=sorted(VALID_RISK_STATUS), default="open")
+    sp_add.set_defaults(func=cmd_risk_add)
+
+    sp_update = risk_sub.add_parser("update", help="Update risk")
+    sp_update.add_argument("id")
+    sp_update.add_argument("--desc")
+    sp_update.add_argument("--severity", choices=sorted(VALID_SEVERITIES))
+    sp_update.add_argument("--area")
+    sp_update.add_argument("--mitigation")
+    sp_update.add_argument("--status", choices=sorted(VALID_RISK_STATUS))
+    sp_update.set_defaults(func=cmd_risk_update)
+
+    sp_list = risk_sub.add_parser("list", help="List risks")
+    sp_list.add_argument("--json", action="store_true")
+    sp_list.set_defaults(func=cmd_risk_list)
+
+    # stale
+    sp = sub.add_parser("stale", help="Show stale annotations and cards")
+    sp.add_argument("--json", action="store_true")
+    sp.set_defaults(func=cmd_stale)
+
+    # check
+    sp = sub.add_parser("check", help="Integrity validation")
+    sp.add_argument("--selftest", action="store_true", help="Run embedded self-test")
+    sp.set_defaults(func=cmd_check)
+
+    # sync-tracker
+    sp = sub.add_parser("sync-tracker", help="Emit markdown for progress-tracker.md")
+    sp.set_defaults(func=cmd_sync_tracker)
+
+    return p
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="kanban.py", description=__doc__.splitlines()[0])
-    parser.add_argument("--root", help="project root (default: auto-detect via pyproject.toml)")
-    sub = parser.add_subparsers(dest="command", required=True)
-
-    sub.add_parser("scan", help="collect evidence into .kanban/scan.json")
-    sub.add_parser("render", help="render .kanban/CONTEXT.md from board + scan")
-    sub.add_parser("update", help="scan + render")
-    sub.add_parser("selfcheck", help="validate board and run end-to-end fixture check")
-
-    p_query = sub.add_parser("query", help="print a machine-readable section as JSON")
-    p_query.add_argument("section", choices=QUERY_SECTIONS)
-
-    p_task = sub.add_parser("task", help="manage board tasks")
-    task_sub = p_task.add_subparsers(dest="task_command", required=True)
-    p_add = task_sub.add_parser("add", help="add a task with an auto-assigned id")
-    p_add.add_argument("type", choices=sorted(VALID_TYPES))
-    p_add.add_argument("title")
-    p_add.add_argument("--status", default="planned", choices=sorted(VALID_STATUSES))
-    p_status = task_sub.add_parser("status", help="change a task's status")
-    p_status.add_argument("id")
-    p_status.add_argument("new_status", choices=sorted(VALID_STATUSES))
-    p_list = task_sub.add_parser("list", help="list tasks")
-    p_list.add_argument("--status", choices=sorted(VALID_STATUSES))
-    p_list.add_argument("--json", action="store_true")
-
+    parser = build_parser()
     args = parser.parse_args(argv)
-    root = find_root(args.root)
 
-    try:
-        if args.command == "scan":
-            do_scan(root)
-            print(f"scan written to {kanban_dir(root) / 'scan.json'}")
-            return 0
-        if args.command == "render":
-            out = do_render(root)
-            print(f"rendered {out}")
-            return 0
-        if args.command == "update":
-            do_scan(root)
-            out = do_render(root)
-            print(f"updated {out}")
-            return 0
-        if args.command == "selfcheck":
-            return cmd_selfcheck(root)
-        if args.command == "query":
-            return cmd_query(root, args.section)
-        if args.command == "task":
-            if args.task_command == "add":
-                return cmd_task_add(root, args.type, args.title, args.status)
-            if args.task_command == "status":
-                return cmd_task_status(root, args.id, args.new_status)
-            if args.task_command == "list":
-                return cmd_task_list(root, args.status, args.json)
-    except SystemExit:
-        raise
-    except Exception as exc:  # honest failure, non-zero exit
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
-    return 1
+    root = find_kanban_root()
+    if args.command == "init":
+        root = Path.cwd()
+    args.func(args, root)
+    return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    sys.exit(main())

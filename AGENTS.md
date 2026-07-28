@@ -5,15 +5,17 @@ Read this file at session start, before any other tool call.
 
 ## Session-start protocol
 
-1. **Read `.kanban/CONTEXT.md` first.** It is the fastest complete picture
-   of what is done, in progress, broken, and planned.
-2. **Run `python3 .qoder/skills/kanban.cli/scripts/kanban.py update`**
-   before any planning or module modification so drift, tests, imports,
-   and commits are current.
-3. **If kanban reports graphify STALE**, auto-run `/graphify update` to
-   refresh the knowledge graph before continuing.
-4. **After any code change or commit**, re-run `kanban.py update` so the
-   digest does not silently go stale.
+1. **Run `python3 .qoder/skills/kanban.cli/scripts/kanban.py status`**
+   to see the agent-facing digest — what's in flight, blocked, broken.
+   If `BOARD.md` exists, you can also read it directly.
+2. **Run `python3 .qoder/skills/kanban.cli/scripts/kanban.py scan`**
+   before any planning or module modification so facts, drift, tests,
+   imports, and graphify staleness are current.
+3. **If kanban reports graphify STALE** (in `status` or `stale` output),
+   auto-run `/graphify update` to refresh the knowledge graph before
+   continuing.
+4. **After any code change or commit**, re-run `scan` so the digest
+   does not silently go stale.
 
 ## Staging discipline
 

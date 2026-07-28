@@ -12,6 +12,7 @@ import os
 import time
 from decimal import Decimal
 
+import pandas as pd
 import pytest
 from dotenv import load_dotenv
 
@@ -67,12 +68,11 @@ def test_quote(gateway):
 
 
 def test_historical(gateway):
-    candles = gateway.instrument("TCS:NSE").historical(interval="1D")
-    assert isinstance(candles, list)
-    assert len(candles) > 0
-    first = candles[0]
-    for field in ("timestamp", "open", "high", "low", "close", "volume"):
-        assert field in first, f"candle missing {field!r}"
+    df = gateway.instrument("TCS:NSE").historical(interval="1D")
+    assert isinstance(df, pd.DataFrame)
+    assert not df.empty
+    for col in ("open", "high", "low", "close", "volume"):
+        assert col in df.columns, f"column {col!r} missing"
 
 
 @pytest.mark.parametrize("symbol", ["TCS:NSE", "RELIANCE:NSE", "INFY:NSE"])

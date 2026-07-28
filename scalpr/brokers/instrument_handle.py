@@ -236,7 +236,7 @@ class InstrumentHandle:
 
     def historical(
         self,
-        interval: str = "1D",
+        interval: str = "1m",
         start: date | datetime | str | None = None,
         end: date | datetime | str | None = None,
         as_json: bool = False,
@@ -244,8 +244,8 @@ class InstrumentHandle:
         """Fetch historical OHLCV candles.
 
         Args:
-            interval: Candle interval (e.g. "1D", "5m", "1h")
-            start: Start date (defaults to 365 days ago — matches Tradehull)
+            interval: Candle interval (default: "1m", e.g. "1D", "5m", "1h")
+            start: Start date (defaults to 90 days ago)
             end: End date (defaults to today)
             as_json: If True, return list[dict]. Default returns pandas DataFrame
                      with IST-indexed timestamps.
@@ -275,7 +275,7 @@ class InstrumentHandle:
             end = date.today()
         if start is None:
             end_d = end.date() if isinstance(end, datetime) else end
-            start = end_d - timedelta(days=365)
+            start = end_d - timedelta(days=90)
 
         candles = self._historical.get_ohlcv(
             self.symbol,
