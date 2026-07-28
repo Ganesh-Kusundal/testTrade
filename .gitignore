@@ -1,0 +1,57 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+dist/
+build/
+.venv/
+venv/
+
+# Testing / tooling caches
+.coverage
+.coverage.*
+.hypothesis/
+.mypy_cache/
+.ruff_cache/
+.import_linter_cache/
+.pytest_cache/
+.cache/
+
+# graphify generated knowledge graph (3000+ files; source of truth is the codebase)
+graphify-out/
+
+# Backup files (use git history, not file copies)
+*.bak
+*.bak2
+
+# Secrets / runtime config
+.env
+.secrets.baseline
+
+# Runtime data (SQLite DBs, logs)
+data/*.db
+data/*.db-shm
+data/*.db-wal
+data/*.log
+runtime-dev/
+
+# Qoder / agent tooling state (not project source)
+# NOTE: .qoder/skills/ contains project skills and IS tracked.
+#       Only runtime state dirs are ignored.
+.kanban/
+.kilo/
+
+# Node / frontend
+node_modules/
+.vite/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
