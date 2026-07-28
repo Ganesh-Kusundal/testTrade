@@ -331,6 +331,61 @@ class TestMarketDataAdapter:
         assert result["RELIANCE"]["ltp"] == Decimal("2510")
         assert result["TCS"]["volume"] == 2000
 
+    def test_batch_quote_includes_change_and_change_percent(self, market_adapter, mock_http_client, mock_resolver):
+        """S-4: batch quotes must carry change/change_percent like single quotes (B-003 class)."""
+        mock_resolver.resolve.side_effect = lambda sym, exch: MagicMock(
+            symbol="RELIANCE", exchange=Exchange.NSE, security_id="1"
+        )
+        mock_http_client.post.return_value = {
+            "data": {
+                "NSE_EQ": {
+                    "1": {
+                        "last_price": 2510.50,
+                        "net_change": 15.30,
+                        "volume": 1000,
+                        "ohlc": {"open": 2500, "high": 2520, "low": 2490, "close": 2495.20},
+                    }
+                }
+            }
+        }
+        result = market_adapter.get_batch_quote(["RELIANCE"], "NSE")
+        quote = result["RELIANCE"]
+        assert quote["change"] == Decimal("15.30")
+        assert quote["change_percent"] == Decimal("15.30") / Decimal("2495.20") * 100
+
+    def test_batch_quote_field_set_matches_single_quote(self, market_adapter, mock_http_client, mock_resolver):
+        """S-4 contract: batch and single quotes are built by one shared builder —
+        identical key sets, so they can never silently diverge again."""
+        raw = {
+            "last_price": 2510.50,
+            "net_change": 15.30,
+            "volume": 1000,
+            "average_price": 2505.0,
+            "buy_quantity": 10,
+            "sell_quantity": 20,
+            "last_quantity": 5,
+            "last_trade_time": 1722345600,
+            "lower_circuit_limit": 2250.0,
+            "upper_circuit_limit": 2750.0,
+            "oi": 100,
+            "oi_day_high": 120,
+            "oi_day_low": 90,
+            "ohlc": {"open": 2500, "high": 2520, "low": 2490, "close": 2495.20},
+        }
+        mock_http_client.post.return_value = {"data": {"NSE_EQ": {"1": raw}}}
+        single = market_adapter.get_quote("RELIANCE", "NSE")
+        batch = market_adapter.get_batch_quote(["RELIANCE"], "NSE")["RELIANCE"]
+        assert set(batch.keys()) == set(single.keys())
+        assert batch == single
+
+    def test_batch_quote_zero_close_guard(self, market_adapter, mock_http_client, mock_resolver):
+        """S-4: zero close in a batch entry must not divide by zero."""
+        mock_http_client.post.return_value = {
+            "data": {"NSE_EQ": {"1": {"last_price": 100.0, "net_change": 5.0, "ohlc": {"close": 0}}}}
+        }
+        result = market_adapter.get_batch_quote(["RELIANCE"], "NSE")
+        assert result["RELIANCE"]["change_percent"] == Decimal("0")
+
     def test_should_make_correct_api_call_with_segment_for_market_data(self, market_adapter, mock_http_client):
         mock_http_client.post.return_value = {"data": {"NSE_EQ": {"1": {"last_price": 100}}}}
         market_adapter.get_ltp("RELIANCE", "NSE")

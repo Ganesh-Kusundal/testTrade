@@ -15,6 +15,42 @@ from scalpr.brokers.dhan.resolver import SymbolResolver
 logger = logging.getLogger(__name__)
 
 
+def _build_quote_fields(raw: dict[str, Any], symbol: str) -> dict[str, Any]:
+    """Build the canonical quote dict from a raw /marketfeed/quote entry.
+
+    Single source of truth for quote fields — used by both single and batch
+    paths so they can never silently diverge (S-4: batch quotes were missing
+    change/change_percent because they hand-rolled a second field list).
+    """
+    ohlc = raw.get("ohlc", {})
+    close = Decimal(str(ohlc.get("close", 0)))
+    net_change = Decimal(str(raw.get("net_change", 0)))
+    change_percent = (
+        (net_change / close * 100) if close else Decimal("0")
+    )
+    return {
+        "symbol": symbol,
+        "ltp": Decimal(str(raw.get("last_price", 0))),
+        "open": Decimal(str(ohlc.get("open", 0))),
+        "high": Decimal(str(ohlc.get("high", 0))),
+        "low": Decimal(str(ohlc.get("low", 0))),
+        "close": close,
+        "volume": int(raw.get("volume", 0)),
+        "change": net_change,
+        "change_percent": change_percent,
+        "average_price": Decimal(str(raw.get("average_price", 0))),
+        "buy_quantity": int(raw.get("buy_quantity", 0)),
+        "sell_quantity": int(raw.get("sell_quantity", 0)),
+        "last_quantity": int(raw.get("last_quantity", 0)),
+        "last_trade_time": raw.get("last_trade_time"),
+        "lower_circuit_limit": Decimal(str(raw.get("lower_circuit_limit", 0))),
+        "upper_circuit_limit": Decimal(str(raw.get("upper_circuit_limit", 0))),
+        "oi": int(raw.get("oi", 0)),
+        "oi_day_high": Decimal(str(raw.get("oi_day_high", 0))),
+        "oi_day_low": Decimal(str(raw.get("oi_day_low", 0))),
+    }
+
+
 class MarketDataAdapter:
     """Adapter for fetching market data from Dhan API.
 
@@ -89,33 +125,7 @@ class MarketDataAdapter:
             logger.warning(f"Quote missing for {symbol or security_id} (security_id={security_id}, segment={segment})")
             raise ValueError(f"No quote data for {symbol or security_id} on {segment}")
 
-        ohlc = raw.get("ohlc", {})
-        close = Decimal(str(ohlc.get("close", 0)))
-        net_change = Decimal(str(raw.get("net_change", 0)))
-        change_percent = (
-            (net_change / close * 100) if close else Decimal("0")
-        )
-        quote = {
-            "symbol": symbol,
-            "ltp": Decimal(str(raw.get("last_price", 0))),
-            "open": Decimal(str(ohlc.get("open", 0))),
-            "high": Decimal(str(ohlc.get("high", 0))),
-            "low": Decimal(str(ohlc.get("low", 0))),
-            "close": close,
-            "volume": int(raw.get("volume", 0)),
-            "change": net_change,
-            "change_percent": change_percent,
-            "average_price": Decimal(str(raw.get("average_price", 0))),
-            "buy_quantity": int(raw.get("buy_quantity", 0)),
-            "sell_quantity": int(raw.get("sell_quantity", 0)),
-            "last_quantity": int(raw.get("last_quantity", 0)),
-            "last_trade_time": raw.get("last_trade_time"),
-            "lower_circuit_limit": Decimal(str(raw.get("lower_circuit_limit", 0))),
-            "upper_circuit_limit": Decimal(str(raw.get("upper_circuit_limit", 0))),
-            "oi": int(raw.get("oi", 0)),
-            "oi_day_high": Decimal(str(raw.get("oi_day_high", 0))),
-            "oi_day_low": Decimal(str(raw.get("oi_day_low", 0))),
-        }
+        quote = _build_quote_fields(raw, symbol)
 
         logger.debug(f"Quote fetched: {symbol} LTP={quote['ltp']}")
         return quote
@@ -240,16 +250,7 @@ class MarketDataAdapter:
         for seg, sids in data.get("data", {}).items():
             for sid_str, info in sids.items():
                 if sid_str in symbol_map:
-                    ohlc = info.get("ohlc", {})
-                    result[symbol_map[sid_str]] = {
-                        "symbol": symbol_map[sid_str],
-                        "ltp": Decimal(str(info.get("last_price", 0))),
-                        "open": Decimal(str(ohlc.get("open", 0))),
-                        "high": Decimal(str(ohlc.get("high", 0))),
-                        "low": Decimal(str(ohlc.get("low", 0))),
-                        "close": Decimal(str(ohlc.get("close", 0))),
-                        "volume": int(info.get("volume", 0)),
-                    }
+                    result[symbol_map[sid_str]] = _build_quote_fields(info, symbol_map[sid_str])
 
         logger.debug(f"Batch quotes fetched: {len(result)} symbols")
         return result

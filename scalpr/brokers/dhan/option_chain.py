@@ -175,6 +175,7 @@ class OptionChainAdapter:
                         leg.get("security_id")
                     ),
                     "strike": strike,
+                    "option_type": side,
                     "bid": OptionChainAdapter._to_decimal(
                         leg.get("top_bid_price")
                     ),

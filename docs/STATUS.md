@@ -6,7 +6,7 @@ No test/script link → the claim doesn't exist.
 | Claim | Evidence |
 |---|---|
 | WebSocket full-mode feed streams real ticks (string SecurityId, instrument-based segments) | `tests/unit/brokers/dhan/test_websocket.py` (`.venv/bin/python -m pytest tests/unit/brokers/dhan/test_websocket.py`) |
-| 20-level depth verified live | `test_live_full_depth.py` (manual, market hours) — captured live 2025 |
+| 20-level depth verified live | `scripts/live/test_live_full_depth.py` (manual, market hours) — captured live 2025 |
 | Event-store round-trip reconstructs Fill/Order (not raw dicts) | `tests/unit/observability/test_event_store_roundtrip.py` |
 | Import-layer contracts enforced (5 contracts) | `lint-imports --config pyproject.toml` via pre-commit hook |
 | Trade.exchange populated from broker segment ("" = honest unknown) | `tests/unit/brokers/test_gateway_trades.py` |
@@ -22,6 +22,13 @@ No test/script link → the claim doesn't exist.
 | `/health/live` + `/health/ready` probes (live always 200; ready 503 w/ JSON shape when gateway down) | `tests/unit/api/test_routers_fail_closed.py::TestProbes`; all 4 TradeX V2 TestSprite cloud tests pass locally |
 | DH-906 "Invalid Token" (HTTP 400) triggers forced token refresh + retry, same as 401 | `tests/unit/brokers/dhan/test_http_client_refresh.py::test_dh906_400_triggers_refresh_and_retry_succeeds`; stale token → 200 # captured live 2026-07-27 |
 | EventStore wired into production: OrderManager appends OrderPlaced/OrderUpdated/FillReceived per session (`live-YYYYMMDD`); store failure never breaks order flow | `tests/unit/oms/test_event_store_wiring.py` |
+| Quality gates: CI (pytest+cov fail_under=80, ruff, import-linter), pre-commit + pre-push hooks installed, test-return-value = error | `.github/workflows/ci.yml`, `.pre-commit-config.yaml`, `pyproject.toml` `filterwarnings` |
+| dhanhq SDK surface pinned (>=2.2,<2.3); every consumed symbol asserted against installed SDK | `tests/contract/test_dhan_sdk_compat.py` |
+| WS mode constants resolved from installed SDK (Ticker/Quote/Full), not hardcoded copies | `tests/unit/brokers/dhan/test_ws_mode_mapping.py` |
+| WS token refresh wired: expired token triggers refresh_fn → update_token → reconnect (WS no longer dies on token expiry) | `tests/unit/brokers/dhan/test_ws_token_refresh.py` |
+| WS subscribe is honest: per-symbol results, unresolvable symbols fail closed (no silent NSE_EQ fallback) | `tests/unit/brokers/dhan/test_ws_subscribe_honest.py`, `tests/unit/brokers/dhan/test_security_id_consistency.py` |
+| Batch and single quotes built by one shared field builder — identical field sets incl. change/change_percent | `tests/unit/brokers/dhan/test_adapters.py::TestMarketDataAdapter::test_batch_quote_field_set_matches_single_quote` |
+| Live instrument API check is a gated pytest (fails loudly; skipped without `DHAN_CLIENT_ID`/`DHAN_ACCESS_TOKEN`) | `tests/integration/test_live_instrument_api.py` |
 
 ## Known-unwired / deferred
 

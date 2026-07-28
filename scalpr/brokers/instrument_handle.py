@@ -148,18 +148,34 @@ class InstrumentHandle:
             end,
         )
 
-    def option_chain(self, expiry: date | None = None) -> list[dict[str, Any]]:
-        """Fetch the option chain for this instrument's underlying.
+    def option_chain(
+        self,
+        expiry: date | None = None,
+        moneyness: str = "all",
+        strikes_around: int | None = None,
+        option_type: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Fetch the option chain with optional moneyness filtering.
 
         Only available for indices and F&O instruments. Raises
         OptionChainNotSupported for plain equities (NSE_EQ / BSE_EQ).
 
         Args:
             expiry: Specific expiry date. If None, next expiry is used.
+            moneyness: Filter by moneyness relative to current spot price.
+                "all" (default) — return every leg.
+                "ATM" — strikes within 0.5% of spot.
+                "ITM" — in-the-money legs only.
+                "OTM" — out-of-the-money legs only.
+                Combinations: "ATM,ITM", "ITM,OTM", etc.
+            strikes_around: If set, return only N strikes on each side of ATM.
+                E.g. strikes_around=3 returns 3 ITM + ATM + 3 OTM per type.
+            option_type: Filter by leg type: "CE", "PE", or None for both.
 
         Returns:
-            Flat list of dicts with keys:
-            symbol, security_id, strike, bid, ask, oi, volume, delta
+            List of dicts with keys:
+            symbol, security_id, strike, bid, ask, oi, volume, delta,
+            option_type (CE/PE), moneyness (ATM/ITM/OTM), spot_price
         """
         wire_seg = self._resolved.wire_segment
         if wire_seg not in _OPTIONABLE_SEGMENTS:
@@ -171,11 +187,87 @@ class InstrumentHandle:
             raise OptionChainNotSupported(
                 f"Option chain adapter not available for {self.symbol}"
             )
-        return self._option_chain.get_option_chain(
+
+        chain = self._option_chain.get_option_chain(
             self.symbol,
             self.exchange,
             expiry=expiry,
         )
+
+        # No filtering requested — return raw chain
+        if moneyness == "all" and strikes_around is None and option_type is None:
+            return chain
+
+        # Get spot price for moneyness classification
+        try:
+            spot = Decimal(str(self._market_data.get_ltp_by_id(
+                self._resolved.security_id,
+                self._resolved.wire_segment,
+                symbol=self.symbol,
+            )))
+        except Exception:
+            # If we can't get spot price, return unfiltered chain
+            return chain
+
+        # Parse moneyness filter
+        requested = {m.strip().upper() for m in moneyness.split(",")} if moneyness != "all" else {"ATM", "ITM", "OTM"}
+
+        # Classify each leg
+        enriched: list[dict[str, Any]] = []
+        for leg in chain:
+            strike = Decimal(str(leg.get("strike", 0)))
+            opt_type = leg.get("option_type", "")
+
+            # Determine moneyness of this leg
+            if spot <= 0:
+                leg_moneyness = "ATM"
+            else:
+                pct = abs(strike - spot) / spot
+                if pct <= Decimal("0.005"):  # within 0.5% = ATM
+                    leg_moneyness = "ATM"
+                elif opt_type == "CE":
+                    leg_moneyness = "ITM" if strike < spot else "OTM"
+                else:  # PE
+                    leg_moneyness = "ITM" if strike > spot else "OTM"
+
+            if leg_moneyness not in requested:
+                continue
+
+            # Enrich the leg with classification
+            enriched_leg = dict(leg)
+            enriched_leg["moneyness"] = leg_moneyness
+            enriched_leg["spot_price"] = spot
+            enriched_leg["option_type"] = opt_type
+            enriched.append(enriched_leg)
+
+        # Apply strikes_around filter: N strikes each side of ATM
+        if strikes_around is not None and enriched:
+            # Group by option_type, sort by distance from ATM
+            atm_strike = min(
+                (Decimal(str(leg["strike"])) for leg in enriched),
+                key=lambda s: abs(s - spot),
+            )
+            # Get unique strikes sorted by distance from ATM
+            unique_strikes = sorted(
+                {Decimal(str(leg["strike"])) for leg in enriched},
+                key=lambda s: (abs(s - spot), s),
+            )
+            # Pick N around ATM
+            atm_idx = next(
+                (i for i, s in enumerate(unique_strikes) if s == atm_strike),
+                len(unique_strikes) // 2,
+            )
+            lo = max(0, atm_idx - strikes_around)
+            hi = min(len(unique_strikes), atm_idx + strikes_around + 1)
+            selected_strikes = set(unique_strikes[lo:hi])
+            enriched = [leg for leg in enriched if Decimal(str(leg["strike"])) in selected_strikes]
+
+        # Apply option_type filter
+        if option_type is not None:
+            ot = option_type.upper()
+            enriched = [leg for leg in enriched if leg.get("option_type", "").upper() == ot]
+
+        return enriched
 
     def subscribe(
         self,
