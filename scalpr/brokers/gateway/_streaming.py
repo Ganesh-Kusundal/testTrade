@@ -30,7 +30,7 @@ class StreamingMixin:
     _ws_manager: Any
     _ws_loop: Any
     _ws_thread: Any
-    _stream_callbacks: list[Any]
+    _stream_callbacks: list[Callable[..., Any]]
     _ws_lock: Any
 
     def stream(

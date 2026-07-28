@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Callable
 from datetime import date
 from decimal import Decimal
 from typing import Any
@@ -73,7 +74,7 @@ class Gateway(MarketDataMixin, PortfolioMixin, StreamingMixin):
         self._ws_manager: Any = None
         self._ws_loop: Any = None
         self._ws_thread: Any = None
-        self._stream_callbacks: list[Any] = []
+        self._stream_callbacks: list[Callable[..., Any]] = []
         self._ws_lock = __import__("threading").Lock()
 
         if auto_connect:

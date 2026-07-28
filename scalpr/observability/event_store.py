@@ -306,7 +306,7 @@ class EventStore:
         """
         with sqlite3.connect(str(self.db_path)) as conn:
             query = "SELECT sequence_num, payload FROM events WHERE session_id = ? AND sequence_num >= ?"
-            params: list[Any] = [session_id, from_seq]
+            params: list[str | int] = [session_id, from_seq]
 
             if to_seq is not None:
                 query += " AND sequence_num <= ?"
