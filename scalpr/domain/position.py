@@ -6,6 +6,7 @@ from enum import Enum
 
 from scalpr.domain.instrument import Exchange
 from scalpr.domain.order import OrderSide
+from scalpr.domain.values import ZERO
 
 
 class PositionSide(str, Enum):
@@ -28,10 +29,10 @@ class Position:
     symbol: str
     exchange: Exchange
     quantity: int = 0
-    avg_price: Decimal = Decimal("0")
-    ltp: Decimal = Decimal("0")
-    unrealised_pnl: Decimal = Decimal("0")
-    realised_pnl: Decimal = Decimal("0")
+    avg_price: Decimal = ZERO
+    ltp: Decimal = ZERO
+    unrealised_pnl: Decimal = ZERO
+    realised_pnl: Decimal = ZERO
     position_side: PositionSide = PositionSide.FLAT
     state: PositionState = PositionState.FLAT
 
@@ -57,7 +58,7 @@ class Position:
         elif self.quantity < 0:
             unrealised = Decimal(abs(self.quantity)) * (self.avg_price - ltp)
         else:
-            unrealised = Decimal("0")
+            unrealised = ZERO
 
         return replace(self, ltp=ltp, unrealised_pnl=unrealised)
 
@@ -90,7 +91,7 @@ class Position:
             new_realised = self.realised_pnl + Decimal(closed) * (price - old_avg) * pnl_factor
 
             if new_qty == 0:
-                new_avg = Decimal("0")
+                new_avg = ZERO
                 new_state = PositionState.CLOSED
             elif abs(delta) > abs(old_qty):
                 # Position reversed
@@ -120,7 +121,7 @@ class Position:
         elif new_qty < 0:
             unrealised = Decimal(abs(new_qty)) * (new_avg - price)
         else:
-            unrealised = Decimal("0")
+            unrealised = ZERO
 
         return replace(
             self,

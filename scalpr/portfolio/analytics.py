@@ -3,6 +3,8 @@ from __future__ import annotations
 import math
 from decimal import Decimal
 
+from scalpr.domain.values import ZERO
+
 
 class TradeAnalytics:
     """Computes attribution, Sharpe ratio, win rate, and drawdown series for portfolio performance."""
@@ -38,10 +40,10 @@ class TradeAnalytics:
     def calculate_max_drawdown(equity_curve: list[Decimal]) -> Decimal:
         """Compute the maximum peak-to-trough drawdown from an equity curve series."""
         if not equity_curve:
-            return Decimal("0")
+            return ZERO
 
         peak = Decimal("-Infinity")
-        max_dd = Decimal("0")
+        max_dd = ZERO
 
         for val in equity_curve:
             if val > peak:

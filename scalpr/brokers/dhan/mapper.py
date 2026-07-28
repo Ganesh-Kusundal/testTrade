@@ -10,6 +10,7 @@ from scalpr.domain.fill import Fill
 from scalpr.domain.instrument import Exchange
 from scalpr.domain.order import Order, OrderType
 from scalpr.domain.position import Position, PositionSide, PositionState
+from scalpr.domain.values import ZERO
 
 T = TypeVar('T')
 E = TypeVar('E')
@@ -145,7 +146,7 @@ class DhanMapper:
             elif quantity < 0:
                 unrealised = Decimal(abs(quantity)) * (avg_price - ltp)
             else:
-                unrealised = Decimal("0")
+                unrealised = ZERO
 
             return Result.success(
                 Position(

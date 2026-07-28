@@ -13,6 +13,7 @@ from scalpr.domain.events import RiskCheckFailed as RiskCheckFailedEvent
 from scalpr.domain.fill import Fill
 from scalpr.domain.order import Order
 from scalpr.domain.position import Position
+from scalpr.domain.values import ZERO
 from scalpr.oms.order_manager import OrderManager
 from scalpr.risk.circuit_breaker import CircuitBreaker
 from scalpr.risk.pre_trade import PreTradeRiskGate
@@ -64,7 +65,7 @@ class OrderRouter:
         available_margin: Decimal,
         daily_loss: Decimal,
         portfolio_value: Decimal,
-        drawdown: Decimal = Decimal("0"),
+        drawdown: Decimal = ZERO,
     ) -> Fill:
         """
         Submit order through mandatory risk gates.
@@ -138,7 +139,7 @@ class OrderRouter:
             raise RiskCheckFailed(reason)
 
         # 3. All checks passed - forward to broker
-        logger.info(f"Order {order.symbol} passed risk checks, submitting to broker")
+        logger.info("Order %s passed risk checks, submitting to broker", order.symbol)
         fill = self.gateway.place_order(order)
 
         # Persist order and fill via OrderManager
@@ -148,7 +149,7 @@ class OrderRouter:
                 if fill:
                     self.order_manager.process_fill(fill)
             except Exception as e:
-                logger.error(f"CRITICAL: Persistence failed after order placed: {e}")
+                logger.error("CRITICAL: Persistence failed after order placed: %s", e)
                 raise PersistenceError(
                     f"Order {order.order_id} placed at broker but persistence failed: {e}"
                 ) from e

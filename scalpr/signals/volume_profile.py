@@ -4,6 +4,7 @@ import threading
 from decimal import Decimal
 
 from scalpr.domain.tick import OHLCV
+from scalpr.domain.values import ZERO
 
 
 class VolumeProfile:
@@ -13,18 +14,18 @@ class VolumeProfile:
         self.price_step = price_step
         self.value_area_pct = value_area_pct
         self.volume_by_price: dict[Decimal, int] = {}
-        self.poc: Decimal = Decimal("0")
-        self.vah: Decimal = Decimal("0")
-        self.val: Decimal = Decimal("0")
+        self.poc: Decimal = ZERO
+        self.vah: Decimal = ZERO
+        self.val: Decimal = ZERO
         self._lock = threading.RLock()
 
     def reset(self) -> None:
         """Anchor reset for session open or structure breaks."""
         with self._lock:
             self.volume_by_price.clear()
-            self.poc = Decimal("0")
-            self.vah = Decimal("0")
-            self.val = Decimal("0")
+            self.poc = ZERO
+            self.vah = ZERO
+            self.val = ZERO
 
     def update(self, bar: OHLCV) -> None:
         """Incorporate a closed OHLCV bar into the profile."""

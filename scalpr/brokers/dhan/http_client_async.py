@@ -17,26 +17,29 @@ from __future__ import annotations
 import asyncio
 import json as jsonlib
 import logging
-import time
 from collections.abc import Callable
 from typing import Any
 
 import aiohttp
 
 from config.endpoints import Dhan
+from scalpr.brokers.dhan._http_common import (
+    _MAX_RETRIES,
+    _ORDERS_ACQUIRE_TIMEOUT_S,
+    _REFRESH_COOLDOWN_SECONDS,
+    backoff_delay,
+    bucket_for,
+    build_url,
+    classify_response,
+    try_refresh_token,
+)
 from scalpr.brokers.dhan.exceptions import (
     AuthenticationError,
     BrokerError,
     OrderError,
     RateLimitError,
 )
-from scalpr.brokers.dhan.http_client import (
-    _MAX_RETRIES,
-    _ORDERS_ACQUIRE_TIMEOUT_S,
-    _REFRESH_COOLDOWN_SECONDS,
-    CircuitBreaker,
-    DhanHttpClient,
-)
+from scalpr.brokers.dhan.http_client import CircuitBreaker
 from scalpr.brokers.rate_limit import DHAN_RATE_LIMITS
 from scalpr.brokers.rate_limit_async import (
     AsyncMultiBucketRateLimiter,
@@ -114,30 +117,18 @@ class AsyncDhanHttpClient:
         return await self._request("DELETE", endpoint)
 
     # Same prefix map as the sync client — single source of truth.
-    _bucket_for = staticmethod(DhanHttpClient._bucket_for)
+    _bucket_for = staticmethod(bucket_for)
 
     def _try_refresh_token(self) -> bool:
         """Attempt token refresh. Returns True if successful."""
-        now = time.time()
-
-        if now - self._last_refresh_time < _REFRESH_COOLDOWN_SECONDS:
-            logger.debug("token_refresh_skipped: cooldown_active")
-            return False
-
-        if self._token_refresh_fn is None:
-            return False
-
-        try:
-            new_token = self._token_refresh_fn()
-            if new_token:
-                self._last_refresh_time = now
-                self.update_token(new_token)
-                logger.info("token_refreshed", extra={"client_id": self.client_id})
-                return True
-        except Exception as exc:
-            logger.warning("token_refresh_failed", extra={"error": str(exc)})
-
-        return False
+        success, self._last_refresh_time = try_refresh_token(
+            self._last_refresh_time,
+            _REFRESH_COOLDOWN_SECONDS,
+            self._token_refresh_fn,
+            self.update_token,
+            self.client_id,
+        )
+        return success
 
     async def _request(self, method: str, endpoint: str, json: dict | None = None) -> dict[str, Any]:
         """Execute HTTP request with retry, rate limiting, and circuit breaker."""
@@ -158,7 +149,7 @@ class AsyncDhanHttpClient:
                 )
         else:
             await self._limiter.acquire(bucket)
-        url = f"{self._base_url}{endpoint}" if endpoint.startswith("/") else endpoint
+        url = build_url(self._base_url, endpoint)
 
         max_attempts = _MAX_RETRIES if self._enable_retry else 1
         last_exc: Exception | None = None
@@ -176,7 +167,7 @@ class AsyncDhanHttpClient:
                 self._circuit_breaker.record_failure()
 
                 if attempt < max_attempts:
-                    delay = self._backoff_delay(attempt)
+                    delay = backoff_delay(attempt)
                     logger.warning("http_retry", extra={
                         "method": method, "endpoint": endpoint, "attempt": attempt,
                         "delay_ms": int(delay * 1000),
@@ -189,12 +180,9 @@ class AsyncDhanHttpClient:
                 "method": method, "endpoint": endpoint, "status": status,
             })
 
-            # 401 — or Dhan's DH-906 "Invalid Token" (arrives as HTTP 400) —
-            # try token refresh once
-            token_rejected = status == 401 or (
-                status >= 400 and "DH-906" in (text or "")
-            )
-            if token_rejected:
+            category = classify_response(status, text or "")
+
+            if category == "auth_rejected":
                 if attempt == 1 and self._try_refresh_token():
                     logger.info("http_retry_after_refresh", extra={"method": method, "endpoint": endpoint})
                     continue
@@ -203,21 +191,17 @@ class AsyncDhanHttpClient:
                     + (" (DH-906 Invalid Token)" if status != 401 else "")
                 )
 
-            # 429 - rate limited: put the bucket into cooldown (halved rate +
-            # mandatory back-off enforced on the NEXT acquire) and fail fast.
-            # Retrying in-line would just burn attempts against a hard limit.
-            if status == 429:
+            if category == "rate_limited":
                 self._limiter.trigger_cooldown(bucket)
                 logger.warning("http_rate_limited", extra={
                     "method": method, "endpoint": endpoint, "bucket": bucket,
                 })
                 raise RateLimitError(f"Rate limited: HTTP 429 on {method} {endpoint}")
 
-            # 5xx - server error, retry
-            if status >= 500:
+            if category == "server_error":
                 self._circuit_breaker.record_failure()
                 if attempt < max_attempts:
-                    delay = self._backoff_delay(attempt)
+                    delay = backoff_delay(attempt)
                     logger.warning("http_server_error_retry", extra={
                         "method": method, "endpoint": endpoint, "status": status,
                         "attempt": attempt, "delay_ms": int(delay * 1000),
@@ -226,8 +210,7 @@ class AsyncDhanHttpClient:
                     continue
                 raise BrokerError(f"Dhan API {method} {url} failed: HTTP {status} — {text[:200]}")
 
-            # 4xx - client error (no retry)
-            if status >= 400:
+            if category == "client_error":
                 body = text[:300]
                 logger.warning("http_client_error", extra={
                     "method": method, "endpoint": endpoint, "status": status, "body": body,
@@ -253,4 +236,4 @@ class AsyncDhanHttpClient:
         raise BrokerError(f"Request failed after {max_attempts} attempts: {method} {url}")
 
     # Same exponential backoff schedule as the sync client.
-    _backoff_delay = staticmethod(DhanHttpClient._backoff_delay)
+    _backoff_delay = staticmethod(backoff_delay)

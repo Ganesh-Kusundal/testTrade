@@ -13,6 +13,12 @@ logger = logging.getLogger(__name__)
 # between tests and subclasses. Access only through BrokerRegistry methods.
 _brokers: dict[str, type[IBrokerGateway]] = {}
 
+# Adapter registry: broker_name -> {adapter_key -> class/callable}
+# Adapters are broker-specific classes (e.g., OptionChainAdapter,
+# DhanWebSocketManager) that the broker-agnostic facade needs but
+# must not import directly (boundary rule).
+_adapters: dict[str, dict[str, Any]] = {}
+
 
 class BrokerRegistry:
     """Registry for broker discovery and instantiation.
@@ -23,8 +29,9 @@ class BrokerRegistry:
 
     @classmethod
     def reset(cls) -> None:
-        """Clear all registered brokers. Use in test teardown for isolation."""
+        """Clear all registered brokers and adapters. Use in test teardown."""
         _brokers.clear()
+        _adapters.clear()
 
     @classmethod
     def register(cls, name: str, gateway_class: type[IBrokerGateway]) -> None:
@@ -35,7 +42,7 @@ class BrokerRegistry:
             gateway_class: Gateway class implementing IBrokerGateway
         """
         _brokers[name] = gateway_class
-        logger.info(f"broker_registered: {name}")
+        logger.info("broker_registered: %s", name)
 
     @classmethod
     def list_brokers(cls) -> list[str]:
@@ -67,7 +74,7 @@ class BrokerRegistry:
             )
 
         gateway_class = _brokers[broker]
-        logger.info(f"broker_instantiated: {broker}")
+        logger.info("broker_instantiated: %s", broker)
         return gateway_class(config)
 
     @classmethod
@@ -82,14 +89,60 @@ class BrokerRegistry:
         """
         return broker in _brokers
 
+    @classmethod
+    def register_adapter(
+        cls, broker: str, key: str, adapter_class: Any
+    ) -> None:
+        """Register a broker-specific adapter class.
+
+        Adapters are broker-specific classes that the broker-agnostic
+        facade needs but must not import directly (boundary rule).
+
+        Args:
+            broker: Broker name (e.g., "dhan")
+            key: Adapter key (e.g., "option_chain", "ws_manager", "auth")
+            adapter_class: The adapter class or callable
+        """
+        if broker not in _adapters:
+            _adapters[broker] = {}
+        _adapters[broker][key] = adapter_class
+        logger.debug("adapter_registered: %s.%s", broker, key)
+
+    @classmethod
+    def get_adapter(cls, broker: str, key: str) -> Any:
+        """Retrieve a registered adapter by broker and key.
+
+        Args:
+            broker: Broker name
+            key: Adapter key
+
+        Returns:
+            The adapter class or callable, or None if not found
+        """
+        return _adapters.get(broker, {}).get(key)
+
 
 # Auto-register known brokers
 def _register_default_brokers() -> None:
-    """Register default broker implementations."""
+    """Register default broker implementations and their adapters."""
     try:
         from scalpr.brokers.dhan.gateway import DhanGateway
 
         BrokerRegistry.register("dhan", DhanGateway)
+
+        # Register Dhan-specific adapters so the broker-agnostic facade
+        # can look them up without importing from brokers.dhan directly.
+        from scalpr.brokers.dhan.auth import ensure_fresh_token
+        from scalpr.brokers.dhan.option_chain import OptionChainAdapter
+        from scalpr.brokers.dhan.ws_manager import DhanWebSocketManager
+
+        BrokerRegistry.register_adapter("dhan", "auth", ensure_fresh_token)
+        BrokerRegistry.register_adapter(
+            "dhan", "option_chain", OptionChainAdapter
+        )
+        BrokerRegistry.register_adapter(
+            "dhan", "ws_manager", DhanWebSocketManager
+        )
     except ImportError:
         logger.debug("DhanGateway not available")
 

@@ -6,6 +6,7 @@ from decimal import Decimal
 from enum import Enum
 
 from scalpr.domain.instrument import Exchange
+from scalpr.domain.values import ZERO
 
 
 class OrderSide(str, Enum):
@@ -76,11 +77,11 @@ class Order:
     side: OrderSide
     order_type: OrderType
     quantity: int
-    price: Decimal = Decimal("0")
-    trigger_price: Decimal = Decimal("0")
+    price: Decimal = ZERO
+    trigger_price: Decimal = ZERO
     state: OrderState = OrderState.PENDING
     filled_quantity: int = 0
-    avg_price: Decimal = Decimal("0")
+    avg_price: Decimal = ZERO
     timestamp: datetime | None = None
     product_type: str = "INTRADAY"
     validity: str = "DAY"
@@ -137,5 +138,5 @@ class Order:
     def fill_ratio(self) -> Decimal:
         """Return ratio of filled to total quantity."""
         if self.quantity == 0:
-            return Decimal("0")
+            return ZERO
         return Decimal(self.filled_quantity) / Decimal(self.quantity)

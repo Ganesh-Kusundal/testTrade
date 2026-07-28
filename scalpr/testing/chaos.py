@@ -23,6 +23,8 @@ from decimal import Decimal
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+from scalpr.domain.values import ZERO
+
 logger = logging.getLogger(__name__)
 
 
@@ -222,13 +224,13 @@ class MarketDataDisruptor:
 
         for i in range(count):
             # Create ticks with edge cases
-            ltp = Decimal("0") if i % 2 == 0 else Decimal("2935.40")
+            ltp = ZERO if i % 2 == 0 else Decimal("2935.40")
 
             ticks.append(Tick(
                 symbol="RELIANCE",
                 ltp=ltp,
-                bid=Decimal("0") if i % 3 == 0 else Decimal("2935.35"),
-                ask=Decimal("0") if i % 3 == 1 else Decimal("2935.45"),
+                bid=ZERO if i % 3 == 0 else Decimal("2935.35"),
+                ask=ZERO if i % 3 == 1 else Decimal("2935.45"),
                 delta_volume=-100 if i % 4 == 0 else 100,  # Negative volume!
                 cumulative_volume=1000,
                 exchange_timestamp=datetime.now(timezone.utc),
@@ -288,7 +290,7 @@ class OrderFailureInjector:
                     symbol="UNKNOWN",
                     side=OrderSide.BUY,
                     quantity=50,
-                    price=Decimal("0"),
+                    price=ZERO,
                     timestamp=datetime.now(timezone.utc),
                 )
 
@@ -300,7 +302,7 @@ class OrderFailureInjector:
                 symbol=order.symbol,
                 side=OrderSide.BUY,
                 quantity=fill_quantity,
-                price=order.price or Decimal("0"),
+                price=order.price or ZERO,
                 timestamp=datetime.now(timezone.utc),
             )
 
@@ -469,7 +471,7 @@ class CircuitBreakerValidator:
         cb = CircuitBreaker(drawdown_limit_pct=0.05)
 
         # Trip on drawdown
-        assert not cb.check_limits(Decimal("100000"), Decimal("0"), Decimal("0.06"))
+        assert not cb.check_limits(Decimal("100000"), ZERO, Decimal("0.06"))
         assert cb.is_tripped
 
         return {"tripped": True}
@@ -483,7 +485,7 @@ class CircuitBreakerValidator:
         cb.halt_all()
 
         # Should block even with good metrics
-        assert not cb.check_limits(Decimal("100000"), Decimal("0"), Decimal("0"))
+        assert not cb.check_limits(Decimal("100000"), ZERO, ZERO)
         assert cb.is_tripped
 
         return {"halted": True}

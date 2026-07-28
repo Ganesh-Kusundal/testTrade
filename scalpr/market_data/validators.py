@@ -28,12 +28,12 @@ class TickValidator:
         # 1. Deduplication by exchange_timestamp
         last_ts = self._last_timestamps.get(symbol)
         if last_ts is not None and tick.exchange_timestamp <= last_ts:
-            logger.debug(f"Tick rejected (duplicate/older timestamp): {tick}")
+            logger.debug("Tick rejected (duplicate/older timestamp): %s", tick)
             return False
 
         # 2. Staleness check
         if now - tick.exchange_timestamp > self.staleness_threshold:
-            logger.debug(f"Tick rejected (stale): {tick}, age: {now - tick.exchange_timestamp}")
+            logger.debug("Tick rejected (stale): %s, age: %s", tick, now - tick.exchange_timestamp)
             return False
 
         # 3. Price sanity check (ltp deviates > 5% from last ltp)
@@ -41,7 +41,7 @@ class TickValidator:
         if last_ltp is not None and last_ltp > 0:
             deviation = abs(tick.ltp - last_ltp) / last_ltp
             if deviation > self.price_deviation_limit:
-                logger.warning(f"Tick rejected (price anomaly): {tick}, deviation: {deviation:.2%}")
+                logger.warning("Tick rejected (price anomaly): %s, deviation: %.2%%", tick, deviation)
                 return False
 
         # Update tracking state

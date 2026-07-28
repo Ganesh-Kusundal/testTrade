@@ -40,10 +40,10 @@ class InstrumentLoader:
                 if path.is_file():
                     mtime = path.stat().st_mtime
                     if mtime < cutoff:
-                        logger.info(f"Cleaning up old instrument cache file: {path}")
+                        logger.info("Cleaning up old instrument cache file: %s", path)
                         path.unlink(missing_ok=True)
         except Exception as exc:
-            logger.warning(f"Failed to clean up old cache files: {exc}")
+            logger.warning("Failed to clean up old cache files: %s", exc)
 
     @staticmethod
     def load_cached(force_refresh: bool = False) -> list[dict]:
@@ -77,18 +77,18 @@ class InstrumentLoader:
                 mtime = datetime.fromtimestamp(cache_path.stat().st_mtime)
                 cache_age_hours = (datetime.now() - mtime).total_seconds() / 3600.0
                 if cache_age_hours > 6.0:
-                    logger.info(f"Cache is older than 6 hours (age: {cache_age_hours:.1f} hours). Refreshing...")
+                    logger.info("Cache is older than 6 hours (age: %.1f hours). Refreshing...", cache_age_hours)
                     force_refresh = True
             except Exception as exc:
-                logger.warning(f"Error checking cache file modification time: {exc}")
+                logger.warning("Error checking cache file modification time: %s", exc)
 
         df = None
         if not force_refresh and cache_path.exists() and cache_path.stat().st_size > 0:
-            logger.info(f"Loading instruments from cache: {cache_path}")
+            logger.info("Loading instruments from cache: %s", cache_path)
             try:
                 df = pd.read_csv(cache_path, low_memory=False)
             except Exception as exc:
-                logger.warning(f"Failed to read cached file: {exc}. Will re-download.")
+                logger.warning("Failed to read cached file: %s. Will re-download.", exc)
 
         if df is None:
             logger.info("Downloading instruments from Dhan...")
@@ -99,7 +99,7 @@ class InstrumentLoader:
                 os.replace(tmp_path, cache_path)
             except Exception as exc:
                 if cache_path.exists() and cache_path.stat().st_size > 0:
-                    logger.error(f"Failed to download instruments ({exc}). Using stale cache.")
+                    logger.error("Failed to download instruments (%s). Using stale cache.", exc)
                     try:
                         df = pd.read_csv(cache_path, low_memory=False)
                     except Exception as read_exc:
@@ -108,7 +108,7 @@ class InstrumentLoader:
                     raise exc
 
         rows = InstrumentLoader._compact_to_rows(df)
-        logger.info(f"Loaded {len(rows)} instruments")
+        logger.info("Loaded %s instruments", len(rows))
         return rows
 
     @staticmethod

@@ -10,6 +10,7 @@ from scalpr.domain.events import FillReceived, IEventBus, PositionUpdated
 from scalpr.domain.fill import Fill
 from scalpr.domain.order import Order, OrderSide, OrderState, OrderType
 from scalpr.domain.position import Position, PositionSide, PositionState
+from scalpr.domain.values import ZERO
 
 
 class PaperOms(IBrokerGateway):
@@ -85,10 +86,10 @@ class PaperOms(IBrokerGateway):
                     symbol=symbol,
                     exchange=order.exchange,
                     quantity=0,
-                    avg_price=Decimal("0"),
+                    avg_price=ZERO,
                     ltp=execution_price,
-                    unrealised_pnl=Decimal("0"),
-                    realised_pnl=Decimal("0"),
+                    unrealised_pnl=ZERO,
+                    realised_pnl=ZERO,
                     position_side=PositionSide.FLAT,
                     state=PositionState.FLAT,
                 )
@@ -170,7 +171,7 @@ class PaperOms(IBrokerGateway):
     def get_ltp(self, symbol: str, exchange: str = "NSE") -> Decimal:
         """Return last price set via set_last_price(), or zero."""
         with self._lock:
-            return self.last_prices.get(symbol, Decimal("0"))
+            return self.last_prices.get(symbol, ZERO)
 
     def get_quote(self, symbol: str, exchange: str = "NSE") -> dict[str, Any]:
         """Return minimal quote dict from last known price."""
@@ -234,20 +235,20 @@ class PaperOms(IBrokerGateway):
     def daily_pnl(self) -> Decimal:
         """Calculate aggregate PnL (realised + unrealised) across all positions."""
         with self._lock:
-            return sum(((pos.realised_pnl + pos.unrealised_pnl) for pos in self.positions_dict.values()), Decimal("0"))
+            return sum(((pos.realised_pnl + pos.unrealised_pnl) for pos in self.positions_dict.values()), ZERO)
 
     @property
     def drawdown(self) -> Decimal:
         """Current drawdown from peak balance."""
         with self._lock:
-            portfolio_value = self.balance + sum((pos.unrealised_pnl for pos in self.positions_dict.values()), Decimal("0"))
+            portfolio_value = self.balance + sum((pos.unrealised_pnl for pos in self.positions_dict.values()), ZERO)
             if self.peak_balance <= 0:
-                return Decimal("0")
+                return ZERO
             dd = (self.peak_balance - portfolio_value) / self.peak_balance
-            return max(Decimal("0"), dd)
+            return max(ZERO, dd)
 
     def _recalculate_peak_drawdown(self) -> None:
-        portfolio_value = self.balance + sum((pos.unrealised_pnl for pos in self.positions_dict.values()), Decimal("0"))
+        portfolio_value = self.balance + sum((pos.unrealised_pnl for pos in self.positions_dict.values()), ZERO)
         if portfolio_value > self.peak_balance:
             self.peak_balance = portfolio_value
 

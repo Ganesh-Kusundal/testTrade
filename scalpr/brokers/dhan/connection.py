@@ -23,6 +23,7 @@ from scalpr.brokers.dhan.market_data import MarketDataAdapter
 from scalpr.brokers.dhan.orders import OrdersAdapter
 from scalpr.brokers.dhan.portfolio import PortfolioAdapter
 from scalpr.brokers.dhan.resolver import SymbolResolver
+from scalpr.domain.values import RECOVERY_TIMEOUT_S
 
 logger = logging.getLogger(__name__)
 
@@ -249,7 +250,7 @@ class DhanConnection:
 
         circuit_breaker = CircuitBreaker(
             failure_threshold=5,
-            recovery_timeout=10.0,
+            recovery_timeout=RECOVERY_TIMEOUT_S,
         )
 
         client = DhanHttpClient(

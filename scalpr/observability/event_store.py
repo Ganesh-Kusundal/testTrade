@@ -166,7 +166,7 @@ def _deserialize_event(data: dict[str, Any]) -> DomainEvent:
     try:
         return event_class(**data)
     except Exception as e:
-        logger.error(f"Failed to deserialize event {event_type}: {e}")
+        logger.error("Failed to deserialize event %s: %s", event_type, e)
         raise
 
 
@@ -213,7 +213,7 @@ def _reconstruct_domain_object(field_name: str, data: dict[str, Any]) -> Any:
             # For unsupported types, return dict (best effort)
             return data
     except Exception as e:
-        logger.warning(f"Failed to reconstruct {field_name}: {e}")
+        logger.warning("Failed to reconstruct %s: %s", field_name, e)
         return data
 
 
@@ -232,7 +232,7 @@ class EventStore:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
         self._init_db()
-        logger.info(f"EventStore initialized at {db_path}")
+        logger.info("EventStore initialized at %s", db_path)
 
     def _init_db(self) -> None:
         """Initialize event store schema."""
@@ -329,7 +329,7 @@ class EventStore:
                 event = _deserialize_event(payload)
                 events.append((seq_num, event))
             except Exception as e:
-                logger.warning(f"Failed to deserialize event at seq {seq_num}: {e}")
+                logger.warning("Failed to deserialize event at seq %s: %s", seq_num, e)
 
         return events
 
@@ -359,7 +359,7 @@ class EventStore:
                 (session_id,)
             )
             count = cursor.rowcount
-            logger.info(f"Deleted {count} events for session {session_id}")
+            logger.info("Deleted %s events for session %s", count, session_id)
             return count
 
     def compact(self, max_age_days: int = 30) -> int:
@@ -375,5 +375,5 @@ class EventStore:
             )
             count = cursor.rowcount
             if count > 0:
-                logger.info(f"Compacted {count} events older than {max_age_days} days")
+                logger.info("Compacted %s events older than %s days", count, max_age_days)
             return count

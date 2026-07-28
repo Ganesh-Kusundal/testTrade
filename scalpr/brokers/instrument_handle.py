@@ -11,9 +11,7 @@ from typing import Any
 
 from scalpr.brokers.errors import OptionChainNotSupported
 from scalpr.domain.instrument import ResolvedInstrument
-
-# Wire segments that support option chain queries
-_OPTIONABLE_SEGMENTS = frozenset({"NSE_FNO", "BSE_FNO", "IDX_I", "MCX_COMM"})
+from scalpr.domain.values import DEFAULT_TIMEOUT_S, OPTIONABLE_SEGMENTS
 
 
 class InstrumentHandle:
@@ -178,7 +176,7 @@ class InstrumentHandle:
             option_type (CE/PE), moneyness (ATM/ITM/OTM), spot_price
         """
         wire_seg = self._resolved.wire_segment
-        if wire_seg not in _OPTIONABLE_SEGMENTS:
+        if wire_seg not in OPTIONABLE_SEGMENTS:
             raise OptionChainNotSupported(
                 f"Option chain not supported for {self.symbol} ({self.exchange}) "
                 f"— only available for indices and F&O instruments"
@@ -293,6 +291,6 @@ class InstrumentHandle:
                 mode=mode.value if hasattr(mode, "value") else str(mode),
             ),
             self._ws_loop,
-        ).result(timeout=15)
+        ).result(timeout=DEFAULT_TIMEOUT_S)
         if on_event:
             self._ws_manager.add_subscriber(on_event)

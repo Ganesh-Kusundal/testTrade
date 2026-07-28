@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import logging
-from decimal import Decimal
 
 from scalpr.domain.instrument import Exchange
 from scalpr.domain.order import Order, OrderSide, OrderState, OrderType
 from scalpr.domain.tick import OHLCV, Tick
+from scalpr.domain.values import ZERO
 from scalpr.execution.order_router import OrderRouter
 from scalpr.signals.cvd import CvdTracker
 from scalpr.signals.gate_fsm import GateFSM, GateState
@@ -55,7 +55,7 @@ class ScalprAmtStrategy(IStrategy):
         passed, reason, _results = GateFSM.evaluate(gate_state)
 
         if passed:
-            logger.info(f"AMT Strategy: Setup Triggered! Reason: {reason}")
+            logger.info("AMT Strategy: Setup Triggered! Reason: %s", reason)
             # If no open positions, place simulated buy order
             positions = self.order_router.gateway.get_positions()
             active_pos = [p for p in positions if p.symbol == self.symbol and p.quantity != 0]
@@ -72,20 +72,20 @@ class ScalprAmtStrategy(IStrategy):
                     price=tick.ltp,
                     state=OrderState.PENDING,
                 )
-                logger.info(f"AMT Strategy: Submitting order {order.order_id}")
+                logger.info("AMT Strategy: Submitting order %s", order.order_id)
 
                 # Submit through OrderRouter (enforces risk checks)
                 try:
                     margins = self.order_router.gateway.get_margins()
-                    available_margin = margins.get("available_margin") or Decimal("0")
-                    portfolio_value = margins.get("total_balance") or Decimal("0")
+                    available_margin = margins.get("available_margin") or ZERO
+                    portfolio_value = margins.get("total_balance") or ZERO
                     if portfolio_value <= 0:
                         # Fail-closed: no trade without real risk data
                         logger.error("risk_inputs_unavailable — order blocked")
                         return
                     daily_loss = max(
-                        Decimal("0"),
-                        -sum((p.realised_pnl + p.unrealised_pnl for p in positions), Decimal("0")),
+                        ZERO,
+                        -sum((p.realised_pnl + p.unrealised_pnl for p in positions), ZERO),
                     )
 
                     self.order_router.submit_order(
@@ -95,9 +95,9 @@ class ScalprAmtStrategy(IStrategy):
                         daily_loss=daily_loss,
                         portfolio_value=portfolio_value,
                     )
-                    logger.info(f"AMT Strategy: Order {order.order_id} submitted successfully")
+                    logger.info("AMT Strategy: Order %s submitted successfully", order.order_id)
                 except Exception as exc:
-                    logger.error(f"AMT Strategy: Order submission failed: {exc}")
+                    logger.error("AMT Strategy: Order submission failed: %s", exc)
 
     def on_bar(self, bar: OHLCV) -> None:
         """Incorporate closed bar into the volume profile."""

@@ -9,6 +9,7 @@ from scalpr.api.models import (
     ReplaySession,
     ReplaySessionsResponse,
 )
+from scalpr.domain.values import DEFAULT_EXCHANGE
 
 router = APIRouter(prefix="/replay", tags=["replay"])
 
@@ -32,7 +33,7 @@ async def create_replay_session(
             symbol=body.symbol,
             date=body.date,
             timeframe=body.timeframe,
-            exchange="NSE",
+            exchange=DEFAULT_EXCHANGE,
             from_t=body.from_t,
             to_t=body.to_t,
         )

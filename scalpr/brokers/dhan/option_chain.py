@@ -18,11 +18,9 @@ from typing import Any
 from scalpr.brokers.dhan.http_client import DhanHttpClient
 from scalpr.brokers.dhan.resolver import SymbolResolver
 from scalpr.brokers.errors import OptionChainNotSupported
+from scalpr.domain.values import OPTIONABLE_SEGMENTS, ZERO
 
 logger = logging.getLogger(__name__)
-
-# Wire segments that support option chain queries
-_OPTIONABLE_SEGMENTS = frozenset({"NSE_FNO", "BSE_FNO", "IDX_I", "MCX_COMM"})
 
 
 class OptionChainAdapter:
@@ -62,7 +60,7 @@ class OptionChainAdapter:
         """
         security_id, segment = self._resolve_underlying(underlying_symbol, exchange)
 
-        if segment not in _OPTIONABLE_SEGMENTS:
+        if segment not in OPTIONABLE_SEGMENTS:
             raise OptionChainNotSupported(
                 f"Option chain not supported for {underlying_symbol} ({exchange}) "
                 f"— only available for indices and F&O instruments"
@@ -130,15 +128,15 @@ class OptionChainAdapter:
         """Normalize a wire value to Decimal, defaulting to 0 on bad input.
 
         Dhan occasionally returns ``None`` for prices on thinly-traded legs;
-        coercing to ``Decimal("0")`` keeps downstream math well-defined
+        coercing to ``ZERO`` keeps downstream math well-defined
         without masking the absence of data (delta stays None).
         """
         if value is None:
-            return Decimal("0")
+            return ZERO
         try:
             return Decimal(str(value))
         except (TypeError, ValueError, ArithmeticError):
-            return Decimal("0")
+            return ZERO
 
     @staticmethod
     def _to_security_id(value: Any) -> int | None:

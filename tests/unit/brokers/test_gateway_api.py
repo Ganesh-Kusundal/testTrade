@@ -33,11 +33,16 @@ def _make_resolved(symbol="TCS", exchange=Exchange.NSE, segment=Segment.EQUITY, 
 def _gateway_with_mock(resolved=None):
     """Create a Gateway with a mocked underlying broker gateway."""
     from scalpr.brokers.gateway import Gateway
+    from scalpr.brokers.registry import BrokerRegistry
 
     gw = Gateway.__new__(Gateway)
+    gw._broker_name = "dhan"
     gw._registry = MagicMock()
     gw._ws_manager = None
-    gw._feed_subscribers = {}
+    gw._ws_loop = None
+    gw._ws_thread = None
+    gw._stream_callbacks = []
+    gw._ws_lock = __import__("threading").Lock()
     gw._connected = True
 
     mock_conn = MagicMock()
@@ -46,10 +51,22 @@ def _gateway_with_mock(resolved=None):
     mock_conn.resolver = mock_resolver
     mock_conn.market_data = MagicMock()
     mock_conn.historical = MagicMock()
+    mock_conn.http_client = MagicMock()
+
+    # Mock OptionChainAdapter for registry lookup
+    mock_oc_adapter_cls = MagicMock()
+    mock_oc_adapter_cls.return_value = MagicMock()
+    BrokerRegistry.register_adapter("dhan", "option_chain", mock_oc_adapter_cls)
 
     # _gateway is the underlying broker gateway (e.g. DhanGateway)
     mock_broker_gw = MagicMock()
     mock_broker_gw.connection = mock_conn
+    # Mock the adapters() method to return the connection and adapters
+    mock_broker_gw.adapters.return_value = {
+        "connection": mock_conn,
+        "resolver": mock_resolver,
+        "http_client": mock_conn.http_client,
+    }
     gw._gateway = mock_broker_gw
     return gw, mock_conn
 

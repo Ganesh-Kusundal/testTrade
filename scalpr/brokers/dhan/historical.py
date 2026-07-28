@@ -48,7 +48,7 @@ class HistoricalDataAdapter:
         adapter = HistoricalDataAdapter(http_client, resolver)
         candles = adapter.get_ohlcv(
             symbol="RELIANCE",
-            exchange="NSE",
+            exchange=DEFAULT_EXCHANGE,
             timeframe="5m",
             from_date=date(2024, 1, 1),
             to_date=date(2024, 1, 31),

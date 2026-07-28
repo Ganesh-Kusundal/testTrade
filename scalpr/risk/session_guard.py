@@ -27,7 +27,7 @@ class SessionGuard:
         """Record trade PnL. Halts and squares off after 3 consecutive losses."""
         if pnl < 0:
             self.consecutive_losses += 1
-            logger.warning(f"SessionGuard: Recorded loss. Consecutive losses: {self.consecutive_losses}/{self.max_losses}")
+            logger.warning("SessionGuard: Recorded loss. Consecutive losses: %s/%s", self.consecutive_losses, self.max_losses)
             if self.consecutive_losses >= self.max_losses:
                 self.halted = True
                 logger.critical("SessionGuard: 3 consecutive losses reached! Initiating square_off_all and halting trading.")

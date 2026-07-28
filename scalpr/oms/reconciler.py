@@ -52,7 +52,7 @@ class PositionReconciler:
         try:
             broker_positions = self._gateway.get_positions()
         except Exception as exc:
-            logger.error(f"Reconciliation skipped: broker positions unavailable: {exc}")
+            logger.error("Reconciliation skipped: broker positions unavailable: %s", exc)
             return []
 
         broker_qty = {p.symbol: p.quantity for p in broker_positions}
@@ -81,7 +81,7 @@ class PositionReconciler:
                 try:
                     self._on_discrepancy(disc)
                 except Exception as exc:
-                    logger.error(f"on_discrepancy callback failed for {symbol}: {exc}")
+                    logger.error("on_discrepancy callback failed for %s: %s", symbol, exc)
 
         return discrepancies
 

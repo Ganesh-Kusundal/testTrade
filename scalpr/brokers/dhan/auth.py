@@ -20,6 +20,7 @@ import requests
 
 from config.secrets_manager import SecretsManager
 from scalpr.brokers.dhan.exceptions import AuthenticationError, ConfigurationError
+from scalpr.domain.values import DEFAULT_TIMEOUT_S
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +51,7 @@ def generate_token(client_id: str, pin: str, totp_secret: str) -> str:
     resp = requests.post(
         TOKEN_URL,
         data={"dhanClientId": client_id, "pin": pin, "totp": totp_code},
-        timeout=15,
+        timeout=DEFAULT_TIMEOUT_S,
     )
     if resp.status_code != 200:
         raise AuthenticationError(

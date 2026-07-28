@@ -7,6 +7,7 @@ from typing import Any
 from scalpr.domain.fill import Fill
 from scalpr.domain.position import Position
 from scalpr.domain.tick import Tick
+from scalpr.domain.values import ZERO
 
 
 class PortfolioManager:
@@ -14,7 +15,7 @@ class PortfolioManager:
 
     def __init__(self) -> None:
         self.positions: dict[str, Position] = {}
-        self.peak_equity: Decimal = Decimal("0")
+        self.peak_equity: Decimal = ZERO
         self._lock = threading.RLock()
 
     def update_position_from_fill(self, fill: Fill, exchange: Any) -> Position:
@@ -28,10 +29,10 @@ class PortfolioManager:
                     symbol=symbol,
                     exchange=exchange,
                     quantity=0,
-                    avg_price=Decimal("0"),
+                    avg_price=ZERO,
                     ltp=fill.price,
-                    unrealised_pnl=Decimal("0"),
-                    realised_pnl=Decimal("0"),
+                    unrealised_pnl=ZERO,
+                    realised_pnl=ZERO,
                 )
 
             # signed quantity delta: BUY is positive, SELL is negative
@@ -55,12 +56,12 @@ class PortfolioManager:
     @property
     def total_realised_pnl(self) -> Decimal:
         with self._lock:
-            return sum((pos.realised_pnl for pos in self.positions.values()), Decimal("0"))
+            return sum((pos.realised_pnl for pos in self.positions.values()), ZERO)
 
     @property
     def total_unrealised_pnl(self) -> Decimal:
         with self._lock:
-            return sum((pos.unrealised_pnl for pos in self.positions.values()), Decimal("0"))
+            return sum((pos.unrealised_pnl for pos in self.positions.values()), ZERO)
 
     @property
     def total_pnl(self) -> Decimal:

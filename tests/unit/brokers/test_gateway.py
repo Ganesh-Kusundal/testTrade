@@ -300,9 +300,15 @@ class TestGatewayErrorTranslation:
         gw = Gateway.__new__(Gateway)  # bypass __init__/connect
         conn = MagicMock()
         conn.resolver.resolve_full.side_effect = InstrumentNotFoundError("nope")
-        with patch.object(Gateway, "_get_dhan_connection", return_value=conn):
-            with pytest.raises(InstrumentNotFound):
-                gw.instrument("ZZZZ:NSE")
+        # Mock the adapters() method to return the connection
+        gw._gateway = MagicMock()
+        gw._gateway.adapters.return_value = {
+            "connection": conn,
+            "resolver": conn.resolver,
+            "http_client": conn.http_client,
+        }
+        with pytest.raises(InstrumentNotFound):
+            gw.instrument("ZZZZ:NSE")
 
 
 class TestGatewayWsLifecycleSafety:
@@ -357,7 +363,7 @@ class TestSubscribeFeedMode:
             f.result.return_value = None
             return f
 
-        with patch("scalpr.brokers.gateway.asyncio.run_coroutine_threadsafe", side_effect=fake_run):
+        with patch("scalpr.brokers.gateway._streaming.asyncio.run_coroutine_threadsafe", side_effect=fake_run):
             gw.subscribe_feed(MarketFeed.FULL, "TCS:NSE", on_event=lambda evt: None)
 
         # Callback must already be registered when subscribe fires (no dropped ticks)
@@ -384,7 +390,7 @@ class TestStopStreamHardening:
     def test_stop_stream_survives_dead_loop(self):
         gw = self._gw()
         gw._ws_loop.call_soon_threadsafe.side_effect = RuntimeError("Event loop is closed")
-        with patch("scalpr.brokers.gateway.asyncio.run_coroutine_threadsafe",
+        with patch("scalpr.brokers.gateway._streaming.asyncio.run_coroutine_threadsafe",
                    side_effect=RuntimeError("Event loop is closed")):
             gw.stop_stream()  # must not raise
 
@@ -396,7 +402,7 @@ class TestStopStreamHardening:
         gw._ws_thread = thread
         fut = MagicMock()
         fut.result.return_value = None
-        with patch("scalpr.brokers.gateway.asyncio.run_coroutine_threadsafe", return_value=fut):
+        with patch("scalpr.brokers.gateway._streaming.asyncio.run_coroutine_threadsafe", return_value=fut):
             gw.stop_stream()
         loop.close.assert_not_called()
 
@@ -420,7 +426,7 @@ class TestSubscribeFeedExceptionSafety:
             coro.close()
             raise RuntimeError("Event loop is closed")
 
-        with patch("scalpr.brokers.gateway.asyncio.run_coroutine_threadsafe", side_effect=fake_run):
+        with patch("scalpr.brokers.gateway._streaming.asyncio.run_coroutine_threadsafe", side_effect=fake_run):
             with pytest.raises(RuntimeError):
                 gw.subscribe_feed(MarketFeed.FULL, "TCS:NSE", on_event=lambda evt: None)
 
@@ -443,7 +449,7 @@ class TestSubscribeFeedExceptionSafety:
             f.result.return_value = None
             return f
 
-        with patch("scalpr.brokers.gateway.asyncio.run_coroutine_threadsafe", side_effect=fake_run):
+        with patch("scalpr.brokers.gateway._streaming.asyncio.run_coroutine_threadsafe", side_effect=fake_run):
             gw.subscribe_feed("full", "TCS:NSE")
 
         gw._ws_manager.subscribe_pairs.assert_called_once_with([("TCS", "NSE")], mode="full")
@@ -455,6 +461,7 @@ class TestGatewayOptionChain:
     def _bare_gateway(self):
         from scalpr.brokers.gateway import Gateway
         gw = Gateway.__new__(Gateway)
+        gw._broker_name = "dhan"
         gw._ws_manager = None
         gw._ws_loop = None
         gw._ws_thread = None
@@ -466,7 +473,7 @@ class TestGatewayOptionChain:
     def test_option_chain_delegates_to_adapter(self):
         from datetime import date
 
-        from scalpr.brokers.gateway import Gateway
+        from scalpr.brokers.registry import BrokerRegistry
 
         gw = self._bare_gateway()
         conn = MagicMock()
@@ -475,11 +482,19 @@ class TestGatewayOptionChain:
         adapter_instance = MagicMock()
         adapter_instance.get_option_chain.return_value = [{"strike": 24000, "security_id": 1}]
 
-        with patch.object(Gateway, "_get_dhan_connection", return_value=conn), patch(
-            "scalpr.brokers.gateway.OptionChainAdapter",
-            return_value=adapter_instance,
-        ) as AdapterCls:
-            result = gw.option_chain("NIFTY", expiry=date(2026, 7, 28))
+        # Mock the adapters() method
+        gw._gateway = MagicMock()
+        gw._gateway.adapters.return_value = {
+            "connection": conn,
+            "resolver": conn.resolver,
+            "http_client": conn.http_client,
+        }
+
+        # Register mock adapter in registry
+        AdapterCls = MagicMock(return_value=adapter_instance)
+        BrokerRegistry.register_adapter("dhan", "option_chain", AdapterCls)
+
+        result = gw.option_chain("NIFTY", expiry=date(2026, 7, 28))
 
         AdapterCls.assert_called_once_with(conn.http_client, conn.resolver)
         adapter_instance.get_option_chain.assert_called_once_with(
@@ -488,18 +503,25 @@ class TestGatewayOptionChain:
         assert result == [{"strike": 24000, "security_id": 1}]
 
     def test_option_chain_auto_expiry_when_none(self):
-        from scalpr.brokers.gateway import Gateway
+        from scalpr.brokers.registry import BrokerRegistry
 
         gw = self._bare_gateway()
         conn = MagicMock()
         adapter_instance = MagicMock()
         adapter_instance.get_option_chain.return_value = []
 
-        with patch.object(Gateway, "_get_dhan_connection", return_value=conn), patch(
-            "scalpr.brokers.gateway.OptionChainAdapter",
-            return_value=adapter_instance,
-        ):
-            gw.option_chain("NIFTY")
+        # Mock the adapters() method
+        gw._gateway = MagicMock()
+        gw._gateway.adapters.return_value = {
+            "connection": conn,
+            "resolver": conn.resolver,
+            "http_client": conn.http_client,
+        }
+
+        AdapterCls = MagicMock(return_value=adapter_instance)
+        BrokerRegistry.register_adapter("dhan", "option_chain", AdapterCls)
+
+        gw.option_chain("NIFTY")
 
         adapter_instance.get_option_chain.assert_called_once_with(
             "NIFTY", "NSE", expiry=None
@@ -508,15 +530,23 @@ class TestGatewayOptionChain:
     def test_option_chain_underlying_not_found_translated(self):
         from scalpr.brokers.dhan.exceptions import InstrumentNotFoundError
         from scalpr.brokers.errors import InstrumentNotFound
-        from scalpr.brokers.gateway import Gateway
+        from scalpr.brokers.registry import BrokerRegistry
 
         gw = self._bare_gateway()
         conn = MagicMock()
         adapter_instance = MagicMock()
         adapter_instance.get_option_chain.side_effect = InstrumentNotFoundError("nope")
 
-        with patch.object(Gateway, "_get_dhan_connection", return_value=conn), patch(
-            "scalpr.brokers.gateway.OptionChainAdapter",
-            return_value=adapter_instance,
-        ), pytest.raises(InstrumentNotFound):
+        # Mock the adapters() method
+        gw._gateway = MagicMock()
+        gw._gateway.adapters.return_value = {
+            "connection": conn,
+            "resolver": conn.resolver,
+            "http_client": conn.http_client,
+        }
+
+        AdapterCls = MagicMock(return_value=adapter_instance)
+        BrokerRegistry.register_adapter("dhan", "option_chain", AdapterCls)
+
+        with pytest.raises(InstrumentNotFound):
             gw.option_chain("ZZZNOTREAL", "NSE")

@@ -30,6 +30,7 @@ from typing import Any
 from scalpr.brokers.dhan.exceptions import MarketDataError
 from scalpr.brokers.dhan.segments import EXCHANGE_TO_SEGMENT, SEGMENT_TO_NUMERIC
 from scalpr.domain.tick import Tick
+from scalpr.domain.values import ZERO
 
 logger = logging.getLogger(__name__)
 
@@ -598,7 +599,7 @@ class DhanWebSocketClient:
                 bid = Decimal(str(depth[0].get("bid_price", "0")))
                 ask = Decimal(str(depth[0].get("ask_price", "0")))
             else:
-                bid = ask = Decimal("0")
+                bid = ask = ZERO
 
             # Volume handling with delta computation (thread-safe)
             raw_vol = data.get("volume", 0)

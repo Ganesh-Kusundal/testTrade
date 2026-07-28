@@ -49,7 +49,7 @@ class ReplayEngine:
                 self.ticks.append(event.tick)
 
         self.cursor = 0
-        logger.info(f"ReplayEngine: Loaded {len(self.ticks)} ticks from {len(events)} events")
+        logger.info("ReplayEngine: Loaded %s ticks from %s events", len(self.ticks), len(events))
         return len(self.ticks)
 
     def save_checkpoint(self) -> int:
@@ -60,14 +60,14 @@ class ReplayEngine:
         """Checkpoint restoring."""
         if 0 <= cursor < len(self.ticks):
             self.cursor = cursor
-            logger.info(f"ReplayEngine: Restored checkpoint to index {cursor}")
+            logger.info("ReplayEngine: Restored checkpoint to index %s", cursor)
         else:
             raise ValueError("Invalid cursor checkpoint position")
 
     async def start(self) -> None:
         """Start streaming ticks to strategy executor."""
         self.is_running = True
-        logger.info(f"ReplayEngine: Starting tick replay of {len(self.ticks)} ticks at {self.speed_multiplier}x speed.")
+        logger.info("ReplayEngine: Starting tick replay of %s ticks at %sx speed.", len(self.ticks), self.speed_multiplier)
 
         while self.is_running and self.cursor < len(self.ticks):
             tick = self.ticks[self.cursor]

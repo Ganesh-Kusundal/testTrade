@@ -42,10 +42,9 @@ dev = [
 tradex = "scalpr.cli.main:main"
 
 [project.entry-points."tradex.brokers"]
-# Phase 2 will populate these; leave empty for Phase 0
-# dhan = "brokers.dhan:DhanBroker"
-# upstox = "brokers.upstox:UpstoxBroker"
-# paper = "brokers.paper:PaperBroker"
+dhan = "scalpr.brokers.dhan.gateway:DhanGateway"
+paper = "scalpr.oms.paper_oms:PaperOms"
+simulated = "scalpr.simulation.simulated_gateway:SimulatedGateway"
 
 [tool.setuptools.packages.find]
 include = ["scalpr*", "brokers*", "cli*", "analytics*", "datalake*", "config*", "domain*", "runtime*", "market_data*", "oms*", "event_bus*", "portfolio*", "risk*", "strategy*", "backtesting*", "replay*", "scripts*"]
@@ -244,3 +243,37 @@ name = "Broker Dhan isolation"
 type = "forbidden"
 source_modules = ["scalpr.brokers.dhan"]
 forbidden_modules = ["scalpr.api", "scalpr.cli"]
+
+[[tool.importlinter.contracts]]
+name = "Broker abstraction cannot import Dhan implementation"
+type = "forbidden"
+source_modules = [
+    "scalpr.brokers.broker_port",
+    "scalpr.brokers.capabilities",
+    "scalpr.brokers.contracts",
+    "scalpr.brokers.errors",
+    "scalpr.brokers.gateway",
+    "scalpr.brokers.instrument_handle",
+    "scalpr.brokers.rate_limit",
+    "scalpr.brokers.rate_limit_async",
+]
+forbidden_modules = ["scalpr.brokers.dhan"]
+# Registry uses lazy imports inside functions for broker discovery
+ignore_imports = [
+    "scalpr.brokers.registry -> scalpr.brokers.dhan.gateway",
+    "scalpr.brokers.registry -> scalpr.brokers.dhan.auth",
+    "scalpr.brokers.registry -> scalpr.brokers.dhan.option_chain",
+    "scalpr.brokers.registry -> scalpr.brokers.dhan.ws_manager",
+]
+
+[[tool.importlinter.contracts]]
+name = "Risk cannot import Dhan implementation"
+type = "forbidden"
+source_modules = ["scalpr.risk"]
+forbidden_modules = ["scalpr.brokers.dhan"]
+
+[[tool.importlinter.contracts]]
+name = "Market data cannot import Dhan implementation"
+type = "forbidden"
+source_modules = ["scalpr.market_data"]
+forbidden_modules = ["scalpr.brokers.dhan"]

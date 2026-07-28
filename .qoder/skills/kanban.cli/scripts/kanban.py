@@ -341,6 +341,19 @@ def graphify_info(root: Path, index: dict[str, list]) -> dict:
     }
 
 
+def graphify_is_stale(root: Path) -> bool:
+    """Lightweight staleness check: True iff the graphify graph exists but is
+    behind the current file inventory (modified/deleted/new files). Used by
+    `task status` to remind the agent to refresh the graph after closing a
+    task — per AGENTS.md, a stale graphify must be auto-refreshed before
+    continuing."""
+    index = file_inventory(root)
+    info = graphify_info(root, index)
+    if not info.get("available"):
+        return False  # nothing to refresh
+    return not info.get("fresh", True)
+
+
 def component_counts(index: dict[str, list], board: dict, root: Path) -> dict[str, dict]:
     """Component name -> {files, description}. Union of curated components and
     scalpr/* subpackages discovered on disk (flagged when undescribed)."""
@@ -483,6 +496,15 @@ def render_context(root: Path, board: dict, scan: dict) -> str:
             body.append(f"- STALE ({', '.join(counts)} since build) — "
                         "refresh with `/graphify update`")
             body += [f"  - modified: {p}" for p in stale.get("modified", [])]
+            # Auto-refresh directive: per AGENTS.md, a stale graphify must be
+            # refreshed before continuing. The agent reads CONTEXT.md at
+            # session start; this instruction makes the next action
+            # unambiguous. `task status <id> done` also emits the reminder
+            # on stderr when it closes a task while the graph is stale.
+            body.append(
+                "- AUTO-REFRESH: run `/graphify update` now, then re-run "
+                "`kanban.py update` to refresh this digest."
+            )
     section("Knowledge graph (graphify)", body)
 
     flows = board.get("flows", {})
@@ -543,15 +565,32 @@ def cmd_task_add(root: Path, task_type: str, title: str, status: str) -> int:
 
 def cmd_task_status(root: Path, tid: str, status: str) -> int:
     board = load_board(root)
+    found = False
     for t in board["tasks"]:
         if t["id"] == tid:
             t["status"] = status
             t["updated"] = now_iso()
-            save_board(root, board)
-            print(f"{tid} → {status}")
-            return 0
-    print(f"no task with id {tid}", file=sys.stderr)
-    return 1
+            found = True
+            break
+    if not found:
+        print(f"no task with id {tid}", file=sys.stderr)
+        return 1
+    save_board(root, board)
+    print(f"{tid} → {status}")
+
+    # Auto-graphify refresh on task completion.
+    # Per AGENTS.md session-start protocol: "If kanban reports graphify STALE,
+    # auto-run `/graphify update` to refresh the knowledge graph before
+    # continuing." Closing a task is the natural trigger to re-check — the
+    # agent just changed the board, so the file inventory may have moved.
+    if status == "done" and graphify_is_stale(root):
+        print(
+            "graphify STALE — run `/graphify update` (or "
+            "`python3 .qoder/skills/kanban.cli/scripts/kanban.py update` "
+            "after the refresh) to keep the knowledge graph in sync.",
+            file=sys.stderr,
+        )
+    return 0
 
 
 def cmd_task_list(root: Path, status: str | None, as_json: bool) -> int:

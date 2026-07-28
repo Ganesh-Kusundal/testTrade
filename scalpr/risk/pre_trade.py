@@ -4,6 +4,7 @@ from decimal import Decimal
 
 from scalpr.domain.order import Order, OrderSide
 from scalpr.domain.position import Position, PositionSide
+from scalpr.domain.values import ZERO
 
 
 class PreTradeRiskGate:
@@ -66,7 +67,7 @@ class PreTradeRiskGate:
             return False, f"Order notional ({order_notional}) exceeds max capital risk per trade ({self.portfolio_value * self.max_capital_risk})"
 
         # 4. Instrument concentration <= 20% of portfolio
-        current_notional = Decimal("0")
+        current_notional = ZERO
         if existing_pos:
             current_notional = Decimal(abs(existing_pos.quantity)) * existing_pos.avg_price
 

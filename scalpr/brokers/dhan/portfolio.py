@@ -19,6 +19,7 @@ from scalpr.brokers.dhan.resolver import SymbolResolver
 from scalpr.brokers.dhan.segments import normalise_exchange
 from scalpr.domain.instrument import Exchange
 from scalpr.domain.position import Position, PositionSide, PositionState
+from scalpr.domain.values import ZERO
 
 logger = logging.getLogger(__name__)
 
@@ -192,7 +193,7 @@ class PortfolioAdapter:
         state = PositionState.OPEN if quantity != 0 else PositionState.FLAT
 
         unrealised_pnl = self._calculate_unrealised_pnl(quantity, avg_price, ltp)
-        realised_pnl = Decimal("0")  # Holdings don't have realised P&L
+        realised_pnl = ZERO  # Holdings don't have realised P&L
 
         return Position(
             symbol=symbol,
@@ -296,7 +297,7 @@ class PortfolioAdapter:
             return Decimal(quantity) * (ltp - avg_price)
         elif quantity < 0:
             return Decimal(abs(quantity)) * (avg_price - ltp)
-        return Decimal("0")
+        return ZERO
 
     @staticmethod
     def _normalise_exchange(exchange: str) -> Exchange:

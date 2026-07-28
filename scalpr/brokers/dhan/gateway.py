@@ -23,13 +23,12 @@ from typing import Any
 from scalpr.brokers.broker_port import IBrokerGateway
 from scalpr.brokers.dhan.connection import DhanConnection
 from scalpr.brokers.dhan.exceptions import BrokerError
-from scalpr.brokers.dhan.exceptions import RateLimitError as DhanRateLimitError
 from scalpr.brokers.dhan.segments import SEGMENT_TO_EXCHANGE
-from scalpr.brokers.errors import RateLimitError
 from scalpr.domain.fill import Fill
 from scalpr.domain.instrument import Exchange
 from scalpr.domain.order import Order, OrderSide, OrderState, OrderType
 from scalpr.domain.position import Position
+from scalpr.domain.values import ZERO
 
 logger = logging.getLogger(__name__)
 
@@ -151,10 +150,7 @@ class DhanGateway(IBrokerGateway):
         Raises:
             BrokerError: If order placement fails.
         """
-        try:
-            return self._connection.orders.place_order(order)
-        except DhanRateLimitError as exc:
-            raise RateLimitError(str(exc)) from exc
+        return self._connection.orders.place_order(order)
 
     def modify_order(self, order_id: str, price: Decimal, quantity: int, trigger_price: Decimal | None = None) -> bool:
         """Modify an existing order's price, quantity, and/or trigger price.
@@ -350,7 +346,7 @@ class DhanGateway(IBrokerGateway):
                 side=side,
                 order_type=OrderType.MARKET,
                 quantity=qty,
-                price=pos.ltp if pos.ltp > 0 else Decimal("0"),
+                price=pos.ltp if pos.ltp > 0 else ZERO,
                 state=OrderState.PENDING,
             )
 
@@ -380,7 +376,7 @@ class DhanGateway(IBrokerGateway):
                     f"Square-off failed for {pos.symbol}: {exc}"
                 ) from exc
 
-        logger.info(f"square_off_all_complete: {len(fills)} positions closed")
+        logger.info("square_off_all_complete: %s positions closed", len(fills))
         return fills
 
     # ------------------------------------------------------------------
@@ -445,11 +441,11 @@ class DhanGateway(IBrokerGateway):
             side=side,
             order_type=order_type,
             quantity=raw.get("quantity", 0),
-            price=raw.get("price", Decimal("0")),
-            trigger_price=raw.get("trigger_price", Decimal("0")),
+            price=raw.get("price", ZERO),
+            trigger_price=raw.get("trigger_price", ZERO),
             state=state,
             filled_quantity=raw.get("filled_quantity", 0),
-            avg_price=raw.get("traded_price", Decimal("0")),
+            avg_price=raw.get("traded_price", ZERO),
             product_type=raw.get("product_type", "INTRADAY"),
             validity=raw.get("validity", "DAY"),
             reject_reason=raw.get("reject_reason", ""),
@@ -481,7 +477,7 @@ class DhanGateway(IBrokerGateway):
             symbol=raw.get("symbol", ""),
             side=side,
             quantity=raw.get("quantity", 0),
-            price=raw.get("price", Decimal("0")),
+            price=raw.get("price", ZERO),
             timestamp=timestamp,
             exchange=SEGMENT_TO_EXCHANGE.get(raw.get("exchange_segment", ""), ""),
         )
@@ -498,3 +494,16 @@ class DhanGateway(IBrokerGateway):
         not covered by IBrokerGateway (e.g., batch LTP, depth, tradebook).
         """
         return self._connection
+
+    def adapters(self) -> dict[str, Any]:
+        """Return Dhan-specific adapters for advanced operations.
+
+        Returns a dict with 'connection' and 'resolver' keys that the
+        broker-agnostic layer can use for operations like option chains.
+        This eliminates the need to reach into private state.
+        """
+        return {
+            "connection": self._connection,
+            "resolver": self._connection.resolver,
+            "http_client": self._connection.http_client,
+        }

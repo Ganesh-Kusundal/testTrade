@@ -32,6 +32,7 @@ from scalpr.domain.fill import Fill
 from scalpr.domain.instrument import Exchange
 from scalpr.domain.order import Order, OrderSide, OrderState, OrderType
 from scalpr.domain.position import Position
+from scalpr.domain.values import DEFAULT_EXCHANGE, ZERO
 from scalpr.simulation.fill_simulator import FillSimulator
 
 logger = logging.getLogger(__name__)
@@ -226,17 +227,17 @@ class SimulatedGateway(IBrokerGateway):
     def get_margins(self) -> Funds:
         with self._lock:
             realised = sum(
-                (p.realised_pnl for p in self._positions.values()), Decimal("0")
+                (p.realised_pnl for p in self._positions.values()), ZERO
             )
             used = sum(
-                (p.notional_value() for p in self._positions.values()), Decimal("0")
+                (p.notional_value() for p in self._positions.values()), ZERO
             )
             total = self._starting_capital + realised
             return Funds(
                 available_margin=total - used,
                 used_margin=used,
                 total_balance=total,
-                collateral=Decimal("0"),
+                collateral=ZERO,
                 realtime=False,
             )
 
@@ -265,14 +266,14 @@ class SimulatedGateway(IBrokerGateway):
     # Market data
     # ------------------------------------------------------------------
 
-    def get_ltp(self, symbol: str, exchange: str = "NSE") -> Decimal:
+    def get_ltp(self, symbol: str, exchange: str = DEFAULT_EXCHANGE) -> Decimal:
         self._acquire("quotes")
         with self._lock:
             if symbol not in self._ltp:
                 raise ValueError(f"No simulated LTP for {symbol}")
             return self._ltp[symbol]
 
-    def get_quote(self, symbol: str, exchange: str = "NSE") -> dict[str, Any]:
+    def get_quote(self, symbol: str, exchange: str = DEFAULT_EXCHANGE) -> dict[str, Any]:
         self._acquire("quotes")
         with self._lock:
             if symbol not in self._ltp:
@@ -280,8 +281,8 @@ class SimulatedGateway(IBrokerGateway):
             ltp = self._ltp[symbol]
         return {
             "ltp": ltp, "open": ltp, "high": ltp, "low": ltp,
-            "close": ltp, "volume": 0, "change": Decimal("0"),
-            "change_percent": Decimal("0"),
+            "close": ltp, "volume": 0, "change": ZERO,
+            "change_percent": ZERO,
         }
 
     def get_ohlcv(

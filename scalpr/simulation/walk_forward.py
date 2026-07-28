@@ -37,5 +37,5 @@ class WalkForwardValidator:
             # Roll forward by the test period
             current_train_start += timedelta(days=self.test_days)
 
-        logger.info(f"WalkForward: Generated {len(windows)} validation windows.")
+        logger.info("WalkForward: Generated %s validation windows.", len(windows))
         return windows

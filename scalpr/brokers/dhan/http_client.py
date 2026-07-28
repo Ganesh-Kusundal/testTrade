@@ -14,6 +14,16 @@ from typing import Any
 import requests
 
 from config.endpoints import Dhan
+from scalpr.brokers.dhan._http_common import (
+    _MAX_RETRIES,
+    _ORDERS_ACQUIRE_TIMEOUT_S,
+    _REFRESH_COOLDOWN_SECONDS,
+    backoff_delay,
+    bucket_for,
+    build_url,
+    classify_response,
+    try_refresh_token,
+)
 from scalpr.brokers.dhan.exceptions import (
     AuthenticationError,
     BrokerError,
@@ -27,33 +37,6 @@ from scalpr.brokers.rate_limit import (
 )
 
 logger = logging.getLogger(__name__)
-
-# Endpoint prefix → rate-limit bucket name.
-# Single source of truth shared with the async client.
-_ENDPOINT_BUCKETS: dict[str, str] = {
-    "/marketfeed/quote": "quotes",
-    "/marketfeed/ltp": "historical",
-    "/marketfeed/ohlc": "historical",
-    "/optionchain": "optionchain",
-    "/charts/": "historical",
-    "/orders": "orders",
-    "/profile": "admin",
-    "/fundlimit": "admin",
-    "/positions": "admin",
-    "/holdings": "admin",
-    "/orderbook": "admin",
-    "/tradebook": "admin",
-}
-_DEFAULT_BUCKET = "admin"
-
-# Fail-fast timeout for the orders bucket — order path must never block.
-_ORDERS_ACQUIRE_TIMEOUT_S = 0.5
-
-# Retry configuration
-_MAX_RETRIES = 3
-_BASE_DELAY_MS = 500
-_MAX_DELAY_MS = 5000
-_REFRESH_COOLDOWN_SECONDS = 60
 
 
 class CircuitBreaker:
@@ -168,35 +151,18 @@ class DhanHttpClient:
     @staticmethod
     def _bucket_for(endpoint: str) -> str:
         """Resolve endpoint to rate-limit bucket name via prefix match."""
-        if endpoint in _ENDPOINT_BUCKETS:
-            return _ENDPOINT_BUCKETS[endpoint]
-        for prefix, bucket in _ENDPOINT_BUCKETS.items():
-            if endpoint.startswith(prefix):
-                return bucket
-        return _DEFAULT_BUCKET
+        return bucket_for(endpoint)
 
     def _try_refresh_token(self) -> bool:
         """Attempt token refresh. Returns True if successful."""
-        now = time.time()
-
-        if now - self._last_refresh_time < _REFRESH_COOLDOWN_SECONDS:
-            logger.debug("token_refresh_skipped: cooldown_active")
-            return False
-
-        if self._token_refresh_fn is None:
-            return False
-
-        try:
-            new_token = self._token_refresh_fn()
-            if new_token:
-                self._last_refresh_time = now
-                self.update_token(new_token)
-                logger.info("token_refreshed", extra={"client_id": self.client_id})
-                return True
-        except Exception as exc:
-            logger.warning("token_refresh_failed", extra={"error": str(exc)})
-
-        return False
+        success, self._last_refresh_time = try_refresh_token(
+            self._last_refresh_time,
+            _REFRESH_COOLDOWN_SECONDS,
+            self._token_refresh_fn,
+            self.update_token,
+            self.client_id,
+        )
+        return success
 
     def _request(self, method: str, endpoint: str, json: dict | None = None) -> dict[str, Any]:
         """Execute HTTP request with retry, rate limiting, and circuit breaker."""
@@ -214,7 +180,7 @@ class DhanHttpClient:
                 )
         else:
             self._limiter.acquire(bucket)
-        url = f"{self._base_url}{endpoint}" if endpoint.startswith("/") else endpoint
+        url = build_url(self._base_url, endpoint)
 
         max_attempts = _MAX_RETRIES if self._enable_retry else 1
         last_exc: Exception | None = None
@@ -227,7 +193,7 @@ class DhanHttpClient:
                 self._circuit_breaker.record_failure()
 
                 if attempt < max_attempts:
-                    delay = self._backoff_delay(attempt)
+                    delay = backoff_delay(attempt)
                     logger.warning("http_retry", extra={
                         "method": method, "endpoint": endpoint, "attempt": attempt,
                         "delay_ms": int(delay * 1000),
@@ -240,12 +206,9 @@ class DhanHttpClient:
                 "method": method, "endpoint": endpoint, "status": resp.status_code,
             })
 
-            # 401 — or Dhan's DH-906 "Invalid Token" (arrives as HTTP 400,
-            # captured live 2026-07-27) — try token refresh
-            token_rejected = resp.status_code == 401 or (
-                resp.status_code >= 400 and "DH-906" in (resp.text or "")
-            )
-            if token_rejected:
+            category = classify_response(resp.status_code, resp.text or "")
+
+            if category == "auth_rejected":
                 if attempt == 1 and self._try_refresh_token():
                     logger.info("http_retry_after_refresh", extra={"method": method, "endpoint": endpoint})
                     continue
@@ -254,20 +217,17 @@ class DhanHttpClient:
                     + (" (DH-906 Invalid Token)" if resp.status_code != 401 else "")
                 )
 
-            # 429 - rate limited: trigger bucket cooldown (halve rate +
-            # mandatory back-off) and fail fast — never retry-in-line.
-            if resp.status_code == 429:
+            if category == "rate_limited":
                 self._limiter.trigger_cooldown(bucket)
                 logger.warning("http_rate_limited", extra={
                     "method": method, "endpoint": endpoint, "bucket": bucket,
                 })
                 raise RateLimitError(f"Rate limited: HTTP 429 on {method} {endpoint}")
 
-            # 5xx - server error, retry
-            if resp.status_code >= 500:
+            if category == "server_error":
                 self._circuit_breaker.record_failure()
                 if attempt < max_attempts:
-                    delay = self._backoff_delay(attempt)
+                    delay = backoff_delay(attempt)
                     logger.warning("http_server_error_retry", extra={
                         "method": method, "endpoint": endpoint, "status": resp.status_code,
                         "attempt": attempt, "delay_ms": int(delay * 1000),
@@ -277,8 +237,7 @@ class DhanHttpClient:
                 body = resp.text[:200]
                 raise BrokerError(f"Dhan API {method} {url} failed: HTTP {resp.status_code} — {body}")
 
-            # 4xx - client error (no retry)
-            if resp.status_code >= 400:
+            if category == "client_error":
                 body = resp.text[:300]
                 logger.warning("http_client_error", extra={
                     "method": method, "endpoint": endpoint, "status": resp.status_code, "body": body,
@@ -306,5 +265,4 @@ class DhanHttpClient:
     @staticmethod
     def _backoff_delay(attempt: int) -> float:
         """Exponential backoff: 500ms, 1s, 2s, 4s... capped at 5s."""
-        delay_ms = min(_BASE_DELAY_MS * (2 ** (attempt - 1)), _MAX_DELAY_MS)
-        return delay_ms / 1000.0
+        return backoff_delay(attempt)

@@ -106,3 +106,15 @@ class IBrokerGateway(ABC):
     ) -> list[dict[str, Any]]:
         """Fetch historical OHLCV candlestick data."""
         pass
+
+    def adapters(self) -> dict[str, Any]:
+        """Return broker-specific adapters for advanced operations.
+
+        Returns a dict of adapter objects that the broker-agnostic layer
+        can use for operations like option chains. Brokers that don't
+        provide adapters should return an empty dict.
+
+        This method eliminates the need for the broker-agnostic layer to
+        reach into broker-specific private state (Law of Demeter violation).
+        """
+        return {}

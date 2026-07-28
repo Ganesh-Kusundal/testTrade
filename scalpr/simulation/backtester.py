@@ -4,6 +4,7 @@ from decimal import Decimal
 
 from scalpr.domain.order import OrderSide, OrderState, OrderType
 from scalpr.domain.tick import OHLCV
+from scalpr.domain.values import ZERO
 from scalpr.oms.paper_oms import PaperOms
 from scalpr.simulation.fill_simulator import FillSimulator
 from scalpr.strategy.strategy_port import IStrategy
@@ -16,7 +17,7 @@ class EventDrivenBacktester:
         self.strategy = strategy
         self.paper_oms = paper_oms
         self.brokerage_flat = brokerage_flat
-        self.total_transaction_costs = Decimal("0")
+        self.total_transaction_costs = ZERO
         self.fill_simulator = FillSimulator()
 
     def run(self, symbol: str, bars: list[OHLCV]) -> None:
@@ -45,7 +46,7 @@ class EventDrivenBacktester:
         brokerage = self.brokerage_flat
 
         # Securities Transaction Tax (STT): 0.025% on sell side for futures/options
-        stt = Decimal("0")
+        stt = ZERO
         if side == OrderSide.SELL:
             stt = turnover * Decimal("0.00025")
 

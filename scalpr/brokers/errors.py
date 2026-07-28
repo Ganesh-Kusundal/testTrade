@@ -49,6 +49,14 @@ class RateLimitExceeded(TradingError):
         self.retry_after_s = retry_after_s
 
 
+class MarketDataError(TradingError):
+    """Market data fetch failure (HTTP error, timeout, bad payload)."""
+
+
+class OrderError(TradingError):
+    """Order placement/modification/cancellation failure."""
+
+
 class ProviderUnavailable(TradingError):
     """Broker API or WebSocket connection is unreachable."""
 

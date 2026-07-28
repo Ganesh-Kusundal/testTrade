@@ -15,8 +15,9 @@ from decimal import Decimal
 from typing import Any
 
 from scalpr.domain.tick import OHLCV
+from scalpr.domain.values import ZERO
 
-_ZERO = Decimal("0")
+_ZERO = ZERO
 
 
 class IncrementalEMA:

@@ -216,7 +216,7 @@ class InMemoryEventBus(IEventBus):
             try:
                 handler(event)
             except Exception as exc:
-                logger.error(f"Event handler failed for {type(event).__name__}: {exc}")
+                logger.error("Event handler failed for %s: %s", type(event).__name__, exc)
 
     def subscribe(self, event_type: type[DomainEvent], handler: callable) -> None:
         if event_type not in self._subscribers:

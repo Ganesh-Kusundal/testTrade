@@ -58,7 +58,7 @@ class TestSubscribePerSymbolResults:
             return inst
 
         mock_resolver.resolve.side_effect = resolve
-        client, feed = _connected_client(mock_resolver)
+        client, _feed = _connected_client(mock_resolver)
         result = await client.subscribe([("RELIANCE", "NSE"), ("BAD", "NSE")])
         assert result[("RELIANCE", "NSE")] is True
         assert result[("BAD", "NSE")] is False
@@ -79,7 +79,7 @@ class TestSubscribePerSymbolResults:
         feed.subscribe_symbols.assert_not_called()
 
     async def test_no_resolver_numeric_security_id_works(self):
-        client, feed = _connected_client(None)
+        client, _feed = _connected_client(None)
         result = await client.subscribe([("2885", "NSE")])
         assert result == {("2885", "NSE"): True}
 

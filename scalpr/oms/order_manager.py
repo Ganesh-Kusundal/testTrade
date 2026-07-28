@@ -49,7 +49,7 @@ class OrderManager:
                 try:
                     self._repository.save_order(order)
                 except Exception as e:
-                    logger.error(f"Failed to persist order {order.order_id}: {e}")
+                    logger.error("Failed to persist order %s: %s", order.order_id, e)
 
             self._append_event(OrderPlaced(timestamp=_now(), order=order))
 
@@ -68,7 +68,7 @@ class OrderManager:
                 try:
                     self._repository.save_order(updated)
                 except Exception as e:
-                    logger.error(f"Failed to persist order state update {order_id}: {e}")
+                    logger.error("Failed to persist order state update %s: %s", order_id, e)
 
             self._append_event(
                 OrderUpdated(timestamp=_now(), order=updated, previous_state=order.state.value)
@@ -135,7 +135,7 @@ class OrderManager:
                     self._repository.save_fill(fill)
                     self._repository.save_order(updated)
                 except Exception as e:
-                    logger.error(f"Failed to persist fill {fill.fill_id}: {e}")
+                    logger.error("Failed to persist fill %s: %s", fill.fill_id, e)
 
             self._append_event(FillReceived(timestamp=_now(), fill=fill))
             return updated
@@ -155,7 +155,7 @@ class OrderManager:
         try:
             self._event_store.append(event, session_id=self._session_id)
         except Exception as e:
-            logger.error(f"Failed to append {event.__class__.__name__} to event store: {e}")
+            logger.error("Failed to append %s to event store: %s", event.__class__.__name__, e)
 
     def restore_state(self) -> None:
         """Restore orders and fills from persistence (crash recovery)."""
@@ -169,9 +169,9 @@ class OrderManager:
                 self.orders.clear()
                 self.orders.update(restored_orders)
 
-            logger.info(f"OMS state restored: {len(restored_orders)} orders recovered")
+            logger.info("OMS state restored: %s orders recovered", len(restored_orders))
         except Exception as e:
-            logger.warning(f"Failed to restore OMS state: {e}")
+            logger.warning("Failed to restore OMS state: %s", e)
 
     def get_orders(self) -> list[Order]:
         """Get all orders as a list."""

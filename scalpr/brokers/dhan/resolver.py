@@ -301,7 +301,7 @@ def _generate_alternate_keys(
                 keys.append(f"{underlying} {yy} {MMM} FUT")
 
         except Exception as exc:
-            logger.debug(f"alternate_key_generation_failed: {exc}")
+            logger.debug("alternate_key_generation_failed: %s", exc)
 
     # Deduplicate
     res = []

@@ -75,11 +75,11 @@ class StrategyExecutor:
             metrics.get_histogram("strategy_execution_latency_ms").observe(latency_ms)
 
         except asyncio.TimeoutError:
-            logger.error(f"Strategy {strategy_name} timed out after {self.timeout}s")
+            logger.error("Strategy %s timed out after %ss", strategy_name, self.timeout)
             metrics.get_counter("strategy_timeouts").increment()
 
         except Exception as exc:
-            logger.exception(f"Strategy {strategy_name} error: {exc}")
+            logger.exception("Strategy %s error: %s", strategy_name, exc)
             metrics.get_counter("strategy_errors").increment()
 
     async def on_bar(self, bar: OHLCV) -> None:
@@ -120,9 +120,9 @@ class StrategyExecutor:
             metrics.get_histogram("strategy_execution_latency_ms").observe(latency_ms)
 
         except asyncio.TimeoutError:
-            logger.error(f"Strategy {strategy_name} on_bar timed out after {self.timeout}s")
+            logger.error("Strategy %s on_bar timed out after %ss", strategy_name, self.timeout)
             metrics.get_counter("strategy_timeouts").increment()
 
         except Exception as exc:
-            logger.exception(f"Strategy {strategy_name} on_bar error: {exc}")
+            logger.exception("Strategy %s on_bar error: %s", strategy_name, exc)
             metrics.get_counter("strategy_errors").increment()

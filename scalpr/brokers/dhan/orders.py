@@ -24,6 +24,7 @@ from scalpr.brokers.dhan.mapper import DhanMapper
 from scalpr.brokers.dhan.resolver import SymbolResolver
 from scalpr.domain.fill import Fill
 from scalpr.domain.order import Order, OrderType
+from scalpr.domain.values import ZERO
 
 logger = logging.getLogger(__name__)
 
@@ -184,7 +185,7 @@ class OrdersAdapter:
         # Don't fallback to order.price (which is 0 for MARKET orders)
         if order.order_type == OrderType.MARKET:
             fill_qty = traded_quantity if traded_quantity > 0 else 0
-            fill_price = traded_price if traded_price > 0 else Decimal("0")
+            fill_price = traded_price if traded_price > 0 else ZERO
             if fill_price == 0:
                 logger.warning(
                     "market_order_no_fill_price",
@@ -338,7 +339,7 @@ class OrdersAdapter:
             }
             orderbook.append(order)
 
-        logger.debug(f"orderbook_fetched: {len(orderbook)} orders")
+        logger.debug("orderbook_fetched: %s orders", len(orderbook))
         return orderbook
 
     def get_tradebook(self) -> list[dict[str, Any]]:
@@ -376,7 +377,7 @@ class OrdersAdapter:
             }
             tradebook.append(trade)
 
-        logger.debug(f"tradebook_fetched: {len(tradebook)} trades")
+        logger.debug("tradebook_fetched: %s trades", len(tradebook))
         return tradebook
 
     def clear_idempotency_cache(self) -> None:
@@ -388,7 +389,7 @@ class OrdersAdapter:
         with self._cache_lock:
             count = len(self._idempotency_cache)
             self._idempotency_cache.clear()
-        logger.info(f"idempotency_cache_cleared: {count} entries removed")
+        logger.info("idempotency_cache_cleared: %s entries removed", count)
 
     @staticmethod
     def _validate_order(order: Order) -> None:
