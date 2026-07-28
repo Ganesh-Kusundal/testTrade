@@ -19,24 +19,36 @@ def _require_gateway(request: Request):
 
 
 @router.get("/ltp/{symbol}")
-async def get_ltp(symbol: str, request: Request):
-    """Get last traded price from broker."""
+async def get_ltp(symbol: str, request: Request, exchange: str = "NSE"):
+    """Get last traded price from broker.
+
+    Args:
+        symbol: Trading symbol (e.g., "RELIANCE", "CRUDEOIL")
+        exchange: Exchange code (default: "NSE"). Supported: NSE, BSE, MCX, NFO, INDEX.
+    """
     gateway = _require_gateway(request)
     try:
-        ltp = gateway.get_ltp(symbol, "NSE")
+        ltp = gateway.get_ltp(symbol, exchange)
     except Exception as exc:
-        logger.error("ltp_fetch_failed for %s: %s", symbol, exc)
+        logger.error("ltp_fetch_failed for %s on %s: %s", symbol, exchange, exc)
         raise HTTPException(status_code=502, detail=f"broker error: {exc}") from exc
-    return {"symbol": symbol, "ltp": str(ltp)}
+    return {"symbol": symbol, "exchange": exchange, "ltp": str(ltp)}
 
 
 @router.get("/candles/{symbol}")
-async def get_candles(symbol: str, request: Request, timeframe: str = "5m", count: int = 100):
-    """Get OHLCV candles."""
+async def get_candles(symbol: str, request: Request, exchange: str = "NSE", timeframe: str = "5m", count: int = 100):
+    """Get OHLCV candles.
+
+    Args:
+        symbol: Trading symbol
+        exchange: Exchange code (default: "NSE"). Supported: NSE, BSE, MCX, NFO, INDEX.
+        timeframe: Candle interval (default: "5m")
+        count: Number of candles (default: 100)
+    """
     gateway = _require_gateway(request)
     try:
         connection = gateway.connection
-        return connection.historical.get_ohlcv_latest(symbol, "NSE", timeframe, count)
+        return connection.historical.get_ohlcv_latest(symbol, exchange, timeframe, count)
     except Exception as exc:
-        logger.error("candles_fetch_failed for %s: %s", symbol, exc)
+        logger.error("candles_fetch_failed for %s on %s: %s", symbol, exchange, exc)
         raise HTTPException(status_code=502, detail=f"broker error: {exc}") from exc

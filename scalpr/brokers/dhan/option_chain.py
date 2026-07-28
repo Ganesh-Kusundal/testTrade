@@ -1,7 +1,11 @@
 """Option chain adapter — fetches and flattens Dhan option chain data.
 
 Produces scanner-compatible list[dict] with keys:
-symbol, strike, bid, ask, oi, volume, delta.
+symbol, security_id, strike, bid, ask, oi, volume, delta.
+
+Wire contract (verified live 2026-07-27): Dhan v2 expects
+``UnderlyingScrip`` / ``UnderlyingSeg`` — ``securityId`` /
+``exchangeSegment`` are rejected with HTTP 400 "Invalid SecurityId".
 """
 
 from __future__ import annotations
@@ -50,7 +54,7 @@ class OptionChainAdapter:
 
         Returns:
             Flat list of dicts with keys:
-            ``symbol, strike, bid, ask, oi, volume, delta``.
+            ``symbol, security_id, strike, bid, ask, oi, volume, delta``.
         """
         security_id, segment = self._resolve_underlying(underlying_symbol, exchange)
 
@@ -58,8 +62,8 @@ class OptionChainAdapter:
             expiry = self._resolve_next_expiry(security_id, segment)
 
         payload = {
-            "securityId": security_id,
-            "exchangeSegment": segment,
+            "UnderlyingScrip": security_id,
+            "UnderlyingSeg": segment,
             "Expiry": expiry.isoformat(),
         }
 
@@ -82,10 +86,8 @@ class OptionChainAdapter:
 
     def _resolve_underlying(self, symbol: str, exchange: str) -> tuple[int, str]:
         """Resolve underlying to (security_id, wire_segment)."""
-        segment = self._resolver.wire_segment_of(symbol, exchange)
-        resolved = self._resolver.resolve(symbol, exchange)
-        security_id = int(resolved.security_id)
-        return security_id, segment
+        resolved = self._resolver.resolve_full(symbol, exchange)
+        return int(resolved.security_id), resolved.dhan_exchange_segment
 
     def _resolve_next_expiry(self, security_id: int, segment: str) -> date:
         """Fetch expiry list and return the earliest future expiry."""
@@ -96,7 +98,7 @@ class OptionChainAdapter:
         if expiries is None:
             raw = self._client.post(
                 "/optionchain/expirylist",
-                json={"securityId": security_id, "exchangeSegment": segment},
+                json={"UnderlyingScrip": security_id, "UnderlyingSeg": segment},
             )
             raw_list = raw.get("data", [])
             expiries = sorted({date.fromisoformat(e) for e in raw_list})
@@ -114,12 +116,38 @@ class OptionChainAdapter:
         raise ValueError(f"No expiry dates available for security_id={security_id}")
 
     @staticmethod
+    def _to_decimal(value: Any) -> Decimal:
+        """Normalize a wire value to Decimal, defaulting to 0 on bad input.
+
+        Dhan occasionally returns ``None`` for prices on thinly-traded legs;
+        coercing to ``Decimal("0")`` keeps downstream math well-defined
+        without masking the absence of data (delta stays None).
+        """
+        if value is None:
+            return Decimal("0")
+        try:
+            return Decimal(str(value))
+        except (TypeError, ValueError, ArithmeticError):
+            return Decimal("0")
+
+    @staticmethod
+    def _to_security_id(value: Any) -> int | None:
+        """Normalize security_id to int, or None if absent/malformed."""
+        if value is None:
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
     def _flatten_chain(raw: dict[str, Any]) -> list[dict]:
         """Flatten Dhan's nested option-chain response to ``list[dict]``.
 
         Dhan returns ``data.oc`` as a dict keyed by strike price (as string),
         each value containing ``ce`` and ``pe`` sub-dicts with option data
-        including greeks.
+        including greeks. Live responses carry ``security_id`` per leg but
+        no ``trading_symbol``, so ``symbol`` may be empty.
         """
         oc = raw.get("data", {}).get("oc", {})
         result: list[dict] = []
@@ -132,13 +160,20 @@ class OptionChainAdapter:
                     continue
                 greeks = leg.get("greeks", {})
                 result.append({
-                    "symbol": leg.get("trading_symbol", ""),
+                    "symbol": leg.get("trading_symbol") or "",
+                    "security_id": OptionChainAdapter._to_security_id(
+                        leg.get("security_id")
+                    ),
                     "strike": strike,
-                    "bid": Decimal(str(leg.get("top_bid_price", 0))),
-                    "ask": Decimal(str(leg.get("top_ask_price", 0))),
+                    "bid": OptionChainAdapter._to_decimal(
+                        leg.get("top_bid_price")
+                    ),
+                    "ask": OptionChainAdapter._to_decimal(
+                        leg.get("top_ask_price")
+                    ),
                     "oi": int(leg.get("oi", 0)),
                     "volume": int(leg.get("volume", 0)),
-                    "delta": greeks.get("delta"),  # May be None
+                    "delta": greeks.get("delta"),  # May be None — leave as-is
                 })
 
         return result

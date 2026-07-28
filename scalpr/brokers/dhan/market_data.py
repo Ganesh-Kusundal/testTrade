@@ -91,15 +91,21 @@ class MarketDataAdapter:
             raise ValueError(f"No quote data for {symbol or security_id} on {segment}")
 
         ohlc = raw.get("ohlc", {})
+        close = Decimal(str(ohlc.get("close", 0)))
+        net_change = Decimal(str(raw.get("net_change", 0)))
+        change_percent = (
+            (net_change / close * 100) if close else Decimal("0")
+        )
         quote = {
             "symbol": symbol,
             "ltp": Decimal(str(raw.get("last_price", 0))),
             "open": Decimal(str(ohlc.get("open", 0))),
             "high": Decimal(str(ohlc.get("high", 0))),
             "low": Decimal(str(ohlc.get("low", 0))),
-            "close": Decimal(str(ohlc.get("close", 0))),
+            "close": close,
             "volume": int(raw.get("volume", 0)),
-            "change": Decimal(str(raw.get("net_change", 0))),
+            "change": net_change,
+            "change_percent": change_percent,
             "average_price": Decimal(str(raw.get("average_price", 0))),
             "buy_quantity": int(raw.get("buy_quantity", 0)),
             "sell_quantity": int(raw.get("sell_quantity", 0)),

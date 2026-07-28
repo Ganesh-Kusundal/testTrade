@@ -49,17 +49,35 @@ _SDK_MODES: dict[str, str] = {
 
 
 def _get_sdk_mode_int(mode_str: str) -> int:
-    """Get SDK mode integer from mode string."""
-    from dhanhq.marketfeed import MarketFeed
+    """Get SDK mode integer from mode string.
     
-    mode_name = _SDK_MODES.get(mode_str, "Quote")
-    return getattr(MarketFeed, mode_name, MarketFeed.Quote)
+    Dhan SDK exposes mode constants at module level (Ticker=15, Quote=17,
+    Depth=19, Full=21). Older versions had a MarketFeed class; the current
+    installed version does not, so we import the constants directly.
+    """
+    from dhanhq.marketfeed import Ticker, Quote, Full, Depth
+    
+    _mode_map: dict[str, int] = {
+        "ltp": Ticker,
+        "quote": Quote,
+        "depth": Depth,
+        "full": Full,
+    }
+    return _mode_map.get(mode_str, Quote)
 
 
 def _sdk_market_feed_class():
-    """Lazy import so module does not require dhanhq at import time."""
-    from dhanhq.marketfeed import MarketFeed
-    return MarketFeed
+    """Lazy import so module does not require dhanhq at import time.
+    
+    Returns DhanFeed (the current SDK feed class). Older dhanhq versions
+    exposed MarketFeed; the installed version uses DhanFeed.
+    """
+    try:
+        from dhanhq.marketfeed import DhanFeed
+        return DhanFeed
+    except ImportError:
+        from dhanhq.marketfeed import MarketFeed  # type: ignore[no-redef]
+        return MarketFeed
 
 
 class _DhanContextShim:

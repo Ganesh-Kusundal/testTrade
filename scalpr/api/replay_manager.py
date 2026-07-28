@@ -16,9 +16,14 @@ from typing import Callable, Optional
 
 from scalpr.api.models import Candle, ReplaySession
 from scalpr.api.ws_manager import WsFanout
-from scalpr.simulation.replay_engine import ENDED, IDLE, PAUSED, PLAYING
 
 logger = logging.getLogger(__name__)
+
+# Replay state constants (match ReplayEngine semantics)
+IDLE = "IDLE"
+PLAYING = "PLAYING"
+PAUSED = "PAUSED"
+ENDED = "ENDED"
 
 # UI pacing: ~1 candle per 200ms at 1x speed (matches the retired FE mock).
 _BASE_MS_PER_CANDLE = 200.0

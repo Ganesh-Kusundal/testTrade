@@ -439,3 +439,79 @@ class TestSubscribeFeedExceptionSafety:
             gw.subscribe_feed("full", "TCS:NSE")
 
         gw._ws_manager.subscribe_pairs.assert_called_once_with([("TCS", "NSE")], mode="full")
+
+
+class TestGatewayOptionChain:
+    """Gateway facade exposes option_chain() as a simplified entry point."""
+
+    def _bare_gateway(self):
+        from scalpr.brokers.gateway import Gateway
+        gw = Gateway.__new__(Gateway)
+        gw._ws_manager = None
+        gw._ws_loop = None
+        gw._ws_thread = None
+        gw._stream_callbacks = []
+        import threading
+        gw._ws_lock = threading.Lock()
+        return gw
+
+    def test_option_chain_delegates_to_adapter(self):
+        from datetime import date
+        from scalpr.brokers.gateway import Gateway
+
+        gw = self._bare_gateway()
+        conn = MagicMock()
+        conn.http_client = MagicMock()
+        conn.resolver = MagicMock()
+        adapter_instance = MagicMock()
+        adapter_instance.get_option_chain.return_value = [{"strike": 24000, "security_id": 1}]
+
+        with patch.object(Gateway, "_get_dhan_connection", return_value=conn):
+            with patch(
+                "scalpr.brokers.gateway.OptionChainAdapter",
+                return_value=adapter_instance,
+            ) as AdapterCls:
+                result = gw.option_chain("NIFTY", expiry=date(2026, 7, 28))
+
+        AdapterCls.assert_called_once_with(conn.http_client, conn.resolver)
+        adapter_instance.get_option_chain.assert_called_once_with(
+            "NIFTY", "NSE", expiry=date(2026, 7, 28)
+        )
+        assert result == [{"strike": 24000, "security_id": 1}]
+
+    def test_option_chain_auto_expiry_when_none(self):
+        from scalpr.brokers.gateway import Gateway
+
+        gw = self._bare_gateway()
+        conn = MagicMock()
+        adapter_instance = MagicMock()
+        adapter_instance.get_option_chain.return_value = []
+
+        with patch.object(Gateway, "_get_dhan_connection", return_value=conn):
+            with patch(
+                "scalpr.brokers.gateway.OptionChainAdapter",
+                return_value=adapter_instance,
+            ):
+                gw.option_chain("NIFTY")
+
+        adapter_instance.get_option_chain.assert_called_once_with(
+            "NIFTY", "NSE", expiry=None
+        )
+
+    def test_option_chain_underlying_not_found_translated(self):
+        from scalpr.brokers.dhan.exceptions import InstrumentNotFoundError
+        from scalpr.brokers.errors import InstrumentNotFound
+        from scalpr.brokers.gateway import Gateway
+
+        gw = self._bare_gateway()
+        conn = MagicMock()
+        adapter_instance = MagicMock()
+        adapter_instance.get_option_chain.side_effect = InstrumentNotFoundError("nope")
+
+        with patch.object(Gateway, "_get_dhan_connection", return_value=conn):
+            with patch(
+                "scalpr.brokers.gateway.OptionChainAdapter",
+                return_value=adapter_instance,
+            ):
+                with pytest.raises(InstrumentNotFound):
+                    gw.option_chain("ZZZNOTREAL", "NSE")

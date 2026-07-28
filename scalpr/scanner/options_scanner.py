@@ -34,6 +34,16 @@ class OptionsScanner:
         ATM strike selection: Select strike closest to spot_price.
         Filters by open interest, volume, and bid-ask spreads.
         """
+        # Guard against non-positive spot price — avoids div-by-zero in the
+        # ATM filter below and short-circuits on bad/pre-open feeds.
+        if spot_price is None or spot_price <= 0:
+            logger.warning(
+                "OptionsScanner.scan called with non-positive spot_price=%s; "
+                "skipping scan (no ATM reference available)",
+                spot_price,
+            )
+            return []
+
         matches = []
         for contract in chain_data:
             oi = int(contract.get("oi", 0))
@@ -42,6 +52,7 @@ class OptionsScanner:
             ask = Decimal(str(contract.get("ask", "0")))
             strike = Decimal(str(contract.get("strike", "0")))
             symbol = contract.get("symbol", "")
+            security_id = contract.get("security_id")
 
             # Spreads filter
             spread = ask - bid
@@ -52,10 +63,19 @@ class OptionsScanner:
             if abs(strike - spot_price) / spot_price > Decimal("0.02"):
                 continue
 
-            try:
-                inst = self._resolver.resolve(symbol, "NSE")
-            except Exception as exc:
-                logger.warning("Skipping unresolvable option contract %s: %s", symbol, exc)
+            # Live option-chain rows carry security_id but no trading symbol,
+            # so prefer the direct by-id lookup and fall back to symbol resolve.
+            inst = None
+            if security_id is not None:
+                inst = self._resolver.get_by_security_id(security_id)
+            if inst is None and symbol:
+                try:
+                    inst = self._resolver.resolve(symbol, "NSE")
+                except Exception as exc:
+                    logger.warning("Skipping unresolvable option contract %s: %s", symbol, exc)
+                    continue
+            if inst is None:
+                logger.warning("Skipping option contract with no resolvable id (sid=%s, symbol=%r)", security_id, symbol)
                 continue
 
             matches.append((inst, oi + volume))  # Rank by liquidity score (OI + volume)

@@ -21,6 +21,7 @@ from dotenv import load_dotenv
 from scalpr.brokers.broker_port import IBrokerGateway
 from scalpr.brokers.contracts import DepthLevel, Funds, Holding, MarketDepth, Quote, Trade
 from scalpr.brokers.dhan.exceptions import InstrumentNotFoundError as _DhanInstrumentNotFound
+from scalpr.brokers.dhan.option_chain import OptionChainAdapter
 from scalpr.brokers.errors import InstrumentNotFound
 from scalpr.brokers.instrument_handle import InstrumentHandle
 from scalpr.brokers.registry import BrokerRegistry
@@ -587,6 +588,34 @@ class Gateway:
             raise
 
         logger.info(f"feed_subscribed: {instruments} mode={mode.value}")
+
+    def option_chain(
+        self,
+        underlying: str,
+        exchange: str = "NSE",
+        expiry: date | None = None,
+    ) -> list[dict]:
+        """Fetch the flattened option chain for an underlying.
+
+        Args:
+            underlying: Underlying symbol (e.g. "NIFTY", "SENSEX").
+            exchange: Exchange code (default: "NSE").
+            expiry: Specific expiry date. If *None*, the next available
+                    expiry is resolved automatically.
+
+        Returns:
+            Flat list of dicts with keys:
+            ``symbol, security_id, strike, bid, ask, oi, volume, delta``.
+
+        Raises:
+            InstrumentNotFound: if the underlying cannot be resolved.
+        """
+        conn = self._get_dhan_connection()
+        adapter = OptionChainAdapter(conn.http_client, conn.resolver)
+        try:
+            return adapter.get_option_chain(underlying, exchange, expiry=expiry)
+        except _DhanInstrumentNotFound as exc:
+            raise InstrumentNotFound(str(exc)) from exc
 
     def _get_dhan_connection(self):
         """Access the underlying DhanConnection (Dhan only)."""

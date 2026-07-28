@@ -1,22 +1,101 @@
-"""Replay session REST routes."""
-from fastapi import APIRouter
+"""Replay session REST routes — wire to ReplaySessionManager."""
+from __future__ import annotations
+
+from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel, Field
+from typing import Annotated, Optional, Union
+
+from scalpr.api.models import (
+    CreateReplayBody,
+    ReplayControlBody,
+    ReplaySession,
+    ReplaySessionsResponse,
+    ReplayState,
+    Timeframe,
+)
 
 router = APIRouter(prefix="/replay", tags=["replay"])
 
 
-@router.post("/start")
-async def start_replay(session_data: dict):
-    """Start a replay session."""
-    return {"status": "not_implemented"}
+def _get_manager(request: Request):
+    manager = request.app.state.replay_manager
+    if manager is None:
+        raise HTTPException(status_code=503, detail="replay manager not initialized")
+    return manager
 
 
-@router.get("/status")
-async def get_replay_status():
-    """Get current replay session status."""
-    return {"active": False}
+@router.post("/sessions", response_model=ReplaySession)
+async def create_replay_session(
+    body: CreateReplayBody,
+    request: Request,
+    manager=Depends(_get_manager),
+):
+    """Create a new replay session for the given symbol/date/timeframe."""
+    try:
+        session = manager.create(
+            symbol=body.symbol,
+            date=body.date,
+            timeframe=body.timeframe,
+            exchange="NSE",
+            from_t=body.from_t,
+            to_t=body.to_t,
+        )
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    return session
 
 
-@router.post("/stop")
-async def stop_replay():
-    """Stop the current replay session."""
-    return {"status": "not_implemented"}
+@router.get("/sessions", response_model=ReplaySessionsResponse)
+async def list_replay_sessions(
+    request: Request,
+    symbol: Optional[str] = None,
+    date: Optional[str] = None,
+    manager=Depends(_get_manager),
+):
+    """List replay sessions, optionally filtered by symbol/date."""
+    sessions = manager.list_sessions(symbol=symbol, date=date)
+    return ReplaySessionsResponse(sessions=sessions)
+
+
+@router.get("/sessions/{session_id}", response_model=ReplaySession)
+async def get_replay_session(
+    session_id: str,
+    request: Request,
+    manager=Depends(_get_manager),
+):
+    """Get a replay session by ID."""
+    runtime = manager.get(session_id)
+    if runtime is None:
+        raise HTTPException(status_code=404, detail=f"session not found: {session_id}")
+    return runtime.snapshot()
+
+
+@router.post("/sessions/{session_id}/control", response_model=ReplaySession)
+async def control_replay_session(
+    session_id: str,
+    body: ReplayControlBody,
+    request: Request,
+    manager=Depends(_get_manager),
+):
+    """Control a replay session: play, pause, step, seek, set_speed."""
+    action = body.action
+    try:
+        if action == "play":
+            session = manager.control(session_id, "play")
+        elif action == "pause":
+            session = manager.control(session_id, "pause")
+        elif action == "step":
+            session = manager.control(session_id, "step", n=body.n)
+        elif action == "seek":
+            session = manager.control(session_id, "seek", to_t=body.to_t)
+        elif action == "set_speed":
+            session = manager.control(session_id, "set_speed", speed=body.speed)
+        else:
+            raise ValueError(f"unknown action: {action}")
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=f"session not found: {session_id}") from e
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return session
