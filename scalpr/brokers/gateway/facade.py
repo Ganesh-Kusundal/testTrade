@@ -278,7 +278,7 @@ class Gateway(MarketDataMixin, PortfolioMixin, StreamingMixin):
             Trading symbol string (e.g. "NIFTY 25 JUL 26 FUT").
         """
         adapter = self._get_option_chain_adapter()
-        return adapter.get_future_symbol(underlying, exchange, expiry_idx)
+        return adapter.get_future_symbol(underlying, exchange, expiry_idx)  # type: ignore[no-any-return]
 
     def strike_selection(
         self,
@@ -287,7 +287,7 @@ class Gateway(MarketDataMixin, PortfolioMixin, StreamingMixin):
         expiry: date | None = None,
         mode: str = "ATM",
         count: int = 10,
-    ) -> list:
+    ) -> list[Any]:
         """Select option strikes by moneyness (ATM/ITM/OTM).
 
         Args:
@@ -319,7 +319,7 @@ class Gateway(MarketDataMixin, PortfolioMixin, StreamingMixin):
             except Exception:
                 logger.debug("strike_selection_spot_fetch_failed", exc_info=True)
 
-        return adapter.select_strikes(
+        return adapter.select_strikes(  # type: ignore[no-any-return]
             underlying, exchange, expiry=expiry,
             mode=mode, count=count,
             spot_price=spot if spot > 0 else None,
@@ -332,7 +332,7 @@ class Gateway(MarketDataMixin, PortfolioMixin, StreamingMixin):
         expiry: date,
         option_type: str,
         exchange: str = DEFAULT_EXCHANGE,
-    ) -> dict | None:
+    ) -> dict[str, Any] | None:
         """Get greeks for a specific option.
 
         Args:
@@ -346,7 +346,7 @@ class Gateway(MarketDataMixin, PortfolioMixin, StreamingMixin):
             Dict with greeks or None.
         """
         adapter = self._get_option_chain_adapter()
-        return adapter.get_option_greeks(
+        return adapter.get_option_greeks(  # type: ignore[no-any-return]
             underlying, exchange, strike, expiry, option_type
         )
 
@@ -368,8 +368,8 @@ class Gateway(MarketDataMixin, PortfolioMixin, StreamingMixin):
 
     def _pivot_option_chain(
         self,
-        chain: list[dict],
-        adapters: dict,
+        chain: list[dict[str, Any]],
+        adapters: dict[str, Any],
         underlying: str,
         exchange: str,
     ) -> tuple[Any, Any]:
@@ -412,7 +412,7 @@ class Gateway(MarketDataMixin, PortfolioMixin, StreamingMixin):
             selected = set(strikes[lo:hi])
             chain = [leg for leg in chain if Decimal(str(leg["strike"])) in selected]
 
-        by_strike: dict = {}
+        by_strike: dict[Any, Any] = {}
         for leg in chain:
             strike = Decimal(str(leg["strike"]))
             opt_type = leg.get("option_type", "")

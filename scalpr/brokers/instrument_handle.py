@@ -58,7 +58,7 @@ class InstrumentHandle:
         return self._resolved.security_id
 
     @property
-    def id(self):
+    def id(self) -> Any:
         """Instrument identity (SimpleInstrumentId or DerivativeInstrumentId)."""
         return self._resolved.instrument_id
 
@@ -117,7 +117,7 @@ class InstrumentHandle:
                 f"Future script not available for {self.symbol} "
                 f"— only available for indices and F&O instruments"
             )
-        return self._option_chain.get_future_symbol(
+        return self._option_chain.get_future_symbol(  # type: ignore[no-any-return]
             self.symbol, self.exchange, expiry_idx
         )
 
@@ -126,7 +126,7 @@ class InstrumentHandle:
         expiry_idx: int = 0,
         mode: str = "ATM",
         count: int = 10,
-    ) -> list:
+    ) -> list[Any]:
         """Select option strikes by moneyness (ATM/ITM/OTM).
 
         Args:
@@ -156,7 +156,7 @@ class InstrumentHandle:
                 f"(only {len(expiries)} expiries available)"
             )
         expiry = expiries[expiry_idx]
-        return self._option_chain.select_strikes(
+        return self._option_chain.select_strikes(  # type: ignore[no-any-return]
             self.symbol, self.exchange, expiry=expiry,
             mode=mode, count=count, spot_price=spot,
         )
@@ -182,25 +182,25 @@ class InstrumentHandle:
             raise OptionChainNotSupported(
                 f"Option greeks not available for {self.symbol}"
             )
-        return self._option_chain.get_option_greeks(
+        return self._option_chain.get_option_greeks(  # type: ignore[no-any-return]
             self.symbol, self.exchange, strike, expiry, option_type
         )
 
     def ltp(self) -> Decimal:
         """Get current last traded price (uses pre-resolved security_id)."""
-        return self._market_data.get_ltp_by_id(
+        return Decimal(str(self._market_data.get_ltp_by_id(
             self._resolved.security_id,
             self._resolved.wire_segment,
             symbol=self.symbol,
-        )
+        )))
 
     def quote(self) -> dict[str, Any]:
         """Get full quote with all fields (uses pre-resolved security_id)."""
-        return self._market_data.get_quote_by_id(
+        return dict(self._market_data.get_quote_by_id(
             self._resolved.security_id,
             self._resolved.wire_segment,
             symbol=self.symbol,
-        )
+        ))
 
     def ohlc(self) -> dict[str, Any]:
         """Get today's OHLC from the live quote.
@@ -228,11 +228,11 @@ class InstrumentHandle:
                 f"REST depth supports exactly 5 levels, got {levels}. "
                 "Use subscribe_feed(MarketFeed.FULL, ...) for 20-level depth."
             )
-        return self._market_data.get_depth_by_id(
+        return dict(self._market_data.get_depth_by_id(
             self._resolved.security_id,
             self._resolved.wire_segment,
             symbol=self.symbol,
-        )
+        ))
 
     def historical(
         self,
@@ -532,7 +532,7 @@ class InstrumentHandle:
             chain = [leg for leg in chain if Decimal(str(leg["strike"])) in selected]
 
         # Pivot: group by strike, CE on left, PE on right
-        by_strike: dict[Decimal, dict[str, dict]] = {}
+        by_strike: dict[Decimal, dict[str, Any]] = {}
         for leg in chain:
             strike = Decimal(str(leg["strike"]))
             opt_type = leg.get("option_type", "")

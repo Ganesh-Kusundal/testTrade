@@ -84,7 +84,7 @@ class SimulatedGateway(IBrokerGateway):
         with self._lock:
             self._ltp[symbol] = price
 
-    def on_tick(self, tick) -> None:
+    def on_tick(self, tick: Any) -> None:
         """Convenience subscriber: feed ticks straight from the tick source."""
         self.set_ltp(tick.symbol, tick.ltp)
 
@@ -224,7 +224,7 @@ class SimulatedGateway(IBrokerGateway):
     def get_holdings(self) -> list[Position]:
         return []  # intraday simulator: no delivery holdings
 
-    def get_margins(self) -> Funds:
+    def get_margins(self) -> Funds:  # type: ignore[override]
         with self._lock:
             realised = sum(
                 (p.realised_pnl for p in self._positions.values()), ZERO
@@ -241,7 +241,7 @@ class SimulatedGateway(IBrokerGateway):
                 realtime=False,
             )
 
-    def get_fund_limits(self) -> Funds:
+    def get_fund_limits(self) -> Funds:  # type: ignore[override]
         return self.get_margins()
 
     def square_off_all(self) -> list[Fill]:

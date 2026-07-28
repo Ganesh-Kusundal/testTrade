@@ -21,7 +21,7 @@ from scalpr.brokers.dhan.dtos import DhanOrderResponse
 from scalpr.brokers.dhan.exceptions import OrderError
 from scalpr.brokers.dhan.http_client import DhanHttpClient
 from scalpr.brokers.dhan.mapper import DhanMapper
-from scalpr.brokers.dhan.resolver import SymbolResolver
+from scalpr.brokers.dhan.resolution import SymbolResolver
 from scalpr.domain.fill import Fill
 from scalpr.domain.order import Order, OrderType
 from scalpr.domain.values import ZERO

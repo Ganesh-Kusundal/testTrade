@@ -28,7 +28,7 @@ from decimal import Decimal
 from typing import Any
 
 from scalpr.brokers.dhan.exceptions import MarketDataError
-from scalpr.brokers.dhan.segments import EXCHANGE_TO_SEGMENT, SEGMENT_TO_NUMERIC
+from scalpr.brokers.dhan.resolution import EXCHANGE_TO_SEGMENT, SEGMENT_TO_NUMERIC
 from scalpr.domain.tick import Tick
 from scalpr.domain.values import ZERO
 
@@ -51,7 +51,7 @@ def _sdk_mode_constants() -> tuple[int, int, int]:
     """
     try:
         feed_cls = _sdk_market_feed_class()
-        return (feed_cls.Ticker, feed_cls.Quote, feed_cls.Full)
+        return (feed_cls.Ticker, feed_cls.Quote, feed_cls.Full)  # type: ignore[attr-defined]
     except (ImportError, AttributeError):
         pass
     # Last resort: dhanhq v2 wire constants
@@ -70,23 +70,23 @@ def _get_sdk_mode_int(mode_str: str) -> int:
     return _mode_map.get(mode_str, quote)
 
 
-def _sdk_market_feed_class():
+def _sdk_market_feed_class() -> type:
     """Lazy import so module does not require dhanhq at import time.
 
     dhanhq 2.2.x exposes MarketFeed; some builds expose DhanFeed.
     """
     try:
         from dhanhq.marketfeed import MarketFeed
-        return MarketFeed
+        return MarketFeed  # type: ignore[no-any-return]
     except ImportError:
-        from dhanhq.marketfeed import DhanFeed  # type: ignore[no-redef]
-        return DhanFeed
+        from dhanhq.marketfeed import DhanFeed
+        return DhanFeed  # type: ignore[no-any-return]
 
 
 class _DhanContextShim:
     """Shim to satisfy SDK's dhan_context interface."""
 
-    def __init__(self, client_id: str, access_token: str):
+    def __init__(self, client_id: str, access_token: str) -> None:
         self._client_id = client_id
         self._access_token = access_token
 
@@ -96,7 +96,7 @@ class _DhanContextShim:
     def get_access_token(self) -> str:
         return self._access_token
 
-    def get_dhan_http(self):
+    def get_dhan_http(self) -> None:
         return None
 
     def update_token(self, token: str) -> None:
@@ -201,8 +201,8 @@ class DhanWebSocketClient:
         self._stop_event = threading.Event()
 
         # Subscription tracking (SDK pattern: maintain list for reconnection)
-        self._instruments: list[tuple] = []  # SDK format: (exch_int, security_id_str, mode_int)
-        self._subscribed_instruments: set[tuple] = set()  # For dedup
+        self._instruments: list[tuple[Any, ...]] = []  # SDK format: (exch_int, security_id_str, mode_int)
+        self._subscribed_instruments: set[tuple[Any, ...]] = set()  # For dedup
         self._subscription_keys: set[tuple[str, str]] = set()  # (symbol, exchange) mirror for introspection
         self._symbol_by_sid: dict[str, str] = {}  # SDK payloads carry only security_id
         self._sub_lock = threading.Lock()
@@ -526,12 +526,12 @@ class DhanWebSocketClient:
             self._connected = False
             logger.info("SDK feed stopped")
 
-    def _on_connect(self, feed) -> None:
+    def _on_connect(self, feed: Any) -> None:
         """SDK callback: connection established."""
         self._connected = True
         logger.info("sdk_connected")
 
-    def _on_message(self, feed, data: dict) -> None:
+    def _on_message(self, feed: Any, data: dict[str, Any]) -> None:
         """SDK callback: market data received.
 
         The SDK already parsed the binary, so we get a clean Python dict.
@@ -549,12 +549,12 @@ class DhanWebSocketClient:
             except Exception as exc:
                 logger.error("tick_parse_failed", extra={"error": str(exc)})
 
-    def _on_close(self, feed) -> None:
+    def _on_close(self, feed: Any) -> None:
         """SDK callback: connection closed."""
         self._connected = False
         logger.info("sdk_closed")
 
-    def _on_error(self, feed, error: Any) -> None:
+    def _on_error(self, feed: Any, error: Any) -> None:
         """SDK callback: error occurred."""
         logger.error(
             "sdk_error",

@@ -9,7 +9,7 @@ from datetime import datetime
 load_dotenv(".env")
 
 from scalpr.brokers.dhan.loader import InstrumentLoader
-from scalpr.brokers.dhan.resolver import SymbolResolver
+from scalpr.brokers.dhan.resolution import SymbolResolver
 from scalpr.brokers.dhan.ws_client import DhanWebSocketClient
 from scalpr.domain.tick import Tick
 

@@ -11,6 +11,7 @@ from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -24,7 +25,7 @@ def _load_dotenv() -> None:
     load_dotenv()
 
 
-def _create_gateway():
+def _create_gateway() -> tuple[Any, str | None]:
     """Create and configure the broker gateway port.
 
     Returns (port, error) — the IBrokerGateway port, because routers and
@@ -48,7 +49,7 @@ class AppContext:
 
 
 def wire(
-    gateway,
+    gateway: Any,
     watchlist: list[str],
     db_path: str = "data/oms.db",
     events_db_path: str = "data/events.db",
@@ -81,8 +82,7 @@ def wire(
     live_orders_enabled = os.environ.get("SCALPR_LIVE_ORDERS") == "1"
     risk_gate = PreTradeRiskGate(halted=not live_orders_enabled)
     if not live_orders_enabled:
-        import logging
-        logging.getLogger(__name__).warning(
+        logger.warning(
             "SCALPR_LIVE_ORDERS is not set to '1' — risk gate HALTED, "
             "all orders will be rejected. Set SCALPR_LIVE_ORDERS=1 to enable."
         )
@@ -135,7 +135,7 @@ async def _start_trading(app: FastAPI) -> None:
     # Ticks arrive on the SDK thread — bridge them onto the app loop
     loop = asyncio.get_running_loop()
     feed.add_subscriber(
-        lambda t: asyncio.run_coroutine_threadsafe(ctx.executor.on_tick(t), loop)
+        lambda t: asyncio.run_coroutine_threadsafe(ctx.executor.on_tick(t), loop)  # type: ignore[arg-type,attr-defined]
     )
 
     app.state.feed = feed
@@ -144,7 +144,7 @@ async def _start_trading(app: FastAPI) -> None:
     logger.info("trading_wired: %s", watchlist)
 
 
-def _create_candle_provider(gateway):
+def _create_candle_provider(gateway: Any) -> Any:
     """Create a candle provider from the gateway's existing connection.
 
     Shares the gateway's single DhanConnection — no duplicate connection,
@@ -193,7 +193,7 @@ def _create_candle_provider(gateway):
 
 
 @asynccontextmanager
-async def _lifespan(app: FastAPI):
+async def _lifespan(app: FastAPI) -> Any:
     logger.info("SCALPR API starting...")
     if os.environ.get("SCALPR_TRADING_ENABLED") == "1":
         try:

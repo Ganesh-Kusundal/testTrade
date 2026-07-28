@@ -14,12 +14,12 @@ from scalpr.domain.tick import Tick
 console = Console()
 
 
-@click.command()
-@click.argument("symbols", nargs=-1, required=True)
-@click.option("--exchange", default="NSE", help="Exchange code")
-@click.option("--broker", default="dhan", help="Broker name")
-@click.option("--duration", default=30, help="Stream duration in seconds (0 for infinite)")
-def stream(symbols: tuple[str], exchange: str, broker: str, duration: int):
+@click.command()  # type: ignore[untyped-decorator]
+@click.argument("symbols", nargs=-1, required=True)  # type: ignore[untyped-decorator]
+@click.option("--exchange", default="NSE", help="Exchange code")  # type: ignore[untyped-decorator]
+@click.option("--broker", default="dhan", help="Broker name")  # type: ignore[untyped-decorator]
+@click.option("--duration", default=30, help="Stream duration in seconds (0 for infinite)")  # type: ignore[untyped-decorator]
+def stream(symbols: tuple[str], exchange: str, broker: str, duration: int) -> None:
     """Stream live market data for symbols.
 
     Examples:
@@ -41,7 +41,7 @@ def stream(symbols: tuple[str], exchange: str, broker: str, duration: int):
 
         symbol = tick.symbol
         tick_data[symbol] = {
-            'ltp': tick.last_traded_price,
+            'ltp': tick.ltp,
             'bid': tick.bid_price if hasattr(tick, 'bid_price') else 0,
             'ask': tick.ask_price if hasattr(tick, 'ask_price') else 0,
             'volume': tick.volume if hasattr(tick, 'volume') else 0,

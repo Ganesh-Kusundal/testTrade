@@ -71,7 +71,7 @@ EVENT_TYPE_REGISTRY: dict[str, type[DomainEvent]] = {
 def _serialize_event(event: DomainEvent) -> dict[str, Any]:
     """Serialize domain event to JSON-compatible dict."""
     event_type = event.__class__.__name__
-    data = {
+    data: dict[str, Any] = {
         "event_type": event_type,
         "timestamp": event.timestamp.isoformat(),
     }
@@ -284,7 +284,7 @@ class EventStore:
                 )
             )
 
-            return sequence_num
+            return sequence_num  # type: ignore[no-any-return]
 
     def get_session_events(
         self,
@@ -340,7 +340,7 @@ class EventStore:
                 "SELECT COALESCE(MAX(sequence_num), 0) FROM events WHERE session_id = ?",
                 (session_id,)
             )
-            return cursor.fetchone()[0]
+            return cursor.fetchone()[0]  # type: ignore[no-any-return]
 
     def get_event_count(self, session_id: str) -> int:
         """Get total event count for a session."""
@@ -349,7 +349,7 @@ class EventStore:
                 "SELECT COUNT(*) FROM events WHERE session_id = ?",
                 (session_id,)
             )
-            return cursor.fetchone()[0]
+            return cursor.fetchone()[0]  # type: ignore[no-any-return]
 
     def delete_session(self, session_id: str) -> int:
         """Delete all events for a session. Returns deleted count."""

@@ -1,11 +1,11 @@
 """Tests for Dhan wire-segment mappings."""
 import pytest
 
-from scalpr.brokers.dhan.instrument_mapper import wire_segment_for
-from scalpr.brokers.dhan.segments import (
+from scalpr.brokers.dhan.resolution import (
     exchange_to_wire,
     normalise_exchange,
     to_dhan_wire,
+    wire_segment_for,
 )
 from scalpr.domain.instrument import Exchange, Segment
 

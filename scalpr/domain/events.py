@@ -195,12 +195,12 @@ class IEventBus(ABC):
         pass
 
     @abstractmethod
-    def subscribe(self, event_type: type[DomainEvent], handler: Callable) -> None:
+    def subscribe(self, event_type: type[DomainEvent], handler: Callable[..., None]) -> None:
         """Subscribe to events of a specific type."""
         pass
 
     @abstractmethod
-    def unsubscribe(self, event_type: type[DomainEvent], handler: Callable) -> None:
+    def unsubscribe(self, event_type: type[DomainEvent], handler: Callable[..., None]) -> None:
         """Unsubscribe from events of a specific type."""
         pass
 
@@ -209,7 +209,7 @@ class InMemoryEventBus(IEventBus):
     """Simple in-process event bus for single-machine deployment."""
 
     def __init__(self) -> None:
-        self._subscribers: dict[type[DomainEvent], list[Callable]] = {}
+        self._subscribers: dict[type[DomainEvent], list[Callable[..., None]]] = {}
 
     def publish(self, event: DomainEvent) -> None:
         handlers = self._subscribers.get(type(event), [])
@@ -219,12 +219,12 @@ class InMemoryEventBus(IEventBus):
             except Exception as exc:
                 logger.error("Event handler failed for %s: %s", type(event).__name__, exc)
 
-    def subscribe(self, event_type: type[DomainEvent], handler: Callable) -> None:
+    def subscribe(self, event_type: type[DomainEvent], handler: Callable[..., None]) -> None:
         if event_type not in self._subscribers:
             self._subscribers[event_type] = []
         self._subscribers[event_type].append(handler)
 
-    def unsubscribe(self, event_type: type[DomainEvent], handler: Callable) -> None:
+    def unsubscribe(self, event_type: type[DomainEvent], handler: Callable[..., None]) -> None:
         if event_type in self._subscribers:
             self._subscribers[event_type] = [
                 h for h in self._subscribers[event_type] if h != handler

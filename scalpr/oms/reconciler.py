@@ -44,7 +44,7 @@ class PositionReconciler:
         self._portfolio = portfolio
         self._interval_s = interval_s
         self._on_discrepancy = on_discrepancy
-        self._task: asyncio.Task | None = None
+        self._task: asyncio.Task[None] | None = None
 
     def reconcile_once(self) -> list[PositionDiscrepancy]:
         """Compare books once. Fail-safe: a broker error yields [] and a log,

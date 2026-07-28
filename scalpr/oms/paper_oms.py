@@ -149,7 +149,7 @@ class PaperOms(IBrokerGateway):
         with self._lock:
             return list(self.positions_dict.values())
 
-    def get_margins(self) -> dict:
+    def get_margins(self) -> dict[str, Any]:
         with self._lock:
             return {"available_margin": self.balance}
 
@@ -206,7 +206,7 @@ class PaperOms(IBrokerGateway):
         """Paper OMS has no delivery holdings — return empty."""
         return []
 
-    def get_fund_limits(self) -> dict:
+    def get_fund_limits(self) -> dict[str, Any]:
         """Return current balance as fund limits."""
         with self._lock:
             return {"available_margin": self.balance, "total_balance": self.balance}

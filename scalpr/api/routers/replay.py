@@ -1,6 +1,8 @@
 """Replay session REST routes — wire to ReplaySessionManager."""
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from scalpr.api.models import (
@@ -14,19 +16,19 @@ from scalpr.domain.values import DEFAULT_EXCHANGE
 router = APIRouter(prefix="/replay", tags=["replay"])
 
 
-def _get_manager(request: Request):
+def _get_manager(request: Request) -> Any:
     manager = request.app.state.replay_manager
     if manager is None:
         raise HTTPException(status_code=503, detail="replay manager not initialized")
     return manager
 
 
-@router.post("/sessions", response_model=ReplaySession)
+@router.post("/sessions", response_model=ReplaySession)  # type: ignore[untyped-decorator]
 async def create_replay_session(
     body: CreateReplayBody,
     request: Request,
-    manager=Depends(_get_manager),
-):
+    manager: Any = Depends(_get_manager),
+) -> Any:
     """Create a new replay session for the given symbol/date/timeframe."""
     try:
         session = manager.create(
@@ -44,24 +46,24 @@ async def create_replay_session(
     return session
 
 
-@router.get("/sessions", response_model=ReplaySessionsResponse)
+@router.get("/sessions", response_model=ReplaySessionsResponse)  # type: ignore[untyped-decorator]
 async def list_replay_sessions(
     request: Request,
     symbol: str | None = None,
     date: str | None = None,
-    manager=Depends(_get_manager),
-):
+    manager: Any = Depends(_get_manager),
+) -> Any:
     """List replay sessions, optionally filtered by symbol/date."""
     sessions = manager.list_sessions(symbol=symbol, date=date)
     return ReplaySessionsResponse(sessions=sessions)
 
 
-@router.get("/sessions/{session_id}", response_model=ReplaySession)
+@router.get("/sessions/{session_id}", response_model=ReplaySession)  # type: ignore[untyped-decorator]
 async def get_replay_session(
     session_id: str,
     request: Request,
-    manager=Depends(_get_manager),
-):
+    manager: Any = Depends(_get_manager),
+) -> Any:
     """Get a replay session by ID."""
     runtime = manager.get(session_id)
     if runtime is None:
@@ -69,13 +71,13 @@ async def get_replay_session(
     return runtime.snapshot()
 
 
-@router.post("/sessions/{session_id}/control", response_model=ReplaySession)
+@router.post("/sessions/{session_id}/control", response_model=ReplaySession)  # type: ignore[untyped-decorator]
 async def control_replay_session(
     session_id: str,
     body: ReplayControlBody,
     request: Request,
-    manager=Depends(_get_manager),
-):
+    manager: Any = Depends(_get_manager),
+) -> Any:
     """Control a replay session: play, pause, step, seek, set_speed."""
     action = body.action
     try:

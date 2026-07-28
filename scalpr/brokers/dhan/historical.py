@@ -13,7 +13,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from scalpr.brokers.dhan.http_client import DhanHttpClient
-from scalpr.brokers.dhan.resolver import SymbolResolver
+from scalpr.brokers.dhan.resolution import SymbolResolver
 
 logger = logging.getLogger(__name__)
 

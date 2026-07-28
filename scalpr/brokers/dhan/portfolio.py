@@ -11,12 +11,12 @@ from __future__ import annotations
 
 import logging
 from decimal import Decimal
+from typing import Any
 
 from scalpr.brokers.dhan.exceptions import BrokerError
 from scalpr.brokers.dhan.http_client import DhanHttpClient
 from scalpr.brokers.dhan.mapper import DhanMapper
-from scalpr.brokers.dhan.resolver import SymbolResolver
-from scalpr.brokers.dhan.segments import normalise_exchange
+from scalpr.brokers.dhan.resolution import SymbolResolver, normalise_exchange
 from scalpr.domain.instrument import Exchange
 from scalpr.domain.position import Position, PositionSide, PositionState
 from scalpr.domain.values import ZERO
@@ -84,7 +84,7 @@ class PortfolioAdapter:
         raw_holdings = self._extract_list(data)
         return [self._map_holding(h) for h in raw_holdings]
 
-    def get_fund_limits(self) -> dict:
+    def get_fund_limits(self) -> dict[str, Any]:
         """Fetch available margin, used margin, and total balance.
 
         Returns:
@@ -129,8 +129,8 @@ class PortfolioAdapter:
     # Mapping helpers
     # ------------------------------------------------------------------
 
-    def _map_position(self, raw: dict) -> Position:
-        """Convert a raw Dhan position dict to a SCALPR Position.
+    def _map_position(self, raw: dict[str, Any]) -> Position:
+        """Convert a raw Dhan position dict[str, Any] to a SCALPR Position.
 
         Delegates to DhanMapper for domain conversion, falling back
         to manual mapping if the mapper fails (defensive).
@@ -146,7 +146,7 @@ class PortfolioAdapter:
         )
         return self._map_position_manual(raw)
 
-    def _map_position_manual(self, raw: dict) -> Position:
+    def _map_position_manual(self, raw: dict[str, Any]) -> Position:
         """Manual position mapping as fallback.
 
         Dr. Venkat: "A system that is fast and wrong is more dangerous
@@ -175,8 +175,8 @@ class PortfolioAdapter:
             state=state,
         )
 
-    def _map_holding(self, raw: dict) -> Position:
-        """Convert a raw Dhan holding dict to a SCALPR Position.
+    def _map_holding(self, raw: dict[str, Any]) -> Position:
+        """Convert a raw Dhan holding dict[str, Any] to a SCALPR Position.
 
         Holdings are long-term delivery positions. They are treated as
         LONG positions with state OPEN.
@@ -207,8 +207,8 @@ class PortfolioAdapter:
             state=state,
         )
 
-    def _map_fund_limits(self, data: dict) -> dict:
-        """Convert Dhan fund limit response to a clean dict.
+    def _map_fund_limits(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Convert Dhan fund limit response to a clean dict[str, Any].
 
         Dhan API returns fund limits with various field names.
         We normalise to a consistent SCALPR format.
@@ -244,7 +244,7 @@ class PortfolioAdapter:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _extract_list(data: dict) -> list[dict]:
+    def _extract_list(data: dict[str, Any]) -> list[dict[str, Any]]:
         """Safely extract a list of records from API response.
 
         Dhan API may return data in various structures:
@@ -265,7 +265,7 @@ class PortfolioAdapter:
         return []
 
     @staticmethod
-    def _is_open(raw: dict) -> bool:
+    def _is_open(raw: dict[str, Any]) -> bool:
         """Check if a position record represents an open (non-flat) position."""
         quantity = raw.get("quantity", 0)
         try:

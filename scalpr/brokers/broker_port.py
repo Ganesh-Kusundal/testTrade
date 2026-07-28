@@ -39,7 +39,7 @@ class IBrokerGateway(ABC):
         pass
 
     @abstractmethod
-    def get_margins(self) -> dict:
+    def get_margins(self) -> dict[str, Any]:
         """Fetch available margin limits."""
         pass
 
@@ -91,7 +91,7 @@ class IBrokerGateway(ABC):
         pass
 
     @abstractmethod
-    def get_fund_limits(self) -> dict:
+    def get_fund_limits(self) -> dict[str, Any]:
         """Fetch available margin limits and fund details."""
         pass
 

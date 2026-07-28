@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from typing import Any
 
 from scalpr.domain.tick import OHLCV, Tick
 from scalpr.observability.metrics import metrics
@@ -24,7 +25,7 @@ class StrategyExecutor:
         self.strategies: list[IStrategy] = []
         self.timeout = timeout_seconds
 
-    def get_strategy_info(self) -> list[dict]:
+    def get_strategy_info(self) -> list[dict[str, Any]]:
         """Return list of registered strategies with their identifiers."""
         result = []
         for s in self.strategies:
@@ -72,15 +73,21 @@ class StrategyExecutor:
 
             # Record success metrics
             latency_ms = (time.time() - start_time) * 1000
-            metrics.get_histogram("strategy_execution_latency_ms").observe(latency_ms)
+            hist = metrics.get_histogram("strategy_execution_latency_ms")
+            if hist:
+                hist.observe(latency_ms)
 
         except asyncio.TimeoutError:
             logger.error("Strategy %s timed out after %ss", strategy_name, self.timeout)
-            metrics.get_counter("strategy_timeouts").increment()
+            counter = metrics.get_counter("strategy_timeouts")
+            if counter:
+                counter.increment()
 
         except Exception as exc:
             logger.exception("Strategy %s error: %s", strategy_name, exc)
-            metrics.get_counter("strategy_errors").increment()
+            counter = metrics.get_counter("strategy_errors")
+            if counter:
+                counter.increment()
 
     async def on_bar(self, bar: OHLCV) -> None:
         """Route incoming candle bar to all strategies with timeout protection."""
@@ -117,12 +124,18 @@ class StrategyExecutor:
 
             # Record success metrics
             latency_ms = (time.time() - start_time) * 1000
-            metrics.get_histogram("strategy_execution_latency_ms").observe(latency_ms)
+            hist = metrics.get_histogram("strategy_execution_latency_ms")
+            if hist:
+                hist.observe(latency_ms)
 
         except asyncio.TimeoutError:
             logger.error("Strategy %s on_bar timed out after %ss", strategy_name, self.timeout)
-            metrics.get_counter("strategy_timeouts").increment()
+            counter = metrics.get_counter("strategy_timeouts")
+            if counter:
+                counter.increment()
 
         except Exception as exc:
             logger.exception("Strategy %s on_bar error: %s", strategy_name, exc)
-            metrics.get_counter("strategy_errors").increment()
+            counter = metrics.get_counter("strategy_errors")
+            if counter:
+                counter.increment()

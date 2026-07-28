@@ -6,8 +6,7 @@ Fixture rows mirror real shapes from the cached instrument master CSV
 
 from decimal import Decimal
 
-from scalpr.brokers.dhan.instrument_mapper import map_row, wire_segment_for
-from scalpr.brokers.dhan.resolver import SymbolResolver
+from scalpr.brokers.dhan.resolution import SymbolResolver, map_row, wire_segment_for
 from scalpr.domain.instrument import Exchange, OptionType, Segment
 
 

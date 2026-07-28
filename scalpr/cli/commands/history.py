@@ -9,13 +9,13 @@ from scalpr.cli.utils import get_gateway
 console = Console()
 
 
-@click.command()
-@click.argument("symbol")
-@click.option("--exchange", default="NSE", help="Exchange code")
-@click.option("--timeframe", default="1m", help="Candle timeframe (1m, 5m, 15m, 1H, 1D)")
-@click.option("--days", default=30, help="Lookback days")
-@click.option("--broker", default="dhan", help="Broker name")
-def history(symbol: str, exchange: str, timeframe: str, days: int, broker: str):
+@click.command()  # type: ignore[untyped-decorator]
+@click.argument("symbol")  # type: ignore[untyped-decorator]
+@click.option("--exchange", default="NSE", help="Exchange code")  # type: ignore[untyped-decorator]
+@click.option("--timeframe", default="1m", help="Candle timeframe (1m, 5m, 15m, 1H, 1D)")  # type: ignore[untyped-decorator]
+@click.option("--days", default=30, help="Lookback days")  # type: ignore[untyped-decorator]
+@click.option("--broker", default="dhan", help="Broker name")  # type: ignore[untyped-decorator]
+def history(symbol: str, exchange: str, timeframe: str, days: int, broker: str) -> None:
     """View historical OHLCV data for a symbol."""
     gw = get_gateway(broker)
 

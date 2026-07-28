@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import threading
 from decimal import Decimal
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +68,7 @@ class CircuitBreaker:
             return self._halted or self._daily_loss_tripped or self._drawdown_tripped
 
     @property
-    def state(self) -> dict:
+    def state(self) -> dict[str, Any]:
         """Return a serializable snapshot of circuit breaker state."""
         with self._lock:
             reason = None

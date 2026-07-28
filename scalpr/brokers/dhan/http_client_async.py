@@ -100,7 +100,7 @@ class AsyncDhanHttpClient:
         if self._session is not None and not self._session.closed:
             await self._session.close()
 
-    async def post(self, endpoint: str, json: dict | None = None) -> dict[str, Any]:
+    async def post(self, endpoint: str, json: dict[str, Any] | None = None) -> dict[str, Any]:
         """POST request to Dhan API."""
         return await self._request("POST", endpoint, json=json)
 
@@ -108,7 +108,7 @@ class AsyncDhanHttpClient:
         """GET request from Dhan API."""
         return await self._request("GET", endpoint)
 
-    async def put(self, endpoint: str, json: dict | None = None) -> dict[str, Any]:
+    async def put(self, endpoint: str, json: dict[str, Any] | None = None) -> dict[str, Any]:
         """PUT request to Dhan API."""
         return await self._request("PUT", endpoint, json=json)
 
@@ -130,7 +130,7 @@ class AsyncDhanHttpClient:
         )
         return success
 
-    async def _request(self, method: str, endpoint: str, json: dict | None = None) -> dict[str, Any]:
+    async def _request(self, method: str, endpoint: str, json: dict[str, Any] | None = None) -> dict[str, Any]:
         """Execute HTTP request with retry, rate limiting, and circuit breaker."""
         # Circuit breaker check
         if not self._circuit_breaker.allow_request():
@@ -229,7 +229,7 @@ class AsyncDhanHttpClient:
                 raise OrderError(f"API failure: {remarks}")
 
             self._circuit_breaker.record_success()
-            return data
+            return data  # type: ignore[no-any-return]
 
         if last_exc:
             raise last_exc

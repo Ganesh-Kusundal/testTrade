@@ -75,7 +75,7 @@ class BrokerRegistry:
 
         gateway_class = _brokers[broker]
         logger.info("broker_instantiated: %s", broker)
-        return gateway_class(config)
+        return gateway_class(config)  # type: ignore[call-arg]
 
     @classmethod
     def is_available(cls, broker: str) -> bool:

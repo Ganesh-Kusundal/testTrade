@@ -48,7 +48,7 @@ class _SessionRuntime:
     state: str = IDLE
     speed: float = 1.0
     fanout: WsFanout = field(default_factory=WsFanout)
-    _task: asyncio.Task | None = None
+    _task: asyncio.Task[None] | None = None
 
     @property
     def cursor_t(self) -> int:

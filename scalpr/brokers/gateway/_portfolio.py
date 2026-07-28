@@ -27,7 +27,8 @@ class PortfolioMixin:
         Returns:
             List of Position domain objects
         """
-        return self._gateway.get_positions()
+        result: list[Position] = self._gateway.get_positions()
+        return result
 
     def holdings(self) -> list[Holding]:
         """Fetch long-term delivery holdings.
@@ -79,7 +80,8 @@ class PortfolioMixin:
         Returns:
             List of Order domain objects
         """
-        return self._gateway.get_orders()
+        result: list[Order] = self._gateway.get_orders()
+        return result
 
     def trades(self) -> list[Trade]:
         """Fetch the day's tradebook (execution fills).

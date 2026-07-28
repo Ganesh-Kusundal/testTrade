@@ -1,6 +1,6 @@
 """Option chain adapter — fetches and flattens Dhan option chain data.
 
-Produces scanner-compatible list[dict] with keys:
+Produces scanner-compatible list[dict[str, Any]] with keys:
 symbol, security_id, strike, bid, ask, oi, volume, delta.
 
 Wire contract (verified live 2026-07-27): Dhan v2 expects
@@ -16,7 +16,7 @@ from decimal import Decimal
 from typing import Any
 
 from scalpr.brokers.dhan.http_client import DhanHttpClient
-from scalpr.brokers.dhan.resolver import SymbolResolver
+from scalpr.brokers.dhan.resolution import SymbolResolver
 from scalpr.brokers.errors import OptionChainNotSupported
 from scalpr.domain.values import OPTIONABLE_SEGMENTS, ZERO
 
@@ -28,7 +28,7 @@ class OptionChainAdapter:
 
     Resolves the underlying instrument, fetches the option chain via
     POST /optionchain, and flattens Dhan's nested response into the
-    scanner-compatible ``list[dict]`` shape.
+    scanner-compatible ``list[dict[str, Any]]`` shape.
     """
 
     def __init__(self, client: DhanHttpClient, resolver: SymbolResolver) -> None:
@@ -45,7 +45,7 @@ class OptionChainAdapter:
         underlying_symbol: str,
         exchange: str,
         expiry: date | None = None,
-    ) -> list[dict]:
+    ) -> list[dict[str, Any]]:
         """Fetch and flatten the option chain for an underlying.
 
         Args:
@@ -76,7 +76,7 @@ class OptionChainAdapter:
         }
 
         raw = self._client.post("/optionchain", json=payload)
-        chain = self._flatten_chain(raw)
+        chain = self._flatten_chain(raw, self._resolver)
 
         logger.info(
             "option_chain_fetched",
@@ -233,7 +233,7 @@ class OptionChainAdapter:
         return None
 
     @staticmethod
-    def _approximate_spot_from_chain(chain: list[dict]) -> Decimal:
+    def _approximate_spot_from_chain(chain: list[dict[str, Any]]) -> Decimal:
         """Approximate spot price via put-call parity.
 
         Finds the strike where |CE LTP - PE LTP| is minimised,
@@ -264,9 +264,14 @@ class OptionChainAdapter:
     # ------------------------------------------------------------------
 
     def _resolve_underlying(self, symbol: str, exchange: str) -> tuple[int, str]:
-        """Resolve underlying to (security_id, wire_segment)."""
-        resolved = self._resolver.resolve_full(symbol, exchange)
-        return int(resolved.security_id), resolved.wire_segment
+        """Resolve underlying to (security_id, wire_segment).
+
+        Delegates to the resolver, which owns the lookup strategy (direct
+        symbol, with a futures-contract fallback for commodity underlyings
+        like MCX ``SILVER``). Keeps the fallback logic in one place rather
+        than duplicated across adapter code.
+        """
+        return self._resolver.resolve_underlying_for_options(symbol, exchange)
 
     def _resolve_next_expiry(self, security_id: int, segment: str) -> date:
         """Fetch expiry list and return the earliest future expiry."""
@@ -320,20 +325,21 @@ class OptionChainAdapter:
             return None
 
     @staticmethod
-    def _flatten_chain(raw: dict[str, Any]) -> list[dict]:
-        """Flatten Dhan's nested option-chain response to ``list[dict]``.
+    def _flatten_chain(
+        raw: dict[str, Any], resolver: SymbolResolver | None = None
+    ) -> list[dict[str, Any]]:
+        """Flatten Dhan's nested option-chain response to ``list[dict[str, Any]]``.
 
         Dhan returns ``data.oc`` as a dict keyed by strike price (as string),
         each value containing ``ce`` and ``pe`` sub-dicts with option data
         including greeks. Live responses carry ``security_id`` per leg but
-        no ``trading_symbol``, so ``symbol`` may be empty.
-
-        Captures all available fields for Tradehull-compatible DataFrame
-        pivoting: oi, previous_oi, volume, iv, ltp, bid/ask prices and
-        quantities, and all greeks (delta, theta, gamma, vega).
+        no ``trading_symbol``. To keep the flat form usable for
+        ``gw.instrument(leg["symbol"], ...)`` lookups, ``symbol`` is backfilled
+        from the resolver by ``security_id`` (falling back to ``""`` when the
+        contract is absent from the instrument master).
         """
         oc = raw.get("data", {}).get("oc", {})
-        result: list[dict] = []
+        result: list[dict[str, Any]] = []
 
         for strike_str, legs in oc.items():
             strike = Decimal(strike_str)
@@ -342,11 +348,17 @@ class OptionChainAdapter:
                 if leg is None:
                     continue
                 greeks = leg.get("greeks", {})
+                sid = OptionChainAdapter._to_security_id(leg.get("security_id"))
+                # Backfill the trading symbol from the resolver so callers can
+                # resolve the leg directly via gw.instrument(symbol, exchange).
+                symbol = ""
+                if sid is not None and resolver is not None:
+                    inst = resolver.get_by_security_id(str(sid))
+                    if inst is not None:
+                        symbol = inst.symbol
                 result.append({
-                    "symbol": leg.get("trading_symbol") or "",
-                    "security_id": OptionChainAdapter._to_security_id(
-                        leg.get("security_id")
-                    ),
+                    "symbol": symbol,
+                    "security_id": sid,
                     "strike": strike,
                     "option_type": side,
                     "bid": OptionChainAdapter._to_decimal(

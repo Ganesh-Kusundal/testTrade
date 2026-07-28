@@ -1,24 +1,24 @@
 """Contract tests for the instrument resolution API surface.
 
-Verifies that the public API of the resolution subsystem remains stable
-and that the three-file structure (segments, mapper, resolver) maintains
-clear boundaries.
+Verifies that the public API of the unified resolution module
+(scalpr.brokers.dhan.resolution) remains stable.
 """
 from __future__ import annotations
 
-from scalpr.brokers.dhan.instrument_mapper import map_row, wire_segment_for
-from scalpr.brokers.dhan.resolver import SymbolResolver
-from scalpr.brokers.dhan.segments import (
+from scalpr.brokers.dhan.resolution import (
     EXCHANGE_TO_SEGMENT,
     SEGMENT_TO_EXCHANGE,
+    SymbolResolver,
+    map_row,
     normalise_exchange,
     to_dhan_wire,
+    wire_segment_for,
 )
 from scalpr.domain.instrument import Exchange, Instrument, Segment
 
 
 class TestResolutionArchitecture:
-    """Verify the three-file resolution architecture is stable."""
+    """Verify the unified resolution module keeps a stable public API."""
 
     def test_resolver_is_public_api(self):
         """SymbolResolver is the main entry point for resolution."""
@@ -28,20 +28,20 @@ class TestResolutionArchitecture:
         assert hasattr(resolver, "load_from_rows")
 
     def test_mapper_is_pure_function(self):
-        """instrument_mapper provides pure functions (no state)."""
+        """Row mapping is provided as pure functions (no state)."""
         # map_row should be callable without any instance
         assert callable(map_row)
         assert callable(wire_segment_for)
 
     def test_segments_provides_constants(self):
-        """segments.py provides wire-format constants."""
+        """The resolution module provides wire-format constants."""
         assert isinstance(EXCHANGE_TO_SEGMENT, dict)
         assert isinstance(SEGMENT_TO_EXCHANGE, dict)
         assert callable(normalise_exchange)
         assert callable(to_dhan_wire)
 
     def test_resolver_uses_mapper_and_segments(self):
-        """SymbolResolver internally uses mapper and segments."""
+        """SymbolResolver internally uses the row-mapping and wire helpers."""
         resolver = SymbolResolver()
         # Load a sample instrument
         rows = [

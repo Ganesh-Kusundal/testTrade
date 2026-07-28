@@ -20,8 +20,9 @@ class MarketDataMixin:
     Expects the composed Gateway class to provide _gateway attribute.
     """
 
-    # Attribute provided by the composed Gateway class
+    # Attributes provided by the composed Gateway class
     _gateway: Any
+    _broker_name: str
 
     def ltp(self, symbol: str, exchange: str = DEFAULT_EXCHANGE) -> Decimal:
         """Get Last Traded Price for a symbol.
@@ -33,7 +34,7 @@ class MarketDataMixin:
         Returns:
             LTP as Decimal
         """
-        return self._gateway.get_ltp(symbol, exchange)
+        return Decimal(str(self._gateway.get_ltp(symbol, exchange)))
 
     def quote(self, symbol: str, exchange: str = DEFAULT_EXCHANGE) -> Quote:
         """Get full market quote for a symbol.

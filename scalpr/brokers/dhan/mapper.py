@@ -5,7 +5,7 @@ from decimal import Decimal
 from typing import Any, Generic, TypeVar
 
 from scalpr.brokers.dhan.dtos import DhanOrderRequest, DhanOrderResponse
-from scalpr.brokers.dhan.segments import exchange_to_wire
+from scalpr.brokers.dhan.resolution import exchange_to_wire
 from scalpr.domain.fill import Fill
 from scalpr.domain.instrument import Exchange
 from scalpr.domain.order import Order, OrderType

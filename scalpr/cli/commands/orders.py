@@ -9,9 +9,9 @@ from scalpr.cli.utils import get_gateway
 console = Console()
 
 
-@click.command()
-@click.option("--broker", default="dhan", help="Broker name")
-def orders(broker: str):
+@click.command()  # type: ignore[untyped-decorator]
+@click.option("--broker", default="dhan", help="Broker name")  # type: ignore[untyped-decorator]
+def orders(broker: str) -> None:
     """View today's orders."""
     gw = get_gateway(broker)
 

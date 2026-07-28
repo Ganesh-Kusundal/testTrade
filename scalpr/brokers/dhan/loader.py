@@ -10,11 +10,12 @@ import os
 import time
 from datetime import date, datetime
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 
 from config.endpoints import Dhan
-from scalpr.brokers.dhan.segments import _COMPACT_SEGMENT_MAP
+from scalpr.brokers.dhan.resolution import _COMPACT_SEGMENT_MAP
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +47,7 @@ class InstrumentLoader:
             logger.warning("Failed to clean up old cache files: %s", exc)
 
     @staticmethod
-    def load_cached(force_refresh: bool = False) -> list[dict]:
+    def load_cached(force_refresh: bool = False) -> list[dict[str, Any]]:
         """Load instrument master rows with daily caching.
 
         Args:
@@ -112,21 +113,21 @@ class InstrumentLoader:
         return rows
 
     @staticmethod
-    def load_from_file(path: str | Path) -> list[dict]:
+    def load_from_file(path: str | Path) -> list[dict[str, Any]]:
         """Load instruments from a local CSV file."""
         df = pd.read_csv(path, low_memory=False)
         return InstrumentLoader._compact_to_rows(df)
 
     @staticmethod
-    def load_from_url(url: str) -> list[dict]:
+    def load_from_url(url: str) -> list[dict[str, Any]]:
         """Load instruments from a URL."""
         df = pd.read_csv(url, low_memory=False)
         return InstrumentLoader._compact_to_rows(df)
 
     @staticmethod
-    def _compact_to_rows(df) -> list[dict]:
+    def _compact_to_rows(df: Any) -> list[dict[str, Any]]:
         """Convert DataFrame to list of row dicts with standardized fields."""
-        out: list[dict] = []
+        out: list[dict[str, Any]] = []
         for r in df.itertuples(index=False):
             exch_id = str(getattr(r, "SEM_EXM_EXCH_ID", ""))
             segment = str(getattr(r, "SEM_SEGMENT", ""))
@@ -152,25 +153,25 @@ class InstrumentLoader:
         return out
 
 
-def _safe_float(r, col: str, default):
+def _safe_float(r: Any, col: str, default: Any) -> Any:
     """Safely get float value from row."""
     val = getattr(r, col, None)
     return val if pd.notna(val) else default
 
 
-def _safe_str(r, col: str):
+def _safe_str(r: Any, col: str) -> str | None:
     """Safely get string value from row."""
     val = getattr(r, col, None)
     return str(val) if pd.notna(val) else None
 
 
-def _safe_opt_float(r, col: str):
+def _safe_opt_float(r: Any, col: str) -> Any | None:
     """Safely get optional float value from row."""
     val = getattr(r, col, None)
     return val if pd.notna(val) else None
 
 
-def _safe_opt_str(r, col: str):
+def _safe_opt_str(r: Any, col: str) -> str | None:
     """Safely get optional string value from row."""
     val = getattr(r, col, None)
     return str(val) if pd.notna(val) else None

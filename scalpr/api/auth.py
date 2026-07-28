@@ -10,6 +10,7 @@ import hashlib
 import hmac
 import json
 import time
+from typing import Any
 
 # Health probes must stay reachable without a token (k8s/monitoring).
 EXEMPT_PATHS = frozenset({
@@ -43,7 +44,7 @@ def create_token(subject: str, secret: str, expires_in_s: int = 86400) -> str:
     return f"{header}.{payload}.{_b64url_encode(sig)}"
 
 
-def verify_token(token: str, secret: str) -> dict:
+def verify_token(token: str, secret: str) -> dict[str, Any]:
     """Verify signature + expiry; return claims. Raises AuthError otherwise."""
     parts = token.split(".")
     if len(parts) != 3:
@@ -66,32 +67,32 @@ def verify_token(token: str, secret: str) -> dict:
     exp = claims.get("exp")
     if exp is None or time.time() >= exp:
         raise AuthError("token expired")
-    return claims
+    return claims  # type: ignore[no-any-return]
 
 
-def _extract_token(scope) -> str | None:
+def _extract_token(scope: Any) -> str | None:
     """Bearer header for http; header or ?token= query param for websocket."""
     headers = dict(scope.get("headers") or [])
     auth = headers.get(b"authorization", b"").decode("latin-1")
     if auth.startswith("Bearer "):
-        return auth[len("Bearer "):]
+        return auth[len("Bearer "):]  # type: ignore[no-any-return]
     if scope["type"] == "websocket":
         from urllib.parse import parse_qs
         qs = parse_qs((scope.get("query_string") or b"").decode("latin-1"))
         values = qs.get("token")
         if values:
-            return values[0]
+            return values[0]  # type: ignore[no-any-return]
     return None
 
 
 class JwtAuthMiddleware:
     """Pure-ASGI middleware: 401 on missing/invalid token, health exempt."""
 
-    def __init__(self, app, secret: str):
+    def __init__(self, app: Any, secret: str) -> None:
         self.app = app
         self.secret = secret
 
-    async def __call__(self, scope, receive, send):
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
         if scope["type"] not in ("http", "websocket"):
             await self.app(scope, receive, send)
             return

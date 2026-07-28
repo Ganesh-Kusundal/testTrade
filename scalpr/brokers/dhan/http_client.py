@@ -132,7 +132,7 @@ class DhanHttpClient:
         """Close the underlying HTTP session and release resources."""
         self._session.close()
 
-    def post(self, endpoint: str, json: dict | None = None) -> dict[str, Any]:
+    def post(self, endpoint: str, json: dict[str, Any] | None = None) -> dict[str, Any]:
         """POST request to Dhan API."""
         return self._request("POST", endpoint, json=json)
 
@@ -140,7 +140,7 @@ class DhanHttpClient:
         """GET request from Dhan API."""
         return self._request("GET", endpoint)
 
-    def put(self, endpoint: str, json: dict | None = None) -> dict[str, Any]:
+    def put(self, endpoint: str, json: dict[str, Any] | None = None) -> dict[str, Any]:
         """PUT request to Dhan API."""
         return self._request("PUT", endpoint, json=json)
 
@@ -164,7 +164,7 @@ class DhanHttpClient:
         )
         return success
 
-    def _request(self, method: str, endpoint: str, json: dict | None = None) -> dict[str, Any]:
+    def _request(self, method: str, endpoint: str, json: dict[str, Any] | None = None) -> dict[str, Any]:
         """Execute HTTP request with retry, rate limiting, and circuit breaker."""
         # Circuit breaker check
         if not self._circuit_breaker.allow_request():
@@ -256,7 +256,7 @@ class DhanHttpClient:
                 raise OrderError(f"API failure: {remarks}")
 
             self._circuit_breaker.record_success()
-            return data
+            return data  # type: ignore[no-any-return]
 
         if last_exc:
             raise last_exc

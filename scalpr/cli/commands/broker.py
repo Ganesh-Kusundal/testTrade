@@ -9,14 +9,14 @@ from scalpr.brokers import BrokerRegistry
 console = Console()
 
 
-@click.group()
-def broker():
+@click.group()  # type: ignore[untyped-decorator]
+def broker() -> None:
     """Broker management commands."""
     pass
 
 
-@broker.command("list")
-def list_brokers():
+@broker.command("list")  # type: ignore[untyped-decorator]
+def list_brokers() -> None:
     """List available brokers and their status."""
     brokers = BrokerRegistry.list_brokers()
 

@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
@@ -31,8 +32,8 @@ async def _pump(websocket: WebSocket, channel: ClientChannel) -> None:
         await websocket.send_text(frame)
 
 
-@router.websocket("/ws/market")
-async def ws_market(websocket: WebSocket):
+@router.websocket("/ws/market")  # type: ignore[untyped-decorator]
+async def ws_market(websocket: WebSocket) -> Any:
     fanout: WsFanout = websocket.app.state.market_fanout
     await websocket.accept()
     channel = fanout.register()
@@ -64,8 +65,8 @@ async def ws_market(websocket: WebSocket):
         fanout.unregister(channel)
 
 
-@router.websocket("/ws/portfolio")
-async def ws_portfolio(websocket: WebSocket):
+@router.websocket("/ws/portfolio")  # type: ignore[untyped-decorator]
+async def ws_portfolio(websocket: WebSocket) -> Any:
     """Push portfolio position updates to the frontend.
 
     Sends initial snapshot on connect, then pushes deltas when positions change.
@@ -121,8 +122,8 @@ async def ws_portfolio(websocket: WebSocket):
         pass
 
 
-@router.websocket("/ws/replay/{session_id}")
-async def ws_replay(websocket: WebSocket, session_id: str):
+@router.websocket("/ws/replay/{session_id}")  # type: ignore[untyped-decorator]
+async def ws_replay(websocket: WebSocket, session_id: str) -> Any:
     manager = getattr(websocket.app.state, "replay_manager", None)
     await websocket.accept()
     runtime = manager.get(session_id) if manager else None

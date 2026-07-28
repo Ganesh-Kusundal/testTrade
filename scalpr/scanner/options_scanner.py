@@ -28,7 +28,7 @@ class OptionsScanner:
         self.min_volume = min_volume
         self.max_spread = max_spread
 
-    def scan(self, spot_price: Decimal, chain_data: list[dict]) -> list[Instrument]:
+    def scan(self, spot_price: Decimal, chain_data: list[dict[str, Any]]) -> list[Instrument]:
         """Scan option chain data and return matching sorted instruments.
 
         ATM strike selection: Select strike closest to spot_price.

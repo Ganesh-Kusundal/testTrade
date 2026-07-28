@@ -9,11 +9,11 @@ from scalpr.cli.utils import get_gateway
 console = Console()
 
 
-@click.command()
-@click.argument("symbol")
-@click.option("--exchange", default="NSE", help="Exchange code")
-@click.option("--broker", default="dhan", help="Broker name")
-def quote(symbol: str, exchange: str, broker: str):
+@click.command()  # type: ignore[untyped-decorator]
+@click.argument("symbol")  # type: ignore[untyped-decorator]
+@click.option("--exchange", default="NSE", help="Exchange code")  # type: ignore[untyped-decorator]
+@click.option("--broker", default="dhan", help="Broker name")  # type: ignore[untyped-decorator]
+def quote(symbol: str, exchange: str, broker: str) -> None:
     """View live market quote for a symbol."""
     gw = get_gateway(broker)
 

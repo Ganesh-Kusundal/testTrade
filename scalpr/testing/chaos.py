@@ -73,7 +73,7 @@ class BrokerFailureInjector:
         status_code: int = 500,
         message: str = "Internal Server Error",
         after_calls: int = 0,
-    ) -> Callable:
+    ) -> Callable[..., Any]:
         """Create mock that raises HTTP error after N successful calls.
 
         Args:
@@ -99,7 +99,7 @@ class BrokerFailureInjector:
         self,
         timeout_seconds: float = 30.0,
         after_calls: int = 0,
-    ) -> Callable:
+    ) -> Callable[..., Any]:
         """Create mock that raises timeout after N successful calls."""
         def side_effect(*args: Any, **kwargs: Any) -> Any:
             self.call_count += 1
@@ -112,7 +112,7 @@ class BrokerFailureInjector:
 
         return side_effect
 
-    def inject_token_expiration(self, after_calls: int = 0) -> Callable:
+    def inject_token_expiration(self, after_calls: int = 0) -> Callable[..., Any]:
         """Create mock that simulates token expiration."""
         def side_effect(*args: Any, **kwargs: Any) -> Any:
             self.call_count += 1
@@ -123,7 +123,7 @@ class BrokerFailureInjector:
 
         return side_effect
 
-    def inject_rate_limit(self, after_calls: int = 0) -> Callable:
+    def inject_rate_limit(self, after_calls: int = 0) -> Callable[..., Any]:
         """Create mock that simulates rate limiting (HTTP 429)."""
         def side_effect(*args: Any, **kwargs: Any) -> Any:
             self.call_count += 1
@@ -139,7 +139,7 @@ class BrokerFailureInjector:
     @contextmanager
     def patch_broker_http(
         self,
-        side_effect: Callable,
+        side_effect: Callable[..., Any],
         target: str = "scalpr.brokers.dhan.http_client.DhanHttpClient._request",
     ) -> Generator[None, None, None]:
         """Context manager to patch broker HTTP calls with failures.
@@ -166,7 +166,7 @@ class MarketDataDisruptor:
     def __init__(self) -> None:
         self.disruption_active = False
 
-    def generate_stale_ticks(self, base_price: Decimal, count: int) -> list:
+    def generate_stale_ticks(self, base_price: Decimal, count: int) -> list[Any]:
         """Generate ticks with identical timestamps (stale data)."""
         from datetime import datetime, timezone
 
@@ -188,7 +188,7 @@ class MarketDataDisruptor:
 
         return ticks
 
-    def generate_out_of_order_ticks(self, count: int = 10) -> list:
+    def generate_out_of_order_ticks(self, count: int = 10) -> list[Any]:
         """Generate ticks with non-monotonic timestamps."""
         from datetime import datetime, timedelta, timezone
 
@@ -214,7 +214,7 @@ class MarketDataDisruptor:
 
         return ticks
 
-    def generate_malformed_ticks(self, count: int = 5) -> list:
+    def generate_malformed_ticks(self, count: int = 5) -> list[Any]:
         """Generate ticks with missing/invalid fields."""
         from datetime import datetime, timezone
 
@@ -258,7 +258,7 @@ class OrderFailureInjector:
             "Circuit filter applied",
         ]
 
-    def inject_order_rejection(self, reason: str | None = None) -> Callable:
+    def inject_order_rejection(self, reason: str | None = None) -> Callable[..., Any]:
         """Create mock that rejects orders."""
         from scalpr.brokers.dhan.exceptions import BrokerError
 
@@ -269,7 +269,7 @@ class OrderFailureInjector:
 
         return side_effect
 
-    def inject_partial_fills(self, fill_pct: float = 0.5) -> Callable:
+    def inject_partial_fills(self, fill_pct: float = 0.5) -> Callable[..., Any]:
         """Create mock that only partially fills orders."""
         def side_effect(*args: Any, **kwargs: Any) -> Any:
             from datetime import datetime, timezone
@@ -308,7 +308,7 @@ class OrderFailureInjector:
 
         return side_effect
 
-    def inject_latency_spike(self, delay_seconds: float = 5.0) -> Callable:
+    def inject_latency_spike(self, delay_seconds: float = 5.0) -> Callable[..., Any]:
         """Create mock that adds latency to order execution."""
         def side_effect(*args: Any, **kwargs: Any) -> Any:
             time.sleep(delay_seconds)
@@ -317,7 +317,7 @@ class OrderFailureInjector:
         return side_effect
 
     @property
-    def rng(self):
+    def rng(self) -> random.Random:
         """Random number generator."""
         return random.Random()
 
@@ -339,10 +339,10 @@ class PersistenceFailureInjector:
 
         original_connect = sqlite3.connect
 
-        def locked_connect(*args: Any, **kwargs: Any):
+        def locked_connect(*args: Any, **kwargs: Any) -> None:
             raise sqlite3.OperationalError("database is locked")
 
-        sqlite3.connect = locked_connect
+        sqlite3.connect = locked_connect  # type: ignore[assignment]
 
         try:
             yield
@@ -356,10 +356,10 @@ class PersistenceFailureInjector:
 
         original_connect = sqlite3.connect
 
-        def disk_full_connect(*args: Any, **kwargs: Any):
+        def disk_full_connect(*args: Any, **kwargs: Any) -> None:
             raise sqlite3.OperationalError("database or disk is full")
 
-        sqlite3.connect = disk_full_connect
+        sqlite3.connect = disk_full_connect  # type: ignore[assignment]
 
         try:
             yield

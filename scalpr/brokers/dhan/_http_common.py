@@ -52,7 +52,7 @@ def bucket_for(endpoint: str) -> str:
 
 def backoff_delay(attempt: int) -> float:
     """Exponential backoff: 500ms, 1s, 2s, 4s... capped at 5s."""
-    delay_ms = min(_BASE_DELAY_MS * (2 ** (attempt - 1)), _MAX_DELAY_MS)
+    delay_ms: int = min(_BASE_DELAY_MS * (2 ** (attempt - 1)), _MAX_DELAY_MS)
     return delay_ms / 1000.0
 
 

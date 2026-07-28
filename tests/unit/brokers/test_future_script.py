@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from scalpr.brokers.dhan.option_chain import OptionChainAdapter
-from scalpr.brokers.dhan.resolver import SymbolResolver
+from scalpr.brokers.dhan.resolution import SymbolResolver
 from scalpr.brokers.errors import OptionChainNotSupported
 from scalpr.brokers.instrument_handle import InstrumentHandle
 from scalpr.domain.instrument import (

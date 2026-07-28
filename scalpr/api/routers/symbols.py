@@ -11,6 +11,7 @@ import logging
 import os
 import threading
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, Query
 
@@ -54,8 +55,8 @@ def _load_symbols() -> list[SymbolInfo]:
             symbols.append(SymbolInfo(
                 symbol=trading_symbol,
                 name=row.get("SM_SYMBOL_NAME") or trading_symbol,
-                exchange=exchange,  # type: ignore[arg-type]
-                segment=segment,  # type: ignore[arg-type]
+                exchange=exchange,
+                segment=segment,
                 lotSize=lot_size,
                 tickSize=tick_size,
             ))
@@ -71,8 +72,8 @@ def _symbols() -> list[SymbolInfo]:
         return _cache
 
 
-@router.get("/search", response_model=SymbolSearchResponse)
-async def search_symbols(q: str = "", limit: int = Query(default=25, ge=1, le=200)):
+@router.get("/search", response_model=SymbolSearchResponse)  # type: ignore[untyped-decorator]
+async def search_symbols(q: str = "", limit: int = Query(default=25, ge=1, le=200)) -> Any:
     needle = q.strip().upper()
     universe = _symbols()
     if not needle:

@@ -58,7 +58,7 @@ def generate_token(client_id: str, pin: str, totp_secret: str) -> str:
             f"Dhan token generation failed: HTTP {resp.status_code}: {resp.text}"
         )
     body = resp.json()
-    access_token = body.get("accessToken")
+    access_token: str = body.get("accessToken", "")
     if not access_token:
         raise AuthenticationError(f"Dhan token missing in response: {body}")
     logger.info(

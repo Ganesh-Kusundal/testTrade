@@ -669,7 +669,7 @@ class DhanWebSocketManager(IMarketDataFeed):
         self._ws_parser = None
 
     @staticmethod
-    def _log_task_exception(task: asyncio.Task) -> None:
+    def _log_task_exception(task: asyncio.Task[object]) -> None:
         """Log exceptions from fire-and-forget tasks."""
         if task.exception():
             logger.error("Background task failed: %s", task.exception())
@@ -682,5 +682,5 @@ class DhanWebSocketManager(IMarketDataFeed):
         await self.start()
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+    async def __aexit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: Any) -> None:
         await self.stop()

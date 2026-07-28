@@ -22,9 +22,9 @@ from rich.console import Console
 console = Console()
 
 
-@click.group()
-@click.version_option(version="1.0.0", prog_name="tradex")
-def cli():
+@click.group()  # type: ignore[untyped-decorator]
+@click.version_option(version="1.0.0", prog_name="tradex")  # type: ignore[untyped-decorator]
+def cli() -> None:
     """TradeX - Terminal Trading Interface.
 
     A powerful CLI for interacting with broker APIs, viewing market data,
@@ -58,7 +58,7 @@ cli.add_command(quote.quote)
 cli.add_command(stream.stream)
 
 
-def main():
+def main() -> None:
     """CLI entry point."""
     try:
         cli()

@@ -54,6 +54,14 @@ def _adapter():
     resolved.security_id = 13
     resolved.wire_segment = "IDX_I"
     resolver.resolve_full.return_value = resolved
+
+    # _resolve_underlying now delegates to the resolver; mirror the direct
+    # lookup so existing test setups (which stub resolve_full) keep working.
+    def _underlying(symbol, exchange):
+        r = resolver.resolve_full(symbol, exchange)
+        return int(r.security_id), r.wire_segment
+
+    resolver.resolve_underlying_for_options.side_effect = _underlying
     return OptionChainAdapter(client, resolver), client, resolver
 
 
@@ -105,9 +113,22 @@ class TestFlattenChain:
         assert ce["volume"] == 40429090
         assert ce["delta"] == 0.62
 
-    def test_missing_trading_symbol_yields_empty_symbol(self):
-        # Live responses carry no trading_symbol — symbol must default to ""
-        adapter, client, _ = _adapter()
+    def test_symbol_backfilled_from_resolver(self):
+        # Live responses carry no trading_symbol; the flat form must backfill
+        # it from the resolver by security_id so callers can resolve the leg.
+        adapter, client, resolver = _adapter()
+        inst = MagicMock()
+        inst.symbol = "NIFTY 28JUL26 23800 CE"
+        resolver.get_by_security_id.return_value = inst
+        client.post.return_value = LIVE_CHAIN_RESPONSE
+        chain = adapter.get_option_chain("NIFTY", "NSE", expiry=date(2026, 7, 28))
+        ce = next(c for c in chain if c["security_id"] == 49081)
+        assert ce["symbol"] == "NIFTY 28JUL26 23800 CE"
+
+    def test_missing_symbol_in_master_yields_empty_symbol(self):
+        # Contract absent from the instrument master -> symbol stays ""
+        adapter, client, resolver = _adapter()
+        resolver.get_by_security_id.return_value = None
         client.post.return_value = LIVE_CHAIN_RESPONSE
         chain = adapter.get_option_chain("NIFTY", "NSE", expiry=date(2026, 7, 28))
         assert all(c["symbol"] == "" for c in chain)
@@ -226,6 +247,42 @@ class TestOptionChainValidation:
         ]
         chain = adapter.get_option_chain("GOLD", "MCX")
         assert len(chain) > 0
+
+    def test_commodity_underlying_falls_back_to_futures(self):
+        """MCX underlyings like SILVER aren't indexed as direct symbols.
+
+        The fallback logic now lives in the resolver
+        (``resolve_underlying_for_options``); here we verify the adapter
+        delegates and uses the resolver-supplied scrip/segment for the
+        /optionchain call.
+        """
+        adapter, client, resolver = _adapter()
+        # Clear the default _underlying side_effect so the explicit return_value wins.
+        resolver.resolve_underlying_for_options.side_effect = None
+        resolver.resolve_underlying_for_options.return_value = (471725, "MCX_COMM")
+        client.post.side_effect = [
+            {"data": ["2026-07-30"]},
+            LIVE_CHAIN_RESPONSE,
+        ]
+        chain = adapter.get_option_chain("SILVER", "MCX")
+        assert len(chain) > 0
+        # expiry list must use the resolver-supplied scrip/segment
+        expiry_call = client.post.call_args_list[0]
+        assert expiry_call.kwargs["json"] == {
+            "UnderlyingScrip": 471725,
+            "UnderlyingSeg": "MCX_COMM",
+        }
+        resolver.resolve_underlying_for_options.assert_called_once_with("SILVER", "MCX")
+
+    def test_commodity_underlying_no_futures_reraises(self):
+        from scalpr.brokers.dhan.exceptions import InstrumentNotFoundError
+
+        adapter, _client, resolver = _adapter()
+        resolver.resolve_underlying_for_options.side_effect = InstrumentNotFoundError(
+            "Instrument not found: symbol='GHOST', exchange='MCX'"
+        )
+        with pytest.raises(InstrumentNotFoundError):
+            adapter.get_option_chain("GHOST", "MCX")
 
     def test_error_message_contains_symbol_and_exchange(self):
         from scalpr.brokers.errors import OptionChainNotSupported

@@ -42,10 +42,12 @@ class PreTradeRiskGate:
         pos_map = {p.symbol: p for p in positions if p.quantity != 0}
         existing_pos = pos_map.get(order.symbol)
 
-        is_reducing = bool(existing_pos) and (
-            (existing_pos.position_side == PositionSide.LONG and order.side == OrderSide.SELL)
-            or (existing_pos.position_side == PositionSide.SHORT and order.side == OrderSide.BUY)
-        )
+        is_reducing = False
+        if existing_pos is not None:
+            is_reducing = (
+                (existing_pos.position_side == PositionSide.LONG and order.side == OrderSide.SELL)
+                or (existing_pos.position_side == PositionSide.SHORT and order.side == OrderSide.BUY)
+            )
 
         # If reducing, bypass some checks (we should always allow position reduction for safety)
         if is_reducing:

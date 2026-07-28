@@ -3,7 +3,10 @@
 C3 fail-closed: broker unavailable → 503, adapter failure → 502.
 Never fabricate an empty book.
 """
+from __future__ import annotations
+
 import logging
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 
@@ -12,15 +15,15 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/portfolio", tags=["portfolio"])
 
 
-def _require_gateway(request: Request):
+def _require_gateway(request: Request) -> Any:
     gateway = request.app.state.gateway
     if not gateway or not gateway.is_connected():
         raise HTTPException(status_code=503, detail="broker unavailable")
     return gateway
 
 
-@router.get("/positions")
-async def get_positions(request: Request):
+@router.get("/positions")  # type: ignore[untyped-decorator]
+async def get_positions(request: Request) -> Any:
     """Get current positions from broker."""
     gateway = _require_gateway(request)
     try:
@@ -40,8 +43,8 @@ async def get_positions(request: Request):
     ]
 
 
-@router.get("/margins")
-async def get_margins(request: Request):
+@router.get("/margins")  # type: ignore[untyped-decorator]
+async def get_margins(request: Request) -> Any:
     """Get available margins."""
     gateway = _require_gateway(request)
     try:
@@ -51,8 +54,8 @@ async def get_margins(request: Request):
         raise HTTPException(status_code=502, detail=f"broker error: {exc}") from exc
 
 
-@router.post("/square-off")
-async def square_off(request: Request):
+@router.post("/square-off")  # type: ignore[untyped-decorator]
+async def square_off(request: Request) -> Any:
     """Square off all positions."""
     gateway = _require_gateway(request)
     try:

@@ -103,8 +103,8 @@ class OrderRouter:
                         timestamp=datetime.now(timezone.utc),
                         component="OrderRouter",
                         reason=f"Daily loss limit exceeded: {daily_loss}",
-                        threshold=Decimal("0.03"),  # 3% default threshold
-                        current_value=daily_loss,
+                        threshold=float(Decimal("0.03")),  # 3% default threshold
+                        current_value=float(daily_loss),
                     )
                 )
             raise CircuitBreakerTripped(

@@ -20,7 +20,7 @@ Timeframe = Literal["1m", "3m", "5m", "15m", "30m", "1h", "4h", "1d", "1w"]
 ReplayState = Literal["IDLE", "PLAYING", "PAUSED", "ENDED"]
 
 
-class SymbolInfo(BaseModel):
+class SymbolInfo(BaseModel):  # type: ignore[misc]
     """Mirror of frontend Symbol."""
     symbol: str
     name: str
@@ -32,11 +32,11 @@ class SymbolInfo(BaseModel):
     sector: str | None = None
 
 
-class SymbolSearchResponse(BaseModel):
+class SymbolSearchResponse(BaseModel):  # type: ignore[misc]
     results: list[SymbolInfo]
 
 
-class Quote(BaseModel):
+class Quote(BaseModel):  # type: ignore[misc]
     """Mirror of frontend Quote. ts is epoch ms."""
     symbol: str
     exchange: Exchange
@@ -55,7 +55,7 @@ class Quote(BaseModel):
     ts: int
 
 
-class Candle(BaseModel):
+class Candle(BaseModel):  # type: ignore[misc]
     """Mirror of frontend Candle. t is open-time, epoch ms."""
     t: int
     o: float
@@ -65,7 +65,7 @@ class Candle(BaseModel):
     v: int
 
 
-class IndicatorSeries(BaseModel):
+class IndicatorSeries(BaseModel):  # type: ignore[misc]
     """Backend-computed indicator overlays, index-aligned with candles.
 
     The frontend renders these values and NEVER computes indicators
@@ -76,7 +76,7 @@ class IndicatorSeries(BaseModel):
     ema50: list[float]
 
 
-class CandlesResponse(BaseModel):
+class CandlesResponse(BaseModel):  # type: ignore[misc]
     symbol: str
     exchange: Exchange
     timeframe: Timeframe
@@ -84,7 +84,7 @@ class CandlesResponse(BaseModel):
     indicators: IndicatorSeries | None = None
 
 
-class ReplaySession(BaseModel):
+class ReplaySession(BaseModel):  # type: ignore[misc]
     """Mirror of frontend ReplaySession. All *_t fields are epoch ms."""
     id: str
     symbol: str
@@ -97,11 +97,11 @@ class ReplaySession(BaseModel):
     speed: float
 
 
-class ReplaySessionsResponse(BaseModel):
+class ReplaySessionsResponse(BaseModel):  # type: ignore[misc]
     sessions: list[ReplaySession]
 
 
-class CreateReplayBody(BaseModel):
+class CreateReplayBody(BaseModel):  # type: ignore[misc]
     """Mirror of client.ts CreateReplayBody."""
     symbol: str
     date: str  # YYYY-MM-DD
@@ -112,25 +112,25 @@ class CreateReplayBody(BaseModel):
 
 # ── Replay control (client.ts ReplayAction discriminated union) ────────────
 
-class PlayAction(BaseModel):
+class PlayAction(BaseModel):  # type: ignore[misc]
     action: Literal["play"]
 
 
-class PauseAction(BaseModel):
+class PauseAction(BaseModel):  # type: ignore[misc]
     action: Literal["pause"]
 
 
-class StepAction(BaseModel):
+class StepAction(BaseModel):  # type: ignore[misc]
     action: Literal["step"]
     n: int = Field(default=1, ge=1)
 
 
-class SeekAction(BaseModel):
+class SeekAction(BaseModel):  # type: ignore[misc]
     action: Literal["seek"]
     to_t: int
 
 
-class SetSpeedAction(BaseModel):
+class SetSpeedAction(BaseModel):  # type: ignore[misc]
     action: Literal["set_speed"]
     speed: float = Field(gt=0)
 
@@ -141,7 +141,7 @@ ReplayControlBody = Annotated[
 ]
 
 
-class ReplayEvent(BaseModel):
+class ReplayEvent(BaseModel):  # type: ignore[misc]
     """Mirror of frontend ReplayEvent — WS message schema for /ws/replay/{id}."""
     type: Literal["replay_candle", "replay_quote", "replay_state", "replay_end", "error"]
     session_id: str | None = None

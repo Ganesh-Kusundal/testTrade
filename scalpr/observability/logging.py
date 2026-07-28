@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 class JsonFormatter(logging.Formatter):
     """JSON log formatter for production observability."""
 
-    def format(self, record):
+    def format(self, record: logging.LogRecord) -> str:
         log_entry = {
             "timestamp": datetime.fromtimestamp(record.created, tz=timezone.utc).isoformat(),
             "level": record.levelname,
@@ -35,6 +35,7 @@ def setup_logging(environment: str = "development") -> None:
         environment: "development" for human-readable logs, "production" for JSON
     """
     # Create appropriate formatter
+    formatter: logging.Formatter
     if environment == "production":
         formatter = JsonFormatter()
     else:

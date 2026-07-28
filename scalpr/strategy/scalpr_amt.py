@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from scalpr.domain.instrument import Exchange
 from scalpr.domain.order import Order, OrderSide, OrderState, OrderType
@@ -25,7 +26,7 @@ class ScalprAmtStrategy(IStrategy):
         self.cvd_tracker = CvdTracker()
         self._trade_count = 0
 
-    def get_status(self) -> dict:
+    def get_status(self) -> dict[str, Any]:
         """Return strategy status for observability endpoint."""
         return {"trade_count": self._trade_count, "max_trades_per_day": 10}
 

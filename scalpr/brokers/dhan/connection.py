@@ -22,7 +22,7 @@ from scalpr.brokers.dhan.loader import InstrumentLoader
 from scalpr.brokers.dhan.market_data import MarketDataAdapter
 from scalpr.brokers.dhan.orders import OrdersAdapter
 from scalpr.brokers.dhan.portfolio import PortfolioAdapter
-from scalpr.brokers.dhan.resolver import SymbolResolver
+from scalpr.brokers.dhan.resolution import SymbolResolver
 from scalpr.domain.values import RECOVERY_TIMEOUT_S
 
 logger = logging.getLogger(__name__)

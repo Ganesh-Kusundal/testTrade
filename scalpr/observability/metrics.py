@@ -4,6 +4,7 @@ import threading
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from typing import Any
 
 
 @dataclass
@@ -23,7 +24,7 @@ class CounterMetric:
 class HistogramMetric:
     """Histogram metric for tracking latency distributions."""
     name: str
-    values: deque = field(default_factory=lambda: deque(maxlen=10000))
+    values: deque[float] = field(default_factory=lambda: deque(maxlen=10000))
     description: str = ""
 
     def observe(self, value: float) -> None:
@@ -59,7 +60,7 @@ class GaugeMetric:
 class MetricsRegistry:
     """Thread-safe metrics registry for production monitoring."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._counters: dict[str, CounterMetric] = {}
         self._histograms: dict[str, HistogramMetric] = {}
         self._gauges: dict[str, GaugeMetric] = {}
@@ -117,7 +118,7 @@ class MetricsRegistry:
     def get_gauge(self, name: str) -> GaugeMetric | None:
         return self._gauges.get(name)
 
-    def snapshot(self) -> dict:
+    def snapshot(self) -> dict[str, Any]:
         """Return current metrics snapshot for /metrics endpoint."""
         with self._lock:
             return {

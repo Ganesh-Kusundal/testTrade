@@ -23,7 +23,7 @@ from typing import Any
 from scalpr.brokers.broker_port import IBrokerGateway
 from scalpr.brokers.dhan.connection import DhanConnection
 from scalpr.brokers.dhan.exceptions import BrokerError
-from scalpr.brokers.dhan.segments import SEGMENT_TO_EXCHANGE
+from scalpr.brokers.dhan.resolution import SEGMENT_TO_EXCHANGE
 from scalpr.domain.fill import Fill
 from scalpr.domain.instrument import Exchange
 from scalpr.domain.order import Order, OrderSide, OrderState, OrderType
@@ -253,7 +253,7 @@ class DhanGateway(IBrokerGateway):
         """
         return self._connection.portfolio.get_holdings()
 
-    def get_margins(self) -> dict:
+    def get_margins(self) -> dict[str, Any]:
         """Fetch available margin limits and fund details.
 
         Delegates to PortfolioAdapter.get_fund_limits().
@@ -268,7 +268,7 @@ class DhanGateway(IBrokerGateway):
         """
         return self._connection.portfolio.get_fund_limits()
 
-    def get_fund_limits(self) -> dict:
+    def get_fund_limits(self) -> dict[str, Any]:
         """Fetch available margin limits and fund details.
 
         Alias for get_margins() — provided for clarity.

@@ -1,12 +1,16 @@
 """Truthful health endpoint — always 200, payload never lies (C3)."""
+from __future__ import annotations
+
+from typing import Any
+
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 router = APIRouter(tags=["health"])
 
 
-@router.get("/health")
-async def health(request: Request):
+@router.get("/health")  # type: ignore[untyped-decorator]
+async def health(request: Request) -> dict[str, Any]:
     gateway = getattr(request.app.state, "gateway", None)
     return {
         "gateway": bool(gateway and gateway.is_connected()),
@@ -15,14 +19,14 @@ async def health(request: Request):
     }
 
 
-@router.get("/health/live")
-async def health_live():
+@router.get("/health/live")  # type: ignore[untyped-decorator]
+async def health_live() -> dict[str, str]:
     """Liveness probe — the process is up; never checks dependencies."""
     return {"status": "ok", "check": "live"}
 
 
-@router.get("/health/ready")
-async def health_ready(request: Request):
+@router.get("/health/ready")  # type: ignore[untyped-decorator]
+async def health_ready(request: Request) -> Any:
     """Readiness probe — 200 only when the broker gateway is connected.
 
     503 keeps the same JSON shape (status/check) so probers can parse it.

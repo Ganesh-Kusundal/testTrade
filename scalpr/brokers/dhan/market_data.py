@@ -10,14 +10,14 @@ from decimal import Decimal
 from typing import Any
 
 from scalpr.brokers.dhan.http_client import DhanHttpClient
-from scalpr.brokers.dhan.resolver import SymbolResolver
+from scalpr.brokers.dhan.resolution import SymbolResolver
 from scalpr.domain.values import DEFAULT_EXCHANGE, ZERO
 
 logger = logging.getLogger(__name__)
 
 
 def _build_quote_fields(raw: dict[str, Any], symbol: str) -> dict[str, Any]:
-    """Build the canonical quote dict from a raw /marketfeed/quote entry.
+    """Build the canonical quote dict[str, Any] from a raw /marketfeed/quote entry.
 
     Single source of truth for quote fields — used by both single and batch
     paths so they can never silently diverge (S-4: batch quotes were missing
@@ -108,7 +108,7 @@ class MarketDataAdapter:
             exchange: Exchange
 
         Returns:
-            Quote dict with all Dhan fields: ltp, open, high, low, close, volume,
+            Quote dict[str, Any] with all Dhan fields: ltp, open, high, low, close, volume,
             change, average_price, buy_quantity, sell_quantity, last_quantity,
             last_trade_time, lower_circuit_limit, upper_circuit_limit, oi,
             oi_day_high, oi_day_low
@@ -142,7 +142,7 @@ class MarketDataAdapter:
             exchange: Exchange
 
         Returns:
-            Depth dict with bids and asks lists
+            Depth dict[str, Any] with bids and asks lists
         """
         security_id, segment = self._resolve_segment(symbol, exchange)
         return self.get_depth_by_id(security_id, segment, symbol=symbol)
@@ -194,7 +194,7 @@ class MarketDataAdapter:
         Returns:
             Dict mapping symbol to LTP
         """
-        segment_map: dict[str, list[str]] = {}
+        segment_map: dict[str, list[int]] = {}
         symbol_map: dict[str, str] = {}
 
         for sym in symbols:
@@ -220,7 +220,7 @@ class MarketDataAdapter:
         logger.debug("Batch LTP fetched: %s symbols", len(result))
         return result
 
-    def get_batch_quote(self, symbols: list[str], exchange: str = DEFAULT_EXCHANGE) -> dict[str, dict]:
+    def get_batch_quote(self, symbols: list[str], exchange: str = DEFAULT_EXCHANGE) -> dict[str, dict[str, Any]]:
         """Get quotes for multiple symbols in one call.
 
         Args:
@@ -228,9 +228,9 @@ class MarketDataAdapter:
             exchange: Exchange
 
         Returns:
-            Dict mapping symbol to quote dict
+            Dict mapping symbol to quote dict[str, Any]
         """
-        segment_map: dict[str, list[str]] = {}
+        segment_map: dict[str, list[int]] = {}
         symbol_map: dict[str, str] = {}
 
         for sym in symbols:

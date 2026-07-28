@@ -252,11 +252,11 @@ def async_limiter_from_table(
     cooldowns_on_429_s: dict[str, float] = {}
     for name, row in table.items():
         configs[name] = BucketConfig(
-            rate_per_second=float(row["sustained_rps"]),
-            capacity=int(row["burst_rps"]),
+            rate_per_second=float(row["sustained_rps"]),  # type: ignore[arg-type]
+            capacity=int(row["burst_rps"]),  # type: ignore[arg-type]
         )
-        min_intervals_ms[name] = float(row.get("min_interval_ms", 0))
-        cooldowns_on_429_s[name] = float(row.get("cooldown_on_429_s", 60.0))
+        min_intervals_ms[name] = float(row.get("min_interval_ms", 0))  # type: ignore[arg-type]
+        cooldowns_on_429_s[name] = float(row.get("cooldown_on_429_s", 60.0))  # type: ignore[arg-type]
         extra_raw = row.get("extra_windows")
         if extra_raw and isinstance(extra_raw, tuple):
             extra_windows[name] = list(extra_raw)
