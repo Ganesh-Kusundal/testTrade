@@ -11,7 +11,7 @@ from unittest.mock import create_autospec
 import pytest
 
 from scalpr.brokers.broker_port import IBrokerGateway
-from scalpr.brokers.contracts import Funds
+from scalpr.domain.contracts import Funds
 from scalpr.domain.tick import Tick
 from scalpr.execution.order_router import OrderRouter
 from scalpr.signals.gate_fsm import GateFSM

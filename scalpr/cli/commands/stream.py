@@ -10,13 +10,32 @@ from rich.console import Console
 from rich.live import Live
 from rich.table import Table
 
-from scalpr.brokers import Gateway
 from scalpr.domain.instrument import Exchange, SimpleInstrumentId
 from scalpr.domain.tick import Tick
 from scalpr.engine.clock import LiveClock
 from scalpr.engine.message_bus import MessageBus
 
 console = Console()
+
+
+def _create_gateway(broker: str) -> Any:
+    from scalpr.adapters.dhan.client import DhanClient
+    from scalpr.brokers.broker_gateway import DhanBrokerGateway
+
+    client_id = os.environ.get("DHAN_CLIENT_ID", "")
+    access_token = os.environ.get("DHAN_ACCESS_TOKEN", "")
+    bus = MessageBus()
+    clock = LiveClock()
+    client = DhanClient(bus, clock, {
+        "client_id": client_id,
+        "access_token": access_token,
+        "totp_secret": os.environ.get("DHAN_TOTP_SECRET", ""),
+        "pin": os.environ.get("DHAN_PIN", "1111"),
+        "csv_path": os.environ.get("DHAN_INSTRUMENT_CSV", "instrument.csv"),
+    })
+    gateway = DhanBrokerGateway(client)
+    gateway.connect()
+    return gateway
 
 
 def _try_dhan_stream(
@@ -165,7 +184,7 @@ def stream(symbols: tuple[str], exchange: str, broker: str, duration: int) -> No
     if _try_dhan_stream(symbols, exchange, duration):
         return
 
-    gw = Gateway(broker=broker)
+    gw = _create_gateway(broker)
 
     tick_data: dict[str, dict[str, Any]] = {}
     tick_count = 0

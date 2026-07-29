@@ -75,7 +75,7 @@ def validate_quote(g: Gateway) -> bool:
         quote = g.quote("TCS")
 
         # Verify it's a Quote dataclass
-        from scalpr.brokers.contracts import Quote
+        from scalpr.domain.contracts import Quote
         is_quote = isinstance(quote, Quote)
 
         # Verify fields
@@ -180,7 +180,7 @@ def validate_holdings(g: Gateway) -> bool:
         holdings = g.holdings()
         is_list = isinstance(holdings, list)
 
-        from scalpr.brokers.contracts import Holding
+        from scalpr.domain.contracts import Holding
         all_holdings = all(isinstance(h, Holding) for h in holdings)
 
         success = is_list and all_holdings
@@ -207,7 +207,7 @@ def validate_funds(g: Gateway) -> bool:
     try:
         funds = g.funds()
 
-        from scalpr.brokers.contracts import Funds
+        from scalpr.domain.contracts import Funds
         is_funds = isinstance(funds, Funds)
 
         has_balance = funds.total_balance > 0
@@ -252,7 +252,7 @@ def validate_trades(g: Gateway) -> bool:
         trades = g.trades()
         is_list = isinstance(trades, list)
 
-        from scalpr.brokers.contracts import Trade
+        from scalpr.domain.contracts import Trade
         all_trades = all(isinstance(t, Trade) for t in trades)
 
         success = is_list and all_trades

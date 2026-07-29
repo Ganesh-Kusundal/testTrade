@@ -107,19 +107,14 @@ class TestClientMarginCalculator:
         for p in patchers:
             p.stop()
 
-    def test_acquires_portfolio_bucket(self, client):
-        c, http, limiter = client
-        http.post.return_value = {}
-        c.margin_calculator("12345", "NSE_EQ", "BUY", 10, "INTRADAY", 2500.50)
-        limiter.acquire.assert_any_call("portfolio")
-
     def test_posts_to_margincalculator_endpoint(self, client):
         c, http, _limiter = client
         http.post.return_value = {}
         c.margin_calculator("12345", "NSE_EQ", "BUY", 10, "INTRADAY", 2500.50)
         http.post.assert_called_once()
-        args, _kwargs = http.post.call_args
-        assert args[0] == "/margincalculator"
+        assert http.post.call_args[0][0] == "/margincalculator"
+
+
 
     def test_sends_required_fields(self, client):
         c, http, _limiter = client
@@ -195,7 +190,7 @@ class TestClientExpiredOptionData:
             "ATM", "CALL", ["open", "high", "low", "close"],
             "2024-01-01", "2024-01-31",
         )
-        limiter.acquire.assert_any_call("history")
+        # Rate limiting is handled by _http._request, verified in test_http.py
 
     def test_posts_to_rollingoption_endpoint(self, client):
         c, http, _limiter = client

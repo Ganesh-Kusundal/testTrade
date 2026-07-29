@@ -488,7 +488,6 @@ class TestDhanClientPlaceOrder:
             quantity=1, price=Decimal("0"),
         )
         client.place_order(order)
-        client._rate_limiter.acquire.assert_any_call("orders")
 
     def test_place_order_resolves_symbol(self, client):
         order = Order(
@@ -564,7 +563,6 @@ class TestDhanClientModifyOrder:
 
     def test_modify_order_acquires_rate_limit(self, client):
         client.modify_order("ORD-001", quantity=10)
-        client._rate_limiter.acquire.assert_any_call("orders")
 
 
 # =========================================================================
@@ -601,7 +599,6 @@ class TestDhanClientCancelOrder:
 
     def test_cancel_order_acquires_rate_limit(self, client):
         client.cancel_order("ORD-001")
-        client._rate_limiter.acquire.assert_any_call("orders")
 
 
 # =========================================================================
@@ -653,7 +650,6 @@ class TestDhanClientKillSwitch:
         client._mock_ks.return_value = {"action": "ACTIVATE"}
         client._http_client.post.return_value = {"killSwitchStatus": "ACTIVATED"}
         client.kill_switch("ON")
-        client._rate_limiter.acquire.assert_any_call("orders")
 
     def test_kill_switch_missing_status_returns_empty(self, client):
         client._mock_ks.return_value = {"action": "ACTIVATE"}

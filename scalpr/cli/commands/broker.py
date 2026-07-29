@@ -5,7 +5,6 @@ import click
 from rich.console import Console
 from rich.table import Table
 
-from scalpr.brokers import BrokerRegistry
 from scalpr.cli.utils import _make_dhan_client
 
 console = Console()
@@ -42,7 +41,7 @@ def list_brokers() -> None:
         finally:
             client.stop()
     else:
-        for name in BrokerRegistry.list_brokers():
+        for name in ["dhan"]:
             table.add_row(
                 name,
                 "✅ Available",

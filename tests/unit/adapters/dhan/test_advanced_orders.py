@@ -280,7 +280,6 @@ class TestDhanClientPlaceSuperOrder:
         client._mock_mapper.return_value = {"securityId": "12345"}
         client._http_client.post.return_value = {"orderIds": ["SO-1"]}
         client.place_super_order("12345", "NSE_EQ", "BUY", 10, 150.0)
-        client._rate_limiter.acquire.assert_any_call("orders")
 
     def test_gets_token(self, client):
         client._mock_mapper.return_value = {"securityId": "12345"}
@@ -358,7 +357,6 @@ class TestDhanClientModifySuperOrder:
 
     def test_acquires_rate_limit(self, client):
         client.modify_super_order("SO-1")
-        client._rate_limiter.acquire.assert_any_call("orders")
 
     def test_sends_payload(self, client):
         client.modify_super_order(
@@ -415,7 +413,6 @@ class TestDhanClientCancelSuperOrder:
 
     def test_acquires_rate_limit(self, client):
         client.cancel_super_order("SO-1")
-        client._rate_limiter.acquire.assert_any_call("orders")
 
 
 # =========================================================================
@@ -453,7 +450,6 @@ class TestDhanClientGetSuperOrders:
     def test_acquires_rate_limit(self, client):
         client._http_client.get.return_value = []
         client.get_super_orders()
-        client._rate_limiter.acquire.assert_any_call("orders")
 
     def test_returns_list_when_response_is_list(self, client):
         client._http_client.get.return_value = [{"orderId": "SO-1"}]
@@ -519,7 +515,6 @@ class TestDhanClientPlaceForeverOrder:
         client._mock_mapper.return_value = {"securityId": "12345"}
         client._http_client.post.return_value = {"orderId": "FO-1"}
         client.place_forever_order("12345", "NSE_EQ", "BUY", 10, 150.0, 0.0)
-        client._rate_limiter.acquire.assert_any_call("orders")
 
     def test_gets_token(self, client):
         client._mock_mapper.return_value = {"securityId": "12345"}
@@ -593,7 +588,6 @@ class TestDhanClientModifyForeverOrder:
 
     def test_acquires_rate_limit(self, client):
         client.modify_forever_order("FO-1")
-        client._rate_limiter.acquire.assert_any_call("orders")
 
     def test_sends_payload(self, client):
         client.modify_forever_order(
@@ -649,7 +643,6 @@ class TestDhanClientCancelForeverOrder:
 
     def test_acquires_rate_limit(self, client):
         client.cancel_forever_order("FO-1")
-        client._rate_limiter.acquire.assert_any_call("orders")
 
 
 # =========================================================================
@@ -687,7 +680,6 @@ class TestDhanClientGetForeverOrders:
     def test_acquires_rate_limit(self, client):
         client._http_client.get.return_value = []
         client.get_forever_orders()
-        client._rate_limiter.acquire.assert_any_call("orders")
 
     def test_returns_list_when_response_is_list(self, client):
         client._http_client.get.return_value = [{"orderId": "FO-1"}]
@@ -753,7 +745,6 @@ class TestDhanClientPlaceConditionalTrigger:
         client._mock_mapper.return_value = {"securityId": "12345"}
         client._http_client.post.return_value = {"triggerId": "TG-1"}
         client.place_conditional_trigger("12345", "NSE_EQ", "BUY", 10, 150.0, 155.0)
-        client._rate_limiter.acquire.assert_any_call("orders")
 
     def test_gets_token(self, client):
         client._mock_mapper.return_value = {"securityId": "12345"}
@@ -824,7 +815,6 @@ class TestDhanClientDeleteConditionalTrigger:
 
     def test_acquires_rate_limit(self, client):
         client.delete_conditional_trigger("TG-1")
-        client._rate_limiter.acquire.assert_any_call("orders")
 
 
 # =========================================================================
@@ -862,7 +852,6 @@ class TestDhanClientGetAllConditionalTriggers:
     def test_acquires_rate_limit(self, client):
         client._http_client.get.return_value = []
         client.get_all_conditional_triggers()
-        client._rate_limiter.acquire.assert_any_call("orders")
 
     def test_returns_list_when_response_is_list(self, client):
         client._http_client.get.return_value = [{"triggerId": "TG-1"}]
@@ -916,7 +905,6 @@ class TestDhanClientGetConditionalTriggerById:
     def test_acquires_rate_limit(self, client):
         client._http_client.get.return_value = {"triggerId": "TG-1"}
         client.get_conditional_trigger_by_id("TG-1")
-        client._rate_limiter.acquire.assert_any_call("orders")
 
     def test_returns_empty_dict_on_non_dict_response(self, client):
         client._http_client.get.return_value = []

@@ -4,7 +4,7 @@ from decimal import Decimal
 
 import pytest
 
-from scalpr.brokers.errors import RateLimitError
+from scalpr.domain.errors import RateLimitError
 from scalpr.brokers.rate_limit import limiter_from_table
 from scalpr.domain.clock import SimulatedClock
 from scalpr.domain.instrument import Exchange

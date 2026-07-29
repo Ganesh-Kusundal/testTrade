@@ -2,7 +2,7 @@
 import json
 from datetime import datetime
 
-from scalpr.brokers.errors import (
+from scalpr.domain.errors import (
     AuthenticationError,
     CircuitBreakerTripped,
     ConfigurationError,

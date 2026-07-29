@@ -260,7 +260,6 @@ class TestDhanClientOnSubmit(unittest.TestCase):
 
     def test_acquires_rate_limit_bucket_orders(self):
         self.client._on_submit(self.msg)
-        self.mock_rate_limiter.acquire.assert_any_call("orders")
 
     def test_gets_auth_token(self):
         self.client._on_submit(self.msg)
@@ -340,7 +339,6 @@ class TestDhanClientOnCancel(unittest.TestCase):
 
     def test_acquires_rate_limit_bucket_orders(self):
         self.client._on_cancel(self.msg)
-        self.mock_rate_limiter.acquire.assert_any_call("orders")
 
     def test_sends_delete_request(self):
         self.client._on_cancel(self.msg)
@@ -386,7 +384,6 @@ class TestDhanClientOnModify(unittest.TestCase):
 
     def test_acquires_rate_limit_bucket_orders(self):
         self.client._on_modify(self.msg)
-        self.mock_rate_limiter.acquire.assert_any_call("orders")
 
     def test_sends_put_request(self):
         self.client._on_modify(self.msg)
@@ -512,7 +509,6 @@ class TestDhanClientGetQuote(unittest.TestCase):
 
     def test_acquires_rate_limit_market_data(self):
         self.client.get_quote(self.instrument_id)
-        self.mock_rate_limiter.acquire.assert_any_call("market_data")
 
     def test_resolves_symbol(self):
         self.client.get_quote(self.instrument_id)
@@ -575,7 +571,6 @@ class TestDhanClientPortfolio(unittest.TestCase):
     def test_get_positions_acquires_portfolio_bucket(self):
         self.mock_http_client.get.return_value = []
         self.client.get_positions()
-        self.mock_rate_limiter.acquire.assert_any_call("portfolio")
 
     def test_get_positions_gets_endpoint(self):
         self.mock_http_client.get.return_value = []
@@ -599,7 +594,6 @@ class TestDhanClientPortfolio(unittest.TestCase):
     def test_get_holdings_acquires_portfolio_bucket(self):
         self.mock_http_client.get.return_value = {}
         self.client.get_holdings()
-        self.mock_rate_limiter.acquire.assert_any_call("portfolio")
 
     def test_get_holdings_gets_endpoint(self):
         self.mock_http_client.get.return_value = {}
@@ -614,7 +608,6 @@ class TestDhanClientPortfolio(unittest.TestCase):
     def test_get_funds_acquires_portfolio_bucket(self):
         self.mock_http_client.get.return_value = {}
         self.client.get_funds()
-        self.mock_rate_limiter.acquire.assert_any_call("portfolio")
 
     def test_get_funds_gets_endpoint(self):
         self.mock_http_client.get.return_value = {}

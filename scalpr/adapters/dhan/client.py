@@ -146,7 +146,6 @@ class DhanClient:
     def _on_submit(self, msg: SubmitOrder) -> None:
         order = msg.order
         try:
-            self._rate_limiter.acquire("orders")
             self._token_manager.get_token()
             security_id, segment = self._resolve(order.symbol, order.exchange.value)
             req = order_to_dhan_request_v2(
@@ -176,7 +175,6 @@ class DhanClient:
 
     def _on_cancel(self, msg: CancelOrder) -> None:
         try:
-            self._rate_limiter.acquire("orders")
             self._http_client.delete(f"/orders/{msg.order_id}")
             self._bus.publish(
                 "exec.event.cancelled.dhan",
@@ -190,7 +188,6 @@ class DhanClient:
 
     def _on_modify(self, msg: ModifyOrder) -> None:
         try:
-            self._rate_limiter.acquire("orders")
             self._http_client.put(f"/orders/{msg.order_id}", data=msg.updates)
         except Exception as exc:
             logger.error("modify_failed: order_id=%s error=%s", msg.order_id, exc)
@@ -208,7 +205,6 @@ class DhanClient:
         tag: str | None = None,
         should_slice: bool = False,
     ) -> str:
-        self._rate_limiter.acquire("orders")
         self._token_manager.get_token()
         security_id, segment = self._resolve(order.symbol, order.exchange.value)
         req = order_to_dhan_request_v2(
@@ -229,26 +225,21 @@ class DhanClient:
         return order_id
 
     def modify_order(self, order_id: str, **updates) -> bool:
-        self._rate_limiter.acquire("orders")
         self._http_client.put(f"/orders/{order_id}", data=updates)
         return True
 
     def cancel_order(self, order_id: str) -> bool:
-        self._rate_limiter.acquire("orders")
         self._http_client.delete(f"/orders/{order_id}")
         return True
 
     def get_order_detail(self, order_id: str) -> dict:
-        self._rate_limiter.acquire("orders")
         return self._http_client.get(f"/orders/{order_id}", bucket="orders")
 
     def get_order_status(self, order_id: str) -> str:
-        self._rate_limiter.acquire("orders")
         detail = self._http_client.get(f"/orders/{order_id}", bucket="orders")
         return detail.get("status", "")
 
     def get_executed_price(self, order_id: str) -> float:
-        self._rate_limiter.acquire("orders")
         detail = self._http_client.get(f"/orders/{order_id}", bucket="orders")
         raw = detail.get("tradedPrice")
         if raw is None:
@@ -256,7 +247,6 @@ class DhanClient:
         return float(raw)
 
     def get_executed_price_and_time(self, order_id: str) -> tuple[float, str]:
-        self._rate_limiter.acquire("orders")
         detail = self._http_client.get(f"/orders/{order_id}", bucket="orders")
         raw = detail.get("tradedPrice")
         price = float(raw) if raw is not None else 0.0
@@ -264,7 +254,6 @@ class DhanClient:
         return (price, traded_at)
 
     def cancel_all_orders(self, symbol: str | None = None) -> int:
-        self._rate_limiter.acquire("orders")
         orders = self._http_client.get("/orders", bucket="orders")
         if isinstance(orders, dict):
             orders = orders.get("data", orders.get("orders", []))
@@ -286,11 +275,9 @@ class DhanClient:
         return cancelled
 
     def order_report(self, order_id: str) -> dict:
-        self._rate_limiter.acquire("orders")
         return self._http_client.get(f"/orders/{order_id}", bucket="orders")
 
     def get_trade_book(self) -> list[dict]:
-        self._rate_limiter.acquire("orders")
         data = self._http_client.get("/trades", bucket="orders")
         if isinstance(data, list):
             return data
@@ -299,8 +286,7 @@ class DhanClient:
         return []
 
     def get_exchange_time(self) -> str:
-        self._rate_limiter.acquire("orders")
-        data = self._http_client.get("/exchange/time", bucket="orders")
+        data = self._http_client.get("/exchange/time", bucket="portfolio")
         if isinstance(data, str):
             return data
         if isinstance(data, dict):
@@ -308,7 +294,6 @@ class DhanClient:
         return str(data)
 
     def kill_switch(self, action: str) -> str:
-        self._rate_limiter.acquire("orders")
         req = kill_switch_to_dhan(action)
         resp = self._http_client.post("/killswitch", data=req)
         status: str = resp.get("killSwitchStatus", "")
@@ -330,7 +315,6 @@ class DhanClient:
         trailing_jump: float = 0.0,
         tag: str | None = None,
     ) -> list[str]:
-        self._rate_limiter.acquire("orders")
         self._token_manager.get_token()
         req = super_order_to_dhan_request(
             security_id, exchange_segment, transaction_type,
@@ -357,7 +341,6 @@ class DhanClient:
         stop_loss_price: float = 0.0,
         trailing_jump: float = 0.0,
     ) -> bool:
-        self._rate_limiter.acquire("orders")
         payload: dict[str, Any] = {
             "orderId": order_id,
             "orderType": order_type.upper(),
@@ -372,12 +355,10 @@ class DhanClient:
         return True
 
     def cancel_super_order(self, order_id: str) -> bool:
-        self._rate_limiter.acquire("orders")
         self._http_client.delete(f"/superorders/{order_id}")
         return True
 
     def get_super_orders(self) -> list[dict]:
-        self._rate_limiter.acquire("orders")
         resp = self._http_client.get("/superorders", bucket="orders")
         if isinstance(resp, list):
             return resp
@@ -406,7 +387,6 @@ class DhanClient:
         tag: str | None = None,
         symbol: str = "",
     ) -> str:
-        self._rate_limiter.acquire("orders")
         self._token_manager.get_token()
         req = forever_order_to_dhan_request(
             security_id, exchange_segment, transaction_type,
@@ -432,7 +412,6 @@ class DhanClient:
         validity: str = "DAY",
         order_flag: str = "SINGLE",
     ) -> bool:
-        self._rate_limiter.acquire("orders")
         payload: dict[str, Any] = {
             "orderId": order_id,
             "orderFlag": order_flag.upper(),
@@ -448,12 +427,10 @@ class DhanClient:
         return True
 
     def cancel_forever_order(self, order_id: str) -> bool:
-        self._rate_limiter.acquire("orders")
         self._http_client.delete(f"/foreverorders/{order_id}")
         return True
 
     def get_forever_orders(self) -> list[dict]:
-        self._rate_limiter.acquire("orders")
         resp = self._http_client.get("/foreverorders", bucket="orders")
         if isinstance(resp, list):
             return resp
@@ -478,7 +455,6 @@ class DhanClient:
         disclosed_quantity: int = 0,
         tag: str | None = None,
     ) -> str:
-        self._rate_limiter.acquire("orders")
         self._token_manager.get_token()
         req = conditional_trigger_to_dhan_request(
             security_id, exchange_segment, transaction_type,
@@ -491,12 +467,10 @@ class DhanClient:
         return trigger_id
 
     def delete_conditional_trigger(self, trigger_id: str) -> bool:
-        self._rate_limiter.acquire("orders")
         self._http_client.delete(f"/triggers/{trigger_id}")
         return True
 
     def get_all_conditional_triggers(self) -> list[dict]:
-        self._rate_limiter.acquire("orders")
         resp = self._http_client.get("/triggers", bucket="orders")
         if isinstance(resp, list):
             return resp
@@ -505,7 +479,6 @@ class DhanClient:
         return []
 
     def get_conditional_trigger_by_id(self, trigger_id: str) -> dict:
-        self._rate_limiter.acquire("orders")
         resp = self._http_client.get(f"/triggers/{trigger_id}", bucket="orders")
         return resp if isinstance(resp, dict) else {}
 
@@ -522,7 +495,6 @@ class DhanClient:
         self._ws.unsubscribe([(security_id, segment)])
 
     def get_quote(self, instrument_id: InstrumentId) -> dict[str, Any]:
-        self._rate_limiter.acquire("market_data")
         symbol, exchange = self._instrument_id_to_symbol_exchange(instrument_id)
         security_id, segment = self._resolve(symbol, exchange)
         data = self._http_client.post(
@@ -548,7 +520,6 @@ class DhanClient:
         self._ws.unsubscribe_depth([(security_id, segment)])
 
     def get_market_depth_snapshot(self, instrument_id: InstrumentId) -> dict:
-        self._rate_limiter.acquire("market_data")
         symbol, exchange = self._instrument_id_to_symbol_exchange(instrument_id)
         security_id, segment = self._resolve(symbol, exchange)
         data = self._http_client.post(
@@ -586,18 +557,15 @@ class DhanClient:
     # ── Portfolio ──────────────────────────────────────────────────────
 
     def get_positions(self) -> list[Position]:
-        self._rate_limiter.acquire("portfolio")
         data = self._http_client.get("/positions", bucket="portfolio")
         if isinstance(data, list):
             return [to_position(item) for item in data]
         return [to_position(data)]
 
     def get_holdings(self) -> dict[str, Any]:
-        self._rate_limiter.acquire("portfolio")
         return self._http_client.get("/holdings", bucket="portfolio")
 
     def get_funds(self) -> dict[str, Any]:
-        self._rate_limiter.acquire("portfolio")
         return self._http_client.get("/fundlimit", bucket="portfolio")
 
     def margin_calculator(
@@ -610,7 +578,6 @@ class DhanClient:
         price: float,
         trigger_price: float = 0,
     ) -> dict[str, Any]:
-        self._rate_limiter.acquire("portfolio")
         req = margin_calc_to_dhan_request(
             security_id, exchange_segment, transaction_type,
             quantity, product_type, price, trigger_price,
@@ -631,7 +598,6 @@ class DhanClient:
         to_date: str,
         interval: int = 1,
     ) -> dict[str, Any]:
-        self._rate_limiter.acquire("history")
         payload = {
             "securityId": security_id,
             "exchangeSegment": exchange_segment,

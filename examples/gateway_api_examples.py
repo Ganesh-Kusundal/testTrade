@@ -159,7 +159,7 @@ def demo_option_chain(nifty):
 
 def demo_option_chain_error(tcs):
     """Equities don't support option chain — clear error."""
-    from scalpr.brokers.errors import OptionChainNotSupported
+    from scalpr.domain.errors import OptionChainNotSupported
 
     try:
         tcs.option_chain()

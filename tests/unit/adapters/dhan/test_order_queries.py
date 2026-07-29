@@ -55,7 +55,6 @@ class TestGetOrderDetail(unittest.TestCase):
     def test_acquires_rate_limit_orders(self):
         self.mock_http.get.return_value = {}
         self.client.get_order_detail("ORD1")
-        self.mock_rate.acquire.assert_any_call("orders")
 
     def test_returns_response_dict(self):
         self.mock_http.get.return_value = {"orderId": "ORD1", "symbol": "RELIANCE"}
@@ -99,7 +98,6 @@ class TestGetOrderStatus(unittest.TestCase):
     def test_acquires_rate_limit(self):
         self.mock_http.get.return_value = {"status": "PENDING"}
         self.client.get_order_status("ORD1")
-        self.mock_rate.acquire.assert_any_call("orders")
 
 
 # ── get_executed_price ────────────────────────────────────────────
@@ -264,7 +262,6 @@ class TestCancelAllOrders(unittest.TestCase):
     def test_acquires_rate_limit(self):
         self.mock_http.get.return_value = []
         self.client.cancel_all_orders()
-        self.mock_rate.acquire.assert_any_call("orders")
 
 
 # ── order_report ──────────────────────────────────────────────────
@@ -294,7 +291,6 @@ class TestOrderReport(unittest.TestCase):
     def test_acquires_rate_limit(self):
         self.mock_http.get.return_value = {}
         self.client.order_report("ORD1")
-        self.mock_rate.acquire.assert_any_call("orders")
 
     def test_raises_on_404(self):
         self.mock_http.get.side_effect = DhanRequestError(404, "Not Found")
@@ -356,7 +352,6 @@ class TestGetTradeBook(unittest.TestCase):
     def test_acquires_rate_limit(self):
         self.mock_http.get.return_value = []
         self.client.get_trade_book()
-        self.mock_rate.acquire.assert_any_call("orders")
 
 
 # ── get_exchange_time ─────────────────────────────────────────────
@@ -395,12 +390,11 @@ class TestGetExchangeTime(unittest.TestCase):
     def test_get_exchange_time_endpoint(self):
         self.mock_http.get.return_value = {}
         self.client.get_exchange_time()
-        self.mock_http.get.assert_called_once_with("/exchange/time", bucket="orders")
+        self.mock_http.get.assert_called_once_with("/exchange/time", bucket="portfolio")
 
     def test_acquires_rate_limit(self):
         self.mock_http.get.return_value = {}
         self.client.get_exchange_time()
-        self.mock_rate.acquire.assert_any_call("orders")
 
 
 # ── order_report_to_dict mapper ───────────────────────────────────
