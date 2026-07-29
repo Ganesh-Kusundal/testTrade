@@ -36,32 +36,65 @@ def _load_dotenv() -> None:
 def _create_gateway() -> tuple[Any, str | None]:
     """Create and configure the broker gateway port.
 
-    Returns (port, error) — the IBrokerGateway port, because routers and
-    wire() speak the port vocabulary (get_positions/get_margins/get_ltp).
-    None if it cannot connect (e.g. missing credentials): API still boots,
-    routers answer 503 and /health reports the error truthfully.
+    Returns (port, error) — an IBrokerGateway-compatible port backed by
+    the new DhanClient + DhanBrokerGateway shim. Routers and wire() speak
+    the port vocabulary (get_positions/get_margins/get_ltp) without knowing
+    about the new adapter internals. Falls back gracefully: the API still
+    boots without broker credentials, returning 503 on broker endpoints.
     """
+    from config.secrets_manager import SecretsManager
+    from scalpr.brokers.broker_gateway import DhanBrokerGateway
+    from scalpr.adapters.dhan.client import DhanClient
+    from scalpr.engine.clock import LiveClock
+    from scalpr.engine.message_bus import MessageBus
+
+    sm = SecretsManager()
+    client_id = sm.get_dhan_client_id()
+    access_token = sm.get_dhan_access_token()
+    if not client_id or not access_token:
+        logger.info("Dhan credentials missing — API will start without broker")
+        return None, "Dhan credentials not configured"
+
     try:
-        from scalpr.brokers.gateway import Gateway
-        return Gateway().gateway, None
+        clock = LiveClock()
+        bus = MessageBus()
+        client = DhanClient(bus, clock, {
+            "client_id": client_id,
+            "access_token": access_token,
+            "totp_secret": sm.get_dhan_totp_secret() or "",
+            "pin": sm.get_dhan_pin() or "1111",
+            "csv_path": "instrument.csv",
+        })
+        gateway = DhanBrokerGateway(client)
+        return gateway, None
     except Exception as e:
-        logger.error("Gateway creation failed — API will start without broker: %s", e)
+        logger.error("DhanBrokerGateway creation failed: %s", e)
         return None, str(e)
 
 
-def _create_event_system() -> dict | None:
+def _create_event_system(existing_client: Any = None) -> dict | None:
     """Create the new event-driven system: MessageBus + ExecutionEngine + DhanClient.
 
-    Works alongside the old Gateway port — routers still use the old port
-    while new features consume bus events. Returns None if Dhan credentials
-    are missing (API still boots, no broker-dependent features).
+    When *existing_client* is provided (from DhanBrokerGateway), it is reused
+    to avoid duplicating the connection. Returns None when no DhanClient is
+    available (e.g. credentials missing).
     """
+    from scalpr.engine.execution_engine import ExecutionEngine
+
+    if existing_client is not None:
+        clock = existing_client._clock
+        bus = existing_client._bus
+        engine = ExecutionEngine(bus=bus, clock=clock)
+        engine.start()
+        logger.info("event_system_reused_from_gateway: bus=%s engine=%s client=%s",
+                    id(bus), id(engine), id(existing_client))
+        return {"clock": clock, "bus": bus, "engine": engine, "client": existing_client}
+
     from config.secrets_manager import SecretsManager
 
     sm = SecretsManager()
     client_id = sm.get_dhan_client_id()
     access_token = sm.get_dhan_access_token()
-    totp_secret = sm.get_dhan_totp_secret()
 
     if not client_id or not access_token:
         logger.info("Dhan credentials missing — event system disabled")
@@ -69,7 +102,6 @@ def _create_event_system() -> dict | None:
 
     from scalpr.adapters.dhan.client import DhanClient
     from scalpr.engine.clock import LiveClock
-    from scalpr.engine.execution_engine import ExecutionEngine
     from scalpr.engine.message_bus import MessageBus
 
     clock = LiveClock()
@@ -81,7 +113,7 @@ def _create_event_system() -> dict | None:
     client = DhanClient(bus, clock, {
         "client_id": client_id,
         "access_token": access_token,
-        "totp_secret": totp_secret or "",
+        "totp_secret": sm.get_dhan_totp_secret() or "",
         "pin": dhan_pin,
         "csv_path": "instrument.csv",
     })
@@ -190,8 +222,6 @@ async def _start_trading(app: FastAPI) -> None:
     Uses the new event-driven system (DhanClient WS) when available,
     falls back to the old DhanWebSocketManager for backward compat.
     """
-    from scalpr.brokers.dhan.auth import get_broadcast
-
     watchlist = _watchlist_from_env()
     gateway = app.state.gateway
     event_system = app.state.event_system
@@ -223,31 +253,20 @@ async def _start_trading(app: FastAPI) -> None:
         logger.info("trading_wired_event_system: %s", watchlist)
         return
 
-    # Fallback: old DhanWebSocketManager path
-    from scalpr.brokers.dhan.ws_manager import DhanWebSocketManager
-
-    ctx = wire(gateway, watchlist)
-
-    sm = SecretsManager()
-    feed = DhanWebSocketManager(
-        access_token=sm.get_dhan_access_token() or "",
-        client_id=sm.get_dhan_client_id() or "",
-        resolver=gateway.connection.resolver,
-    )
-
-    get_broadcast().register(feed._handle_token_change)
-    await feed.start()
-    await feed.subscribe_pairs([(s, "NSE") for s in watchlist])
-
-    loop = asyncio.get_running_loop()
-    feed.add_subscriber(
-        lambda t: asyncio.run_coroutine_threadsafe(ctx.executor.on_tick(t), loop)
-    )
-
-    app.state.feed = feed
-    app.state.executor = ctx.executor
-    app.state.order_router = ctx.order_router
-    logger.info("trading_wired_legacy: %s", watchlist)
+    # Fallback: use DhanClient WS directly
+    if gateway is not None and gateway.is_connected():
+        client = gateway.connection
+        for symbol in watchlist:
+            from scalpr.domain.instrument import SimpleInstrumentId
+            client.subscribe_quotes(SimpleInstrumentId.parse(f"{symbol}:NSE"))
+        loop = asyncio.get_running_loop()
+        client._bus.subscribe(
+            "market.quote.dhan",
+            lambda t: asyncio.run_coroutine_threadsafe(ctx.executor.on_tick(t), loop),
+        )
+        app.state.executor = ctx.executor
+        app.state.order_router = ctx.order_router
+        logger.info("trading_wired_legacy: %s", watchlist)
 
 
 def _create_candle_provider(gateway: Any) -> Any:
@@ -375,7 +394,10 @@ def create_app() -> FastAPI:
     gateway, broker_error = _create_gateway()
     app.state.gateway = gateway
     app.state.broker_error = broker_error
-    app.state.event_system = _create_event_system()
+    # Event system shares the DhanClient from gateway when available
+    app.state.event_system = _create_event_system(
+        existing_client=gateway.connection if gateway and gateway.is_connected() else None
+    )
     app.state.feed = None
     app.state.executor = None
     app.state.order_router = None

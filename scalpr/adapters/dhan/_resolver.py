@@ -23,7 +23,12 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any, NamedTuple
 
-from scalpr.brokers.dhan.exceptions import InstrumentNotFoundError
+from scalpr.domain.errors import InstrumentNotFound
+
+class DhanInstrumentNotFoundError(InstrumentNotFound, Exception):
+    """Instrument not found in the Dhan instrument master."""
+
+InstrumentNotFoundError = DhanInstrumentNotFoundError
 from scalpr.domain.instrument import (
     Exchange,
     Instrument,

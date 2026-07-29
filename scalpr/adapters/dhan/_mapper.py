@@ -346,7 +346,7 @@ def raw_trade_to_fill(raw: dict[str, Any]) -> Fill:
         except (ValueError, TypeError):
             pass
 
-    from scalpr.brokers.dhan.resolution import SEGMENT_TO_EXCHANGE
+    from scalpr.adapters.dhan._resolver import SEGMENT_TO_EXCHANGE
     exchange = SEGMENT_TO_EXCHANGE.get(raw.get("exchange_segment", ""), "")
 
     return Fill(

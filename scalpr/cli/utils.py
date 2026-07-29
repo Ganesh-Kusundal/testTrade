@@ -4,7 +4,6 @@ import os
 
 from rich.console import Console
 
-from scalpr.brokers.gateway import Gateway
 from scalpr.engine.clock import LiveClock
 from scalpr.engine.message_bus import MessageBus
 
@@ -15,37 +14,33 @@ def _make_dhan_client() -> object | None:
     """Create a DhanClient from environment variables, or None if missing."""
     client_id = os.environ.get("DHAN_CLIENT_ID", "")
     access_token = os.environ.get("DHAN_ACCESS_TOKEN", "")
-    totp_secret = os.environ.get("DHAN_TOTP_SECRET", "")
-    if not (client_id and access_token and totp_secret):
+    if not (client_id and access_token):
         return None
     from scalpr.adapters.dhan.client import DhanClient
+    from scalpr.brokers.broker_gateway import DhanBrokerGateway
 
     bus = MessageBus()
     clock = LiveClock()
     config = {
         "client_id": client_id,
         "access_token": access_token,
-        "totp_secret": totp_secret,
+        "totp_secret": os.environ.get("DHAN_TOTP_SECRET", ""),
+        "pin": os.environ.get("DHAN_PIN", "1111"),
         "csv_path": os.environ.get("DHAN_INSTRUMENT_CSV", "instrument.csv"),
     }
     client = DhanClient(bus, clock, config)
-    client.start()
-    return client
+    gateway = DhanBrokerGateway(client)
+    gateway.connect()
+    return gateway
 
 
-def get_gateway(broker: str = "dhan") -> object:
-    """Create and connect a gateway or DhanClient.
-
-    Tries DhanClient first (from env vars), falls back to old Gateway.
+def get_gateway(broker: str = "dhan") -> object | None:
+    """Create and connect a DhanBrokerGateway from environment variables.
 
     Args:
-        broker: Broker name (used for fallback)
+        broker: Ignored (kept for backward compat).
 
     Returns:
-        Connected Gateway or DhanClient instance
+        Connected DhanBrokerGateway instance, or None if credentials missing.
     """
-    client = _make_dhan_client()
-    if client is not None:
-        return client
-    gw = Gateway(broker=broker)
-    return gw
+    return _make_dhan_client()

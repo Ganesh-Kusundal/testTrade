@@ -25,7 +25,7 @@ from scalpr.adapters.dhan._option_chain import OptionChainAdapter
 from scalpr.adapters.dhan._portfolio import PortfolioAdapter
 from scalpr.adapters.dhan._resolver import SymbolResolver
 from scalpr.adapters.dhan._ws import DhanWebSocket
-from scalpr.brokers.dhan.exceptions import DhanInstrumentNotFoundError as InstrumentNotFoundError
+from scalpr.adapters.dhan._resolver import DhanInstrumentNotFoundError as InstrumentNotFoundError
 from scalpr.domain.instrument import (
     DerivativeInstrumentId,
     InstrumentId,

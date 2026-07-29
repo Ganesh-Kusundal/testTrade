@@ -24,7 +24,7 @@ from scalpr.adapters.dhan._resolver import (
     SymbolResolver,
     map_row,
 )
-from scalpr.brokers.dhan.exceptions import DhanInstrumentNotFoundError
+from scalpr.adapters.dhan._resolver import DhanInstrumentNotFoundError
 from scalpr.domain.instrument import (
     Exchange,
     Instrument,
@@ -309,7 +309,7 @@ class TestMcxResolveFallback:
 
     def _resolve(self, resolver: SymbolResolver, symbol: str, exchange: str) -> tuple[str, str]:
         """Simulate DhanClient._resolve logic."""
-        from scalpr.brokers.dhan.exceptions import DhanInstrumentNotFoundError
+        from scalpr.adapters.dhan._resolver import DhanInstrumentNotFoundError
         try:
             r = resolver.resolve_full(symbol, exchange)
             return r.security_id, r.wire_segment
@@ -919,7 +919,7 @@ class TestBseExchange:
 
 class TestBseResolve:
     def _resolve(self, resolver: SymbolResolver, symbol: str, exchange: str) -> tuple[str, str]:
-        from scalpr.brokers.dhan.exceptions import DhanInstrumentNotFoundError
+        from scalpr.adapters.dhan._resolver import DhanInstrumentNotFoundError
         try:
             r = resolver.resolve_full(symbol, exchange)
             return r.security_id, r.wire_segment

@@ -87,9 +87,9 @@ class BrokerFailureInjector:
         def side_effect(*args: Any, **kwargs: Any) -> Any:
             self.call_count += 1
             if self.call_count > after_calls:
-                from scalpr.brokers.dhan.exceptions import BrokerError
-                raise BrokerError(
-                    f"HTTP {status_code}: {message}"
+                from scalpr.adapters.dhan._http import DhanRequestError
+                raise DhanRequestError(
+                    status_code, message
                 )
             return MagicMock(status_code=200, json=lambda: {"success": True})
 
@@ -117,8 +117,8 @@ class BrokerFailureInjector:
         def side_effect(*args: Any, **kwargs: Any) -> Any:
             self.call_count += 1
             if self.call_count > after_calls:
-                from scalpr.brokers.dhan.exceptions import AuthenticationError
-                raise AuthenticationError("Access token expired")
+                from scalpr.adapters.dhan._auth import DhanAuthError
+                raise DhanAuthError("Access token expired")
             return MagicMock(status_code=200, json=lambda: {"success": True})
 
         return side_effect
@@ -128,9 +128,9 @@ class BrokerFailureInjector:
         def side_effect(*args: Any, **kwargs: Any) -> Any:
             self.call_count += 1
             if self.call_count > after_calls:
-                from scalpr.brokers.dhan.exceptions import BrokerError
-                raise BrokerError(
-                    "Rate limit exceeded"
+                from scalpr.adapters.dhan._http import DhanRequestError
+                raise DhanRequestError(
+                    429, "Rate limit exceeded"
                 )
             return MagicMock(status_code=200, json=lambda: {"success": True})
 
@@ -140,7 +140,7 @@ class BrokerFailureInjector:
     def patch_broker_http(
         self,
         side_effect: Callable[..., Any],
-        target: str = "scalpr.brokers.dhan.http_client.DhanHttpClient._request",
+        target: str = "scalpr.adapters.dhan._http.DhanHttpClient._request",
     ) -> Generator[None, None, None]:
         """Context manager to patch broker HTTP calls with failures.
 
@@ -260,12 +260,12 @@ class OrderFailureInjector:
 
     def inject_order_rejection(self, reason: str | None = None) -> Callable[..., Any]:
         """Create mock that rejects orders."""
-        from scalpr.brokers.dhan.exceptions import BrokerError
+        from scalpr.adapters.dhan._http import DhanRequestError
 
         reason = reason or self.rng.choice(self.rejection_reasons)
 
         def side_effect(*args: Any, **kwargs: Any) -> Any:
-            raise BrokerError(f"Order rejected: {reason}")
+            raise DhanRequestError(400, f"Order rejected: {reason}")
 
         return side_effect
 
