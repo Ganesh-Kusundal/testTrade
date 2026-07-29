@@ -5,7 +5,7 @@ Verifies that the public API of the unified resolution module
 """
 from __future__ import annotations
 
-from scalpr.brokers.dhan.resolution import (
+from scalpr.adapters.dhan._resolver import (
     EXCHANGE_TO_SEGMENT,
     SEGMENT_TO_EXCHANGE,
     SymbolResolver,
