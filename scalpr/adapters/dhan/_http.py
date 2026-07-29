@@ -25,6 +25,12 @@ DHAN_BUCKETS: dict[str, dict[str, float | int]] = {
     "master": {"rate": 1.0 / 300.0, "capacity": 1},
 }
 
+PAPER_BUCKETS: dict[str, dict[str, float | int]] = {
+    name: {"rate": 1_000_000.0, "capacity": 1_000_000}
+    for name in ("orders", "market_data", "portfolio", "history", "master",
+                 "quotes", "historical")
+}
+
 
 class DhanHttpError(Exception):
     """Base for all Dhan HTTP transport errors."""

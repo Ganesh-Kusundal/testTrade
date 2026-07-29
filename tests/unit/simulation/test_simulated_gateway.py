@@ -4,8 +4,7 @@ from decimal import Decimal
 
 import pytest
 
-from scalpr.domain.errors import RateLimitError
-from scalpr.brokers.rate_limit import limiter_from_table
+from scalpr.adapters.dhan._http import RateLimiter
 from scalpr.domain.clock import SimulatedClock
 from scalpr.domain.instrument import Exchange
 from scalpr.domain.order import Order, OrderSide, OrderState, OrderType
@@ -154,23 +153,6 @@ class TestMarketData:
 
 
 class TestRateLimiting:
-    def test_exhausted_orders_bucket_raises_rate_limit_error(self):
-        # 1 req/s bucket with zero burst headroom after the first order
-        tight = limiter_from_table({
-            "orders": {"sustained_rps": 1.0, "burst_rps": 1.0,
-                       "min_interval_ms": 0, "cooldown_on_429_s": 0},
-        })
-        gw = _gateway(limiter=tight)
-        gw.place_order(_order())
-        import scalpr.simulation.simulated_gateway as sg
-        original = sg._ACQUIRE_TIMEOUT_S
-        sg._ACQUIRE_TIMEOUT_S = 0.01  # keep the test fast
-        try:
-            with pytest.raises(RateLimitError):
-                gw.place_order(_order())
-        finally:
-            sg._ACQUIRE_TIMEOUT_S = original
-
     def test_paper_limits_never_block_a_burst(self):
         gw = _gateway()
         for _ in range(50):

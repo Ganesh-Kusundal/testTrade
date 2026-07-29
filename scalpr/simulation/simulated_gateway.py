@@ -20,10 +20,9 @@ from decimal import Decimal
 from typing import Any
 
 from scalpr.brokers.broker_port import IBrokerGateway
-from scalpr.brokers.rate_limit import (
-    PAPER_RATE_LIMITS,
-    MultiBucketRateLimiter,
-    limiter_from_table,
+from scalpr.adapters.dhan._http import (
+    PAPER_BUCKETS,
+    RateLimiter,
 )
 from scalpr.domain.clock import IClock, WallClock
 from scalpr.domain.contracts import Funds
@@ -54,7 +53,7 @@ class SimulatedGateway(IBrokerGateway):
         self,
         starting_capital: Decimal,
         clock: IClock | None = None,
-        limiter: MultiBucketRateLimiter | None = None,
+        limiter: RateLimiter | None = None,
         fill_simulator: FillSimulator | None = None,
     ) -> None:
         if not isinstance(starting_capital, Decimal):
@@ -63,7 +62,7 @@ class SimulatedGateway(IBrokerGateway):
             raise ValueError("starting_capital must be positive")
         self._starting_capital = starting_capital
         self._clock = clock or WallClock()
-        self._limiter = limiter or limiter_from_table(PAPER_RATE_LIMITS)
+        self._limiter = limiter or RateLimiter(PAPER_BUCKETS)
         self._fill_simulator = fill_simulator or FillSimulator()
         self._connected = False
         self._lock = threading.Lock()

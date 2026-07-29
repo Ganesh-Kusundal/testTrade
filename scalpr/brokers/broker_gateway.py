@@ -18,7 +18,7 @@ from typing import Any
 from scalpr.adapters.dhan.client import DhanClient
 from scalpr.brokers.broker_port import IBrokerGateway
 from scalpr.domain.fill import Fill
-from scalpr.domain.instrument import SimpleInstrumentId
+from scalpr.domain.instrument import Exchange, SimpleInstrumentId
 from scalpr.domain.order import Order
 from scalpr.domain.position import Position
 
@@ -137,7 +137,8 @@ class DhanBrokerGateway(IBrokerGateway):
         return Decimal(str(self._client._historical.get_ltp(symbol, exchange)))
 
     def get_quote(self, symbol: str, exchange: str = "NSE") -> dict[str, Any]:
-        return self._client.get_quote(SimpleInstrumentId(symbol=symbol, exchange=exchange))
+        exch = getattr(Exchange, exchange.upper(), Exchange.NSE)
+        return self._client.get_quote(SimpleInstrumentId(symbol=symbol, exchange=exch))
 
     def get_ohlcv(
         self,

@@ -78,8 +78,8 @@ class TestBrokerFailureInjector:
             assert result.status_code == 200
 
         # Third call fails
-        from scalpr.brokers.dhan.exceptions import BrokerError
-        with pytest.raises(BrokerError, match="HTTP 500"):
+        from scalpr.adapters.dhan._http import DhanRequestError
+        with pytest.raises(DhanRequestError, match="HTTP 500"):
             side_effect()
 
     def test_inject_timeout(self):
@@ -101,8 +101,8 @@ class TestBrokerFailureInjector:
         assert result.status_code == 200
 
         # Second call fails with auth error
-        from scalpr.brokers.dhan.exceptions import AuthenticationError
-        with pytest.raises(AuthenticationError, match="expired"):
+        from scalpr.adapters.dhan._auth import DhanAuthError
+        with pytest.raises(DhanAuthError, match="expired"):
             side_effect()
 
     def test_inject_rate_limit(self):
@@ -110,8 +110,8 @@ class TestBrokerFailureInjector:
         injector = BrokerFailureInjector()
         side_effect = injector.inject_rate_limit(after_calls=0)
 
-        from scalpr.brokers.dhan.exceptions import BrokerError
-        with pytest.raises(BrokerError, match="Rate limit"):
+        from scalpr.adapters.dhan._http import DhanRequestError
+        with pytest.raises(DhanRequestError, match="Rate limit"):
             side_effect()
 
     def test_patch_broker_http_context_manager(self):
@@ -120,7 +120,7 @@ class TestBrokerFailureInjector:
         side_effect = injector.inject_http_error(status_code=503)
 
         with injector.patch_broker_http(side_effect):
-            from scalpr.brokers.dhan.http_client import DhanHttpClient
+            from scalpr.adapters.dhan._http import DhanHttpClient
             client = DhanHttpClient.__new__(DhanHttpClient)
 
             # Should raise BrokerError when _request is called
@@ -172,8 +172,8 @@ class TestOrderFailureInjector:
         injector = OrderFailureInjector()
         side_effect = injector.inject_order_rejection("Insufficient margin")
 
-        from scalpr.brokers.dhan.exceptions import BrokerError
-        with pytest.raises(BrokerError, match="Insufficient margin"):
+        from scalpr.adapters.dhan._http import DhanRequestError
+        with pytest.raises(DhanRequestError, match="Insufficient margin"):
             side_effect()
 
     def test_inject_partial_fills(self):
