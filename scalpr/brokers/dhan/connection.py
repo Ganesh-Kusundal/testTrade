@@ -15,6 +15,8 @@ import threading
 from typing import Any
 
 from config.endpoints import Dhan
+from scalpr.brokers.dhan._token_lifecycle import TokenRefreshScheduler
+from scalpr.brokers.dhan.auth import ensure_fresh_token, get_broadcast, is_token_fresh
 from scalpr.brokers.dhan.exceptions import AuthenticationError, BrokerError, ConfigurationError
 from scalpr.brokers.dhan.historical import HistoricalDataAdapter
 from scalpr.brokers.dhan.http_client import CircuitBreaker, DhanHttpClient
@@ -79,6 +81,7 @@ class DhanConnection:
 
         self._connected = False
         self._lock = threading.RLock()
+        self._scheduler: TokenRefreshScheduler | None = None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -123,6 +126,18 @@ class DhanConnection:
 
                 # Step 5: Mark active
                 self._connected = True
+
+                # Step 6: Start background token refresh scheduler
+                import os
+                self._scheduler = TokenRefreshScheduler(
+                    broker_id="dhan",
+                    ensure_token_fn=lambda: ensure_fresh_token(),
+                    current_token_fn=lambda: os.environ.get("DHAN_ACCESS_TOKEN", ""),
+                    broadcast=get_broadcast(),
+                    interval_seconds=300.0,
+                )
+                self._scheduler.start()
+
                 logger.info("dhan_connection_connected")
 
             except AuthenticationError:
@@ -144,6 +159,9 @@ class DhanConnection:
                 return
 
             logger.info("dhan_connection_disconnecting")
+            if self._scheduler is not None:
+                self._scheduler.stop()
+                self._scheduler = None
             self._cleanup()
             self._connected = False
             logger.info("dhan_connection_disconnected")
@@ -294,49 +312,71 @@ class DhanConnection:
         - token validity
         - active segments
 
+        Retries up to 3 times with 2-second delays to handle newly generated
+        tokens that aren't activated yet on Dhan's side.
+
         Raises:
-            AuthenticationError: If token is rejected.
+            AuthenticationError: If token is rejected after all retries.
             BrokerError: If the profile call fails.
         """
         if self._client is None:
             raise BrokerError("HTTP client not available for verification")
 
-        try:
-            profile = self._client.get("/profile")
+        max_attempts = 3
+        last_exc: Exception | None = None
 
-            # Validate data plan
-            data_plan = profile.get("dataPlan", "")
-            if data_plan.lower() != "active":
-                logger.warning(
-                    "dhan_data_plan_inactive",
-                    extra={"dataPlan": data_plan},
+        for attempt in range(1, max_attempts + 1):
+            try:
+                profile = self._client.get("/profile")
+
+                # Validate data plan
+                data_plan = profile.get("dataPlan", "")
+                if data_plan.lower() != "active":
+                    logger.warning(
+                        "dhan_data_plan_inactive",
+                        extra={"dataPlan": data_plan},
+                    )
+                    # Don't raise - user might only need order APIs
+
+                # Validate token validity
+                token_validity = profile.get("dataValidity", "")
+                if not token_validity:
+                    logger.warning("dhan_token_validity_missing")
+
+                # Log active segments
+                active_segments = profile.get("activeSegment", [])
+
+                logger.info(
+                    "dhan_connection_verified",
+                    extra={
+                        "profile": profile.get("name", ""),
+                        "dataPlan": data_plan,
+                        "activeSegments": active_segments,
+                        "tokenValidity": token_validity,
+                    },
                 )
-                # Don't raise - user might only need order APIs
+                return  # Success
 
-            # Validate token validity
-            token_validity = profile.get("dataValidity", "")
-            if not token_validity:
-                logger.warning("dhan_token_validity_missing")
+            except AuthenticationError as exc:
+                last_exc = exc
+                if attempt < max_attempts:
+                    logger.warning(
+                        "dhan_verify_retry",
+                        extra={"attempt": attempt, "error": str(exc)},
+                    )
+                    import time
+                    time.sleep(2)
+                    # 401 on a fresh token = Dhan activation delay — retry
+                    # the SAME token. Mint only when actually stale; a
+                    # force-mint here would burn a rate-limited TOTP attempt.
+                    if not is_token_fresh(self._client.access_token):
+                        new_token = ensure_fresh_token()
+                        self._client.update_token(new_token)
+                    continue
+                raise
 
-            # Log active segments
-            active_segments = profile.get("activeSegment", [])
-
-            logger.info(
-                "dhan_connection_verified",
-                extra={
-                    "profile": profile.get("name", ""),
-                    "dataPlan": data_plan,
-                    "activeSegments": active_segments,
-                    "tokenValidity": token_validity,
-                },
-            )
-
-        except AuthenticationError:
-            raise
-        except Exception as exc:
-            raise BrokerError(
-                f"Dhan connection verification failed: {exc}"
-            ) from exc
+        if last_exc:
+            raise last_exc
 
     def _cleanup(self) -> None:
         """Release all resources."""
