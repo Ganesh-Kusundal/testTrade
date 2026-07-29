@@ -22,6 +22,8 @@ if TYPE_CHECKING:
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from config.secrets_manager import SecretsManager
+
 logger = logging.getLogger(__name__)
 
 
@@ -54,11 +56,29 @@ class AppContext:
     executor: StrategyExecutor | None
 
 
+@dataclass
+class Dependencies:
+    """Optional pre-built dependency overrides for the trading object graph.
+
+    Each field defaults to None, which means ``wire()`` constructs the default
+    implementation.  Pass a pre-built instance (or MagicMock) to swap in
+    alternatives — useful in tests or when wiring a different broker backend.
+    """
+    risk_gate: Any = None
+    circuit_breaker: Any = None
+    oms_repository: Any = None
+    event_store: Any = None
+    order_manager: Any = None
+    order_router: Any = None
+    strategy_executor: Any = None
+
+
 def wire(
     gateway: Any,
     watchlist: list[str],
     db_path: str = "data/oms.db",
     events_db_path: str = "data/events.db",
+    deps: Dependencies | None = None,
 ) -> AppContext:
     """Build the trading object graph: risk gates, OMS, router, strategies.
 
@@ -67,6 +87,8 @@ def wire(
         watchlist: Symbols to run one ScalprAmtStrategy each.
         db_path: SQLite path for OMS persistence.
         events_db_path: SQLite path for the domain event audit log.
+        deps: Optional dependency overrides. Each field, if not None, replaces
+              the default construction for that component.
     """
     from datetime import datetime
 
@@ -79,6 +101,8 @@ def wire(
     from scalpr.strategy.executor import StrategyExecutor
     from scalpr.strategy.scalpr_amt import ScalprAmtStrategy
 
+    deps = deps or Dependencies()
+
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
     session_id = datetime.now(timezone.utc).strftime("live-%Y%m%d")
 
@@ -86,24 +110,28 @@ def wire(
     # Set SCALPR_LIVE_ORDERS=1 to explicitly enable. This is the safety-critical
     # default — without it, the only way to stop live trading is to kill the process.
     live_orders_enabled = os.environ.get("SCALPR_LIVE_ORDERS") == "1"
-    risk_gate = PreTradeRiskGate(halted=not live_orders_enabled)
+    risk_gate = deps.risk_gate if deps.risk_gate is not None else PreTradeRiskGate(halted=not live_orders_enabled)
     if not live_orders_enabled:
         logger.warning(
             "SCALPR_LIVE_ORDERS is not set to '1' — risk gate HALTED, "
             "all orders will be rejected. Set SCALPR_LIVE_ORDERS=1 to enable."
         )
 
-    order_router = OrderRouter(
+    circuit_breaker = deps.circuit_breaker if deps.circuit_breaker is not None else CircuitBreaker()
+    oms_repository = deps.oms_repository if deps.oms_repository is not None else OmsRepository(db_path)
+    event_store = deps.event_store if deps.event_store is not None else EventStore(db_path=events_db_path)
+    order_manager = deps.order_manager if deps.order_manager is not None else OrderManager(
+        oms_repository,
+        event_store=event_store,
+        session_id=session_id,
+    )
+    order_router = deps.order_router if deps.order_router is not None else OrderRouter(
         gateway=gateway,
         risk_gate=risk_gate,
-        circuit_breaker=CircuitBreaker(),
-        order_manager=OrderManager(
-            OmsRepository(db_path),
-            event_store=EventStore(db_path=events_db_path),
-            session_id=session_id,
-        ),
+        circuit_breaker=circuit_breaker,
+        order_manager=order_manager,
     )
-    executor = StrategyExecutor()
+    executor = deps.strategy_executor if deps.strategy_executor is not None else StrategyExecutor()
     for symbol in watchlist:
         executor.register_strategy(ScalprAmtStrategy(order_router, symbol))
     return AppContext(order_router=order_router, executor=executor)
@@ -126,14 +154,13 @@ async def _start_trading(app: FastAPI) -> None:
 
     ctx = wire(gateway, watchlist)
 
-    from scalpr.brokers.dhan.auth import ensure_fresh_token, get_broadcast
+    from scalpr.brokers.dhan.auth import get_broadcast
 
+    sm = SecretsManager()
     feed = DhanWebSocketManager(
-        access_token=os.environ.get("DHAN_ACCESS_TOKEN", ""),
-        client_id=os.environ.get("DHAN_CLIENT_ID", ""),
+        access_token=sm.get_dhan_access_token() or "",
+        client_id=sm.get_dhan_client_id() or "",
         resolver=gateway.connection.resolver,
-        # Reconnects after token expiry (DH-906) force TOTP regeneration
-        token_refresh_fn=lambda: ensure_fresh_token(force=True),
     )
 
     # Register WS as a broadcast receiver — when the token changes,

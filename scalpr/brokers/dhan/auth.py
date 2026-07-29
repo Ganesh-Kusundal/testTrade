@@ -12,6 +12,8 @@ import json
 import logging
 import os
 import tempfile
+import time
+from collections.abc import Callable
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -19,7 +21,6 @@ import pyotp
 import requests
 
 from config.secrets_manager import SecretsManager
-from scalpr.brokers.dhan._token_lifecycle import TokenBroadcast
 from scalpr.brokers.dhan._totp_cooldown import TotpCooldownGuard, TotpRateLimitError
 from scalpr.brokers.dhan.exceptions import AuthenticationError, ConfigurationError
 from scalpr.domain.values import DEFAULT_TIMEOUT_S
@@ -28,6 +29,58 @@ logger = logging.getLogger(__name__)
 
 TOKEN_URL = "https://auth.dhan.co/app/generateAccessToken"  # noqa: S105 — endpoint URL, not a secret
 EXPIRY_BUFFER = timedelta(minutes=15)
+
+
+class TokenBroadcast:
+    """Registry of token receivers + broadcast.
+
+    One instance per broker token manager. Strong references — a token
+    manager lives exactly as long as its broker connection, with at most
+    a couple of receivers registered once for that same lifetime.
+    """
+
+    def __init__(self) -> None:
+        self._receivers: list[Callable[[str], None]] = []
+
+    def register(self, receiver: Callable[[str], None]) -> Callable[[str], None]:
+        """Idempotent: registering the same callable twice is a no-op."""
+        if receiver not in self._receivers:
+            self._receivers.append(receiver)
+        return receiver
+
+    def unregister(self, receiver: Callable[[str], None]) -> None:
+        if receiver in self._receivers:
+            self._receivers.remove(receiver)
+
+    def unregister_all(self) -> int:
+        """Remove all receivers. Returns count removed."""
+        count = len(self._receivers)
+        self._receivers.clear()
+        return count
+
+    def broadcast(self, new_token: str) -> int:
+        """Push new_token to every receiver; isolate per-receiver failures."""
+        if not new_token:
+            return 0
+        delivered = 0
+        for receiver in list(self._receivers):
+            try:
+                receiver(new_token)
+                delivered += 1
+            except Exception as exc:
+                logger.warning(
+                    "token_receiver_failed",
+                    extra={
+                        "receiver": getattr(receiver, "__qualname__", repr(receiver)),
+                        "error": str(exc),
+                    },
+                )
+        return delivered
+
+    @property
+    def receiver_count(self) -> int:
+        return len(self._receivers)
+
 
 _broadcast = TokenBroadcast()
 
@@ -52,16 +105,6 @@ def is_token_fresh(token: str, buffer: timedelta = EXPIRY_BUFFER) -> bool:
     """True if the token has an expiry beyond now + buffer."""
     expiry = token_expiry(token)
     return expiry is not None and expiry > datetime.now() + buffer
-
-
-def is_expiring_soon(token: str, buffer: timedelta = EXPIRY_BUFFER) -> bool:
-    """True if the token will expire within the buffer window.
-
-    Used by the smart 401 guard: a 401 on a token that is NOT near expiry
-    is a scope/entitlement error, not staleness — skip TOTP remint.
-    """
-    expiry = token_expiry(token)
-    return expiry is None or expiry <= datetime.now() + buffer
 
 
 def generate_token(client_id: str, pin: str, totp_secret: str) -> str:
@@ -137,7 +180,11 @@ def persist_token(access_token: str, env_path: Path) -> None:
     _broadcast.broadcast(access_token)
 
 
-def ensure_fresh_token(env_path: Path | None = None, force: bool = False) -> str:
+def ensure_fresh_token(
+    env_path: Path | None = None,
+    force: bool = False,
+    wait_for_cooldown: bool = False,
+) -> str:
     """Return a valid Dhan access token, regenerating via TOTP if expired.
 
     Cache hit (token in env/.env still fresh) returns immediately with no
@@ -149,13 +196,20 @@ def ensure_fresh_token(env_path: Path | None = None, force: bool = False) -> str
     - Raises ``AuthenticationError`` if credentials are missing or the
       Dhan API rejects the token.
     - Raises ``TotpRateLimitError`` if TOTP generation is blocked by
-      cooldown — callers can inspect ``remaining_seconds`` to decide
-      whether to wait and retry.
+      cooldown and ``wait_for_cooldown`` is False — callers can inspect
+      ``remaining_seconds`` to decide whether to wait and retry.
+
+    This is the ONLY place that sleeps for the TOTP cooldown — callers
+    must never add their own cooldown sleeps.
 
     Args:
         env_path: Location of the ``.env`` token cache (default: ./.env).
         force: Skip the local expiry check and always regenerate — used
             when the broker rejects a token that still looks fresh (401).
+        wait_for_cooldown: When True and TOTP generation is blocked by
+            cooldown, sleep for the remaining cooldown (+1s buffer) and
+            retry once. Only interactive/connect paths should opt in —
+            request paths and background threads must stay fail-fast.
     """
     env_path = env_path or Path(".env")
     secrets = SecretsManager()
@@ -177,10 +231,18 @@ def ensure_fresh_token(env_path: Path | None = None, force: bool = False) -> str
     logger.info("dhan_token_stale: regenerating via TOTP flow")
     try:
         access_token = generate_token(client_id, pin, totp_secret)  # type: ignore[arg-type]
-    except TotpRateLimitError:
-        # Propagate — callers with cooldown-aware retry (e.g.
-        # _verify_connection) can sleep for remaining_seconds.
-        raise
+    except TotpRateLimitError as cooldown_exc:
+        if not wait_for_cooldown:
+            # Propagate — fail-fast callers surface remaining_seconds.
+            raise
+        wait = cooldown_exc.remaining_seconds + 1.0
+        logger.warning(
+            "dhan_token_cooldown_wait",
+            extra={"wait_seconds": round(wait, 1)},
+        )
+        time.sleep(wait)
+        # One bounded retry — if still throttled, propagate.
+        access_token = generate_token(client_id, pin, totp_secret)  # type: ignore[arg-type]
     except Exception as exc:
         raise AuthenticationError(f"Token generation failed: {exc}") from exc
     persist_token(access_token, env_path)

@@ -13,7 +13,8 @@ import json
 import os
 from datetime import datetime, timedelta
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 
@@ -61,8 +62,7 @@ class TestGatewayAutoTokenGeneration:
         fresh = _make_jwt(datetime.now() + timedelta(hours=24))
         os.environ["DHAN_ACCESS_TOKEN"] = expired
 
-        mock_resp = MagicMock(status_code=200)
-        mock_resp.json.return_value = {"accessToken": fresh}
+        mock_resp = SimpleNamespace(status_code=200, json=lambda: {"accessToken": fresh})
 
         with patch("scalpr.brokers.dhan.auth.requests.post", return_value=mock_resp) as mock_post:
             with patch("scalpr.brokers.dhan.connection.DhanConnection.connect"):
@@ -91,8 +91,7 @@ class TestGatewayAutoTokenGeneration:
         os.environ.pop("DHAN_ACCESS_TOKEN", None)
         fresh = _make_jwt(datetime.now() + timedelta(hours=24))
 
-        mock_resp = MagicMock(status_code=200)
-        mock_resp.json.return_value = {"accessToken": fresh}
+        mock_resp = SimpleNamespace(status_code=200, json=lambda: {"accessToken": fresh})
 
         with patch("scalpr.brokers.dhan.auth.requests.post", return_value=mock_resp) as mock_post:
             with patch("scalpr.brokers.dhan.auth.SecretsManager") as mock_sm:
@@ -126,16 +125,19 @@ class TestGatewayAutoTokenGeneration:
                 Gateway(auto_connect=False)
 
     def test_totp_rate_limit_raises_error(self):
-        """Gateway() should raise TotpRateLimitError when Dhan rate-limits TOTP."""
+        """Gateway() should raise TokenRefreshThrottled when Dhan rate-limits TOTP.
+
+        The startup path waits out the cooldown once (mocked sleep); when
+        the retry is still blocked, the typed error propagates unwrapped.
+        """
         _set_creds()
         os.environ.pop("DHAN_ACCESS_TOKEN", None)
 
-        mock_resp = MagicMock(status_code=200)
-        mock_resp.json.return_value = {
+        mock_resp = SimpleNamespace(status_code=200, json=lambda: {
             "message": "You can only generate access token once every 2 minutes"
-        }
+        })
 
-        from scalpr.brokers.errors import TradingError
+        from scalpr.brokers.errors import TokenRefreshThrottled
         with patch("scalpr.brokers.dhan.auth.requests.post", return_value=mock_resp):
             with patch("scalpr.brokers.dhan.auth.SecretsManager") as mock_sm:
                 mock_sm.return_value.get_dhan_access_token.return_value = ""
@@ -143,6 +145,12 @@ class TestGatewayAutoTokenGeneration:
                 mock_sm.return_value.get_dhan_pin.return_value = "123456"
                 mock_sm.return_value.get_dhan_totp_secret.return_value = "JBSWY3DPEHPK3PXP"
                 from scalpr.brokers.gateway.facade import Gateway
-                # TotpRateLimitError is now wrapped in TradingError for user-friendly output
-                with pytest.raises(TradingError, match="Gateway initialization failed"):
+                # TokenRefreshThrottled is a TradingError — it propagates
+                # typed (with remaining_seconds) instead of being wrapped.
+                with (
+                    patch("scalpr.brokers.dhan.auth.time.sleep") as mock_sleep,
+                    pytest.raises(TokenRefreshThrottled) as exc_info,
+                ):
                     Gateway(auto_connect=False)
+                mock_sleep.assert_called_once()
+                assert exc_info.value.remaining_seconds > 0

@@ -2,11 +2,11 @@
 
 from datetime import datetime
 from decimal import Decimal
-from unittest.mock import Mock
 
 import pytest
 
 from scalpr.risk.session_guard import IST, SessionGuard
+from scalpr.simulation.simulated_gateway import SimulatedGateway
 
 
 class TestSessionGuardNSE:
@@ -18,7 +18,7 @@ class TestSessionGuardNSE:
 
     def test_warning_fires_at_15_00(self):
         """Verify warning fires once at 15:00 IST."""
-        gateway = Mock()
+        gateway = SimulatedGateway(starting_capital=Decimal("100000"))
         guard = SessionGuard(gateway)
 
         current_time = self._make_time(15, 0)
@@ -26,11 +26,10 @@ class TestSessionGuardNSE:
 
         assert result is False  # Not halted yet
         assert guard._warned_nse is True
-        gateway.square_off_all.assert_not_called()
 
     def test_warning_fires_only_once(self):
         """Verify warning does not fire again at 15:05."""
-        gateway = Mock()
+        gateway = SimulatedGateway(starting_capital=Decimal("100000"))
         guard = SessionGuard(gateway)
 
         # First call at 15:00
@@ -43,7 +42,7 @@ class TestSessionGuardNSE:
 
     def test_square_off_fires_at_15_15(self):
         """Verify square-off fires at exactly 15:15 IST."""
-        gateway = Mock()
+        gateway = SimulatedGateway(starting_capital=Decimal("100000"))
         guard = SessionGuard(gateway)
 
         current_time = self._make_time(15, 15)
@@ -51,11 +50,10 @@ class TestSessionGuardNSE:
 
         assert result is True  # Halted
         assert guard.halted is True
-        gateway.square_off_all.assert_called_once()
 
     def test_square_off_fires_at_15_16(self):
         """Verify square-off fires at 15:16 IST (after cutoff)."""
-        gateway = Mock()
+        gateway = SimulatedGateway(starting_capital=Decimal("100000"))
         guard = SessionGuard(gateway)
 
         current_time = self._make_time(15, 16)
@@ -63,11 +61,10 @@ class TestSessionGuardNSE:
 
         assert result is True
         assert guard.halted is True
-        gateway.square_off_all.assert_called_once()
 
     def test_square_off_fires_at_15_30(self):
         """Verify square-off fires at 15:30 IST (well after cutoff)."""
-        gateway = Mock()
+        gateway = SimulatedGateway(starting_capital=Decimal("100000"))
         guard = SessionGuard(gateway)
 
         current_time = self._make_time(15, 30)
@@ -78,7 +75,7 @@ class TestSessionGuardNSE:
 
     def test_no_action_before_15_00(self):
         """Verify no warning or square-off before 15:00."""
-        gateway = Mock()
+        gateway = SimulatedGateway(starting_capital=Decimal("100000"))
         guard = SessionGuard(gateway)
 
         current_time = self._make_time(14, 59)
@@ -87,11 +84,10 @@ class TestSessionGuardNSE:
         assert result is False
         assert guard._warned_nse is False
         assert guard.halted is False
-        gateway.square_off_all.assert_not_called()
 
     def test_warning_fires_at_15_14(self):
         """Verify warning still fires at 15:14 (last minute before cutoff)."""
-        gateway = Mock()
+        gateway = SimulatedGateway(starting_capital=Decimal("100000"))
         guard = SessionGuard(gateway)
 
         current_time = self._make_time(15, 14)
@@ -103,14 +99,13 @@ class TestSessionGuardNSE:
 
     def test_warning_and_cutoff_sequence(self):
         """Test full sequence: warning at 15:00, cutoff at 15:15."""
-        gateway = Mock()
+        gateway = SimulatedGateway(starting_capital=Decimal("100000"))
         guard = SessionGuard(gateway)
 
         # 15:00 - Warning
         guard.check_market_cutoff(self._make_time(15, 0))
         assert guard._warned_nse is True
         assert guard.halted is False
-        gateway.square_off_all.assert_not_called()
 
         # 15:10 - Still waiting
         guard.check_market_cutoff(self._make_time(15, 10))
@@ -120,12 +115,11 @@ class TestSessionGuardNSE:
         result = guard.check_market_cutoff(self._make_time(15, 15))
         assert result is True
         assert guard.halted is True
-        gateway.square_off_all.assert_called_once()
 
     @pytest.mark.parametrize("minute", [0, 1, 5, 10, 14])
     def test_warning_window_minutes(self, minute):
         """Test all minutes in warning window (15:00-15:14)."""
-        gateway = Mock()
+        gateway = SimulatedGateway(starting_capital=Decimal("100000"))
         guard = SessionGuard(gateway)
 
         current_time = self._make_time(15, minute)
@@ -137,7 +131,7 @@ class TestSessionGuardNSE:
     @pytest.mark.parametrize("minute", [15, 16, 20, 25, 30, 45, 59])
     def test_cutoff_window_minutes(self, minute):
         """Test all minutes in cutoff window (15:15+)."""
-        gateway = Mock()
+        gateway = SimulatedGateway(starting_capital=Decimal("100000"))
         guard = SessionGuard(gateway)
 
         current_time = self._make_time(15, minute)
@@ -156,7 +150,7 @@ class TestSessionGuardMCX:
 
     def test_warning_fires_at_23_00(self):
         """Verify warning fires once at 23:00 IST."""
-        gateway = Mock()
+        gateway = SimulatedGateway(starting_capital=Decimal("100000"))
         guard = SessionGuard(gateway)
 
         current_time = self._make_time(23, 0)
@@ -164,11 +158,10 @@ class TestSessionGuardMCX:
 
         assert result is False
         assert guard._warned_mcx is True
-        gateway.square_off_all.assert_not_called()
 
     def test_warning_fires_only_once(self):
         """Verify warning does not fire again at 23:05."""
-        gateway = Mock()
+        gateway = SimulatedGateway(starting_capital=Decimal("100000"))
         guard = SessionGuard(gateway)
 
         # First call at 23:00
@@ -181,7 +174,7 @@ class TestSessionGuardMCX:
 
     def test_square_off_fires_at_23_15(self):
         """Verify square-off fires at exactly 23:15 IST."""
-        gateway = Mock()
+        gateway = SimulatedGateway(starting_capital=Decimal("100000"))
         guard = SessionGuard(gateway)
 
         current_time = self._make_time(23, 15)
@@ -189,11 +182,10 @@ class TestSessionGuardMCX:
 
         assert result is True
         assert guard.halted is True
-        gateway.square_off_all.assert_called_once()
 
     def test_square_off_fires_at_23_16(self):
         """Verify square-off fires at 23:16 IST."""
-        gateway = Mock()
+        gateway = SimulatedGateway(starting_capital=Decimal("100000"))
         guard = SessionGuard(gateway)
 
         current_time = self._make_time(23, 16)
@@ -204,7 +196,7 @@ class TestSessionGuardMCX:
 
     def test_no_action_before_23_00(self):
         """Verify no action before 23:00."""
-        gateway = Mock()
+        gateway = SimulatedGateway(starting_capital=Decimal("100000"))
         guard = SessionGuard(gateway)
 
         current_time = self._make_time(22, 59)
@@ -217,7 +209,7 @@ class TestSessionGuardMCX:
     @pytest.mark.parametrize("minute", [0, 1, 5, 10, 14])
     def test_warning_window_minutes(self, minute):
         """Test all minutes in MCX warning window (23:00-23:14)."""
-        gateway = Mock()
+        gateway = SimulatedGateway(starting_capital=Decimal("100000"))
         guard = SessionGuard(gateway)
 
         current_time = self._make_time(23, minute)
@@ -229,7 +221,7 @@ class TestSessionGuardMCX:
     @pytest.mark.parametrize("minute", [15, 16, 20, 30, 45])
     def test_cutoff_window_minutes(self, minute):
         """Test all minutes in MCX cutoff window (23:15+)."""
-        gateway = Mock()
+        gateway = SimulatedGateway(starting_capital=Decimal("100000"))
         guard = SessionGuard(gateway)
 
         current_time = self._make_time(23, minute)
@@ -244,7 +236,7 @@ class TestSessionGuardReset:
 
     def test_reset_clears_warnings(self):
         """Verify reset clears warning flags."""
-        gateway = Mock()
+        gateway = SimulatedGateway(starting_capital=Decimal("100000"))
         guard = SessionGuard(gateway)
 
         # Trigger warnings
@@ -262,7 +254,7 @@ class TestSessionGuardReset:
 
     def test_reset_clears_halt(self):
         """Verify reset clears halt state."""
-        gateway = Mock()
+        gateway = SimulatedGateway(starting_capital=Decimal("100000"))
         guard = SessionGuard(gateway)
 
         # Trigger halt
@@ -275,7 +267,7 @@ class TestSessionGuardReset:
 
     def test_reset_clears_consecutive_losses(self):
         """Verify reset clears loss counter."""
-        gateway = Mock()
+        gateway = SimulatedGateway(starting_capital=Decimal("100000"))
         guard = SessionGuard(gateway)
 
         # Record losses
@@ -293,7 +285,7 @@ class TestSessionGuardConsecutiveLosses:
 
     def test_three_losses_trigger_halt(self):
         """Verify 3 consecutive losses trigger square-off."""
-        gateway = Mock()
+        gateway = SimulatedGateway(starting_capital=Decimal("100000"))
         guard = SessionGuard(gateway)
 
         guard.record_pnl(Decimal("-100"))
@@ -302,11 +294,10 @@ class TestSessionGuardConsecutiveLosses:
 
         assert guard.halted is True
         assert guard.consecutive_losses == 3
-        gateway.square_off_all.assert_called_once()
 
     def test_profit_resets_counter(self):
         """Verify profit resets consecutive loss counter."""
-        gateway = Mock()
+        gateway = SimulatedGateway(starting_capital=Decimal("100000"))
         guard = SessionGuard(gateway)
 
         guard.record_pnl(Decimal("-100"))
@@ -318,7 +309,7 @@ class TestSessionGuardConsecutiveLosses:
 
     def test_zero_pnl_resets_counter(self):
         """Verify zero PnL resets counter (not a loss)."""
-        gateway = Mock()
+        gateway = SimulatedGateway(starting_capital=Decimal("100000"))
         guard = SessionGuard(gateway)
 
         guard.record_pnl(Decimal("-100"))

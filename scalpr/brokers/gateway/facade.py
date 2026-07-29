@@ -20,10 +20,12 @@ from typing import Any
 
 from dotenv import load_dotenv
 
-from scalpr.brokers.broker_port import IBrokerGateway
+from scalpr.brokers.broker_port import IAccountPort, IBrokerGateway, IMarketDataPort, ITradingPort
+from scalpr.brokers.contracts import Funds
 from scalpr.brokers.errors import (
     ConfigurationError,
     InstrumentNotFound,
+    TokenRefreshThrottled,
     TradingError,
 )
 from scalpr.brokers.gateway._market_data import MarketDataMixin
@@ -32,19 +34,8 @@ from scalpr.brokers.gateway._streaming import StreamingMixin
 from scalpr.brokers.instrument_handle import InstrumentHandle
 from scalpr.brokers.registry import BrokerRegistry
 from scalpr.domain.instrument import Exchange, Segment, SimpleInstrumentId
+from scalpr.domain.position import Position
 from scalpr.domain.values import DEFAULT_EXCHANGE, RECOVERY_TIMEOUT_S
-
-
-# Lazy import to avoid hard dependency on Dhan-specific types at module level.
-# TotpRateLimitError is a RuntimeError (not TradingError), so we must catch
-# it explicitly to prevent it being swallowed by the generic except clause.
-def _is_totp_cooldown_error(exc: BaseException) -> bool:
-    try:
-        from scalpr.brokers.dhan._totp_cooldown import TotpRateLimitError
-        return isinstance(exc, TotpRateLimitError)
-    except ImportError:
-        return False
-
 
 logger = logging.getLogger(__name__)
 
@@ -110,21 +101,20 @@ class Gateway(MarketDataMixin, PortfolioMixin, StreamingMixin):
             try:
                 self._gateway.connect()
                 logger.info("gateway_connected: %s", broker)
+            except TokenRefreshThrottled as exc:
+                # Cooldown is actionable — re-raise with wait guidance.
+                raise TradingError(
+                    f"TOTP cooldown active — wait {exc.remaining_seconds:.0f}s "
+                    f"before retrying. Original error: {exc}",
+                    context={
+                        "broker": broker,
+                        "reason": "totp_cooldown",
+                        "remaining_seconds": exc.remaining_seconds,
+                    },
+                ) from exc
             except TradingError:
                 raise  # Already a TradingError — pass through
             except Exception as exc:
-                # TOTP cooldown is a RuntimeError, not TradingError.
-                # Surface it with actionable context instead of wrapping.
-                if _is_totp_cooldown_error(exc):
-                    raise TradingError(
-                        f"TOTP cooldown active — wait {getattr(exc, 'remaining_seconds', 0):.0f}s "
-                        f"before retrying. Original error: {exc}",
-                        context={
-                            "broker": broker,
-                            "reason": "totp_cooldown",
-                            "remaining_seconds": getattr(exc, "remaining_seconds", 0),
-                        },
-                    ) from exc
                 raise TradingError(
                     f"Broker connection failed: {exc}",
                     context={"broker": broker},
@@ -152,15 +142,14 @@ class Gateway(MarketDataMixin, PortfolioMixin, StreamingMixin):
                     "DHAN_CLIENT_ID must be set in .env or environment variables"
                 )
 
-            # Auto-refreshes via TOTP if the cached token is expired
-            access_token = ensure_fresh_token()
+            # Auto-refreshes via TOTP if the cached token is expired.
+            # Interactive startup path — waits out a TOTP cooldown once
+            # rather than failing (auth.py owns the single sleep point).
+            access_token = ensure_fresh_token(wait_for_cooldown=True)
 
             return {
                 "client_id": client_id,
                 "access_token": access_token,
-                # W7b: on a broker 401 the http client calls this to force
-                # TOTP regeneration (the cached token looks fresh locally)
-                "token_refresh_fn": lambda: ensure_fresh_token(force=True),
             }
 
         raise ConfigurationError(
@@ -196,12 +185,11 @@ class Gateway(MarketDataMixin, PortfolioMixin, StreamingMixin):
             candles = tcs.historical(interval="1D", start="2025-01-01")
             quote = tcs.quote()
         """
-        adapters = self._gateway.adapters()
-        if not adapters:
+        conn = self._gateway.connection
+        if conn is None:
             raise NotImplementedError(
                 "instrument() requires a broker that provides adapters"
             )
-        conn = adapters["connection"]
 
         # Resolve symbol and exchange from the calling convention
         symbol: str
@@ -328,19 +316,18 @@ class Gateway(MarketDataMixin, PortfolioMixin, StreamingMixin):
         Returns:
             Sorted list of Decimal strike prices.
         """
-        adapters = self._gateway.adapters()
+        conn = self._gateway.connection
         adapter = self._get_option_chain_adapter()
 
-        # Get spot price from market data adapter
+        # Get spot price from connection's market_data adapter
         spot = Decimal("0")
-        market_data = adapters.get("market_data")
-        if market_data is not None:
+        if conn is not None and hasattr(conn, "market_data"):
             try:
-                resolved = adapters["resolver"].resolve_full(underlying, exchange)
+                resolved = conn.resolver.resolve_full(underlying, exchange)
                 spot = Decimal(str(
-                    market_data.get_ltp_by_id(
+                    conn.market_data.get_ltp_by_id(
                         resolved.security_id,
-                        adapters["resolver"].wire_segment_of(underlying, exchange),
+                        conn.resolver.wire_segment_of(underlying, exchange),
                         symbol=underlying,
                     )
                 ))
@@ -380,8 +367,8 @@ class Gateway(MarketDataMixin, PortfolioMixin, StreamingMixin):
 
     def _get_option_chain_adapter(self) -> Any:
         """Create an OptionChainAdapter via registry (no direct Dhan import)."""
-        adapters = self._gateway.adapters()
-        if not adapters:
+        conn = self._gateway.connection
+        if conn is None:
             raise NotImplementedError(
                 "This operation requires a broker that provides adapters"
             )
@@ -392,7 +379,7 @@ class Gateway(MarketDataMixin, PortfolioMixin, StreamingMixin):
             raise NotImplementedError(
                 f"option_chain adapter not available for {self._broker_name}"
             )
-        return OptionChainAdapter(adapters["http_client"], adapters["resolver"])
+        return OptionChainAdapter(conn.http_client, conn.resolver)
 
     def close(self) -> None:
         """Shut down WebSocket connections and release resources."""
@@ -432,6 +419,57 @@ class Gateway(MarketDataMixin, PortfolioMixin, StreamingMixin):
             True if connected
         """
         return self._gateway.is_connected()
+
+    # ------------------------------------------------------------------
+    # Account delegation — LoD-compliant wrappers
+    # ------------------------------------------------------------------
+
+    def get_positions(self) -> list[Position]:
+        """Fetch current open positions.
+
+        Delegates to the underlying broker gateway's portfolio adapter.
+        """
+        return self._gateway.get_positions()
+
+    def get_margins(self) -> Funds:
+        """Fetch available margin limits and fund details.
+
+        Returns a Funds dataclass with available_margin, total_balance, etc.
+        """
+        return self.funds()
+
+    # ------------------------------------------------------------------
+    # Properties
+    # ------------------------------------------------------------------
+
+    # ------------------------------------------------------------------
+    # Typed port accessors — use these instead of adapters() dict
+    # ------------------------------------------------------------------
+
+    @property
+    def trading(self) -> ITradingPort:
+        """Access the trading port (order lifecycle).
+
+        Provides typed access to order operations without coupling
+        callers to the full IBrokerGateway interface.
+        """
+        return self._gateway
+
+    @property
+    def market_data(self) -> IMarketDataPort:
+        """Access the market data port (quotes, LTP, history).
+
+        Provides typed access to market data operations.
+        """
+        return self._gateway
+
+    @property
+    def account(self) -> IAccountPort:
+        """Access the account port (positions, holdings, margins).
+
+        Provides typed access to account/portfolio operations.
+        """
+        return self._gateway
 
     # ------------------------------------------------------------------
     # Properties

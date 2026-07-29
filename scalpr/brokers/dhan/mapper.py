@@ -166,96 +166,106 @@ class DhanMapper:
             return Result.failure(str(exc))
 
     @staticmethod
-    def raw_order_to_order(raw: dict[str, Any]) -> Order:
+    def raw_order_to_order(raw: dict[str, Any]) -> Result[Order, str]:
         """Map a raw orderbook entry to a SCALPR Order domain object.
 
         Args:
             raw: Dict from OrdersAdapter.get_orderbook().
 
         Returns:
-            Order domain object.
+            Result wrapping an Order domain object, or an error message.
         """
-        status_str = raw.get("status", "").upper()
-        state_map: dict[str, OrderState] = {
-            "PENDING": OrderState.PENDING,
-            "OPEN": OrderState.OPEN,
-            "PARTIALLY FILLED": OrderState.PARTIALLY_FILLED,
-            "FILLED": OrderState.FILLED,
-            "CANCELLED": OrderState.CANCELLED,
-            "REJECTED": OrderState.REJECTED,
-            "EXPIRED": OrderState.EXPIRED,
-            "TRIGGER PENDING": OrderState.PENDING,
-        }
-        state = state_map.get(status_str, OrderState.PENDING)
+        try:
+            status_str = raw.get("status", "").upper()
+            state_map: dict[str, OrderState] = {
+                "PENDING": OrderState.PENDING,
+                "OPEN": OrderState.OPEN,
+                "PARTIALLY FILLED": OrderState.PARTIALLY_FILLED,
+                "FILLED": OrderState.FILLED,
+                "CANCELLED": OrderState.CANCELLED,
+                "REJECTED": OrderState.REJECTED,
+                "EXPIRED": OrderState.EXPIRED,
+                "TRIGGER PENDING": OrderState.PENDING,
+            }
+            state = state_map.get(status_str, OrderState.PENDING)
 
-        side_str = raw.get("side", "").upper()
-        side = OrderSide.BUY if side_str == "BUY" else OrderSide.SELL
+            side_str = raw.get("side", "").upper()
+            side = OrderSide.BUY if side_str == "BUY" else OrderSide.SELL
 
-        type_str = raw.get("order_type", "").upper()
-        type_map: dict[str, OrderType] = {
-            "LIMIT": OrderType.LIMIT,
-            "MARKET": OrderType.MARKET,
-            "SL": OrderType.STOP_LOSS,
-            "SL-M": OrderType.STOP_LOSS_MARKET,
-            "STOPLIMIT": OrderType.STOP_LOSS,
-            "STOPMARKET": OrderType.STOP_LOSS_MARKET,
-            "STOP LOSS": OrderType.STOP_LOSS,
-            "STOP LOSS MARKET": OrderType.STOP_LOSS_MARKET,
-        }
-        order_type = type_map.get(type_str, OrderType.LIMIT)
+            type_str = raw.get("order_type", "").upper()
+            type_map: dict[str, OrderType] = {
+                "LIMIT": OrderType.LIMIT,
+                "MARKET": OrderType.MARKET,
+                "SL": OrderType.STOP_LOSS,
+                "SL-M": OrderType.STOP_LOSS_MARKET,
+                "STOPLIMIT": OrderType.STOP_LOSS,
+                "STOPMARKET": OrderType.STOP_LOSS_MARKET,
+                "STOP LOSS": OrderType.STOP_LOSS,
+                "STOP LOSS MARKET": OrderType.STOP_LOSS_MARKET,
+            }
+            order_type = type_map.get(type_str, OrderType.LIMIT)
 
-        exchange_segment = raw.get("exchange_segment", "NSE_EQ")
-        exchange_segment_upper = exchange_segment.upper()
-        exchange = Exchange.NSE
-        if "MCX" in exchange_segment_upper:
-            exchange = Exchange.MCX
-        elif "BSE" in exchange_segment_upper:
-            exchange = Exchange.BSE
+            exchange_segment = raw.get("exchange_segment", "NSE_EQ")
+            exchange_segment_upper = exchange_segment.upper()
+            exchange = Exchange.NSE
+            if "MCX" in exchange_segment_upper:
+                exchange = Exchange.MCX
+            elif "BSE" in exchange_segment_upper:
+                exchange = Exchange.BSE
 
-        return Order(
-            order_id=raw.get("order_id", ""),
-            symbol=raw.get("symbol", ""),
-            exchange=exchange,
-            side=side,
-            order_type=order_type,
-            quantity=raw.get("quantity", 0),
-            price=raw.get("price", ZERO),
-            trigger_price=raw.get("trigger_price", ZERO),
-            state=state,
-            filled_quantity=raw.get("filled_quantity", 0),
-            avg_price=raw.get("traded_price", ZERO),
-            product_type=raw.get("product_type", "INTRADAY"),
-            validity=raw.get("validity", "DAY"),
-            reject_reason=raw.get("reject_reason", ""),
-            correlation_id=raw.get("correlation_id"),
-        )
+            return Result.success(
+                Order(
+                    order_id=raw.get("order_id", ""),
+                    symbol=raw.get("symbol", ""),
+                    exchange=exchange,
+                    side=side,
+                    order_type=order_type,
+                    quantity=raw.get("quantity", 0),
+                    price=raw.get("price", ZERO),
+                    trigger_price=raw.get("trigger_price", ZERO),
+                    state=state,
+                    filled_quantity=raw.get("filled_quantity", 0),
+                    avg_price=raw.get("traded_price", ZERO),
+                    product_type=raw.get("product_type", "INTRADAY"),
+                    validity=raw.get("validity", "DAY"),
+                    reject_reason=raw.get("reject_reason", ""),
+                    correlation_id=raw.get("correlation_id"),
+                )
+            )
+        except Exception as exc:
+            return Result.failure(str(exc))
 
     @staticmethod
-    def raw_trade_to_fill(raw: dict[str, Any]) -> Fill:
+    def raw_trade_to_fill(raw: dict[str, Any]) -> Result[Fill, str]:
         """Map a raw tradebook entry to a SCALPR Fill domain object.
 
         Args:
             raw: Dict from OrdersAdapter.get_tradebook().
 
         Returns:
-            Fill domain object.
+            Result wrapping a Fill domain object, or an error message.
         """
-        side_str = raw.get("side", "").upper()
-        side = OrderSide.BUY if side_str == "BUY" else OrderSide.SELL
+        try:
+            side_str = raw.get("side", "").upper()
+            side = OrderSide.BUY if side_str == "BUY" else OrderSide.SELL
 
-        trade_date_str = raw.get("trade_date", "")
-        timestamp = None
-        if trade_date_str:
-            with contextlib.suppress(ValueError, TypeError):
-                timestamp = datetime.fromisoformat(trade_date_str)
+            trade_date_str = raw.get("trade_date", "")
+            timestamp = None
+            if trade_date_str:
+                with contextlib.suppress(ValueError, TypeError):
+                    timestamp = datetime.fromisoformat(trade_date_str)
 
-        return Fill(
-            fill_id=raw.get("trade_id", ""),
-            order_id=raw.get("order_id", ""),
-            symbol=raw.get("symbol", ""),
-            side=side,
-            quantity=raw.get("quantity", 0),
-            price=raw.get("price", ZERO),
-            timestamp=timestamp,
-            exchange=SEGMENT_TO_EXCHANGE.get(raw.get("exchange_segment", ""), ""),
-        )
+            return Result.success(
+                Fill(
+                    fill_id=raw.get("trade_id", ""),
+                    order_id=raw.get("order_id", ""),
+                    symbol=raw.get("symbol", ""),
+                    side=side,
+                    quantity=raw.get("quantity", 0),
+                    price=raw.get("price", ZERO),
+                    timestamp=timestamp,
+                    exchange=SEGMENT_TO_EXCHANGE.get(raw.get("exchange_segment", ""), ""),
+                )
+            )
+        except Exception as exc:
+            return Result.failure(str(exc))

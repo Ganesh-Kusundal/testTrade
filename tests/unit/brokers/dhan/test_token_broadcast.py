@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from scalpr.brokers.dhan._token_lifecycle import TokenBroadcast
+from scalpr.brokers.dhan.auth import TokenBroadcast
 
 
 class TestTokenBroadcast:

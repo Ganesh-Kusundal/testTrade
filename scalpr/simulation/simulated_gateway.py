@@ -73,6 +73,10 @@ class SimulatedGateway(IBrokerGateway):
         self._fills: list[Fill] = []
         self._positions: dict[str, Position] = {}
 
+    @property
+    def connection(self) -> None:
+        return None
+
     # ------------------------------------------------------------------
     # Market feed hooks (driven by the tick source)
     # ------------------------------------------------------------------

@@ -70,7 +70,9 @@ def test_map_raw_trade_populates_exchange_from_segment() -> None:
         "trade_date": "2025-01-15T10:30:00",
         "exchange_segment": "NSE_EQ",
     }
-    fill = DhanMapper.raw_trade_to_fill(raw)
+    result = DhanMapper.raw_trade_to_fill(raw)
+    assert result.is_ok
+    fill = result.value
     assert fill.exchange == "NSE"
 
 
@@ -83,5 +85,7 @@ def test_map_raw_trade_missing_segment_yields_empty_exchange() -> None:
         "quantity": 5,
         "price": Decimal("4000"),
     }
-    fill = DhanMapper.raw_trade_to_fill(raw)
+    result = DhanMapper.raw_trade_to_fill(raw)
+    assert result.is_ok
+    fill = result.value
     assert fill.exchange == ""

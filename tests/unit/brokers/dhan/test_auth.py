@@ -16,7 +16,6 @@ from scalpr.brokers.dhan.auth import (
     ensure_fresh_token,
     generate_token,
     get_broadcast,
-    is_expiring_soon,
     is_token_fresh,
     persist_token,
     token_expiry,
@@ -185,20 +184,6 @@ class TestPersistToken:
         assert [p.name for p in tmp_path.iterdir()] == [".env"]
 
 
-class TestIsExpiringSoon:
-    def test_expiring_within_buffer(self):
-        assert is_expiring_soon(make_jwt(datetime.now() + timedelta(minutes=5)))
-
-    def test_not_expiring_far_out(self):
-        assert not is_expiring_soon(make_jwt(datetime.now() + timedelta(hours=2)))
-
-    def test_expired(self):
-        assert is_expiring_soon(make_jwt(datetime.now() - timedelta(hours=1)))
-
-    def test_unparseable(self):
-        assert is_expiring_soon("garbage")
-
-
 class TestGenerateTokenCooldown:
     def test_cooldown_blocks_second_attempt(self, tmp_path: Path):
         mock_resp = MagicMock(status_code=200)
@@ -235,6 +220,86 @@ class TestEnsureFreshTokenPropagatesCooldown:
             with pytest.raises(TotpRateLimitError, match="cooldown") as exc_info:
                 ensure_fresh_token(env_path=tmp_path / ".env", force=True)
             assert exc_info.value.remaining_seconds == 90.0
+
+    def test_is_broker_agnostic_authentication_error(self):
+        """TotpRateLimitError is part of the TradingError hierarchy (R1)."""
+        from scalpr.brokers.errors import (
+            AuthenticationError as BaseAuthError,
+        )
+        from scalpr.brokers.errors import (
+            TokenRefreshThrottled,
+            TradingError,
+        )
+
+        exc = TotpRateLimitError("cooldown", remaining_seconds=42.0)
+        assert isinstance(exc, TokenRefreshThrottled)
+        assert isinstance(exc, BaseAuthError)
+        assert isinstance(exc, TradingError)
+        assert exc.remaining_seconds == 42.0
+
+
+class TestEnsureFreshTokenWaitForCooldown:
+    """wait_for_cooldown=True is the ONLY sleep point for TOTP cooldown:
+    sleep remaining+1s, retry generate_token exactly once."""
+
+    def _set_env(self) -> None:
+        os.environ["DHAN_ACCESS_TOKEN"] = make_jwt(datetime.now() - timedelta(hours=1))
+        os.environ["DHAN_CLIENT_ID"] = "cid"
+        os.environ["DHAN_PIN"] = "1234"
+        os.environ["DHAN_TOTP_SECRET"] = "JBSWY3DPEHPK3PXP"  # pragma: allowlist secret
+
+    def test_waits_then_retries_once(self, env_cleanup, tmp_path: Path):
+        self._set_env()
+        with (
+            patch(
+                "scalpr.brokers.dhan.auth.generate_token",
+                side_effect=[
+                    TotpRateLimitError("cooldown", remaining_seconds=90.0),
+                    "tok-new",
+                ],
+            ) as mock_gen,
+            patch("scalpr.brokers.dhan.auth.time.sleep") as mock_sleep,
+        ):
+            token = ensure_fresh_token(
+                env_path=tmp_path / ".env", force=True, wait_for_cooldown=True
+            )
+
+        assert token == "tok-new"
+        mock_sleep.assert_called_once_with(91.0)
+        assert mock_gen.call_count == 2
+
+    def test_raises_if_still_throttled_after_wait(self, env_cleanup, tmp_path: Path):
+        self._set_env()
+        with (
+            patch(
+                "scalpr.brokers.dhan.auth.generate_token",
+                side_effect=TotpRateLimitError("cooldown", remaining_seconds=90.0),
+            ) as mock_gen,
+            patch("scalpr.brokers.dhan.auth.time.sleep") as mock_sleep,
+            pytest.raises(TotpRateLimitError, match="cooldown"),
+        ):
+            ensure_fresh_token(
+                env_path=tmp_path / ".env", force=True, wait_for_cooldown=True
+            )
+
+        # Exactly one bounded retry — no unbounded loop.
+        mock_sleep.assert_called_once_with(91.0)
+        assert mock_gen.call_count == 2
+
+    def test_default_is_fail_fast_no_sleep(self, env_cleanup, tmp_path: Path):
+        self._set_env()
+        with (
+            patch(
+                "scalpr.brokers.dhan.auth.generate_token",
+                side_effect=TotpRateLimitError("cooldown", remaining_seconds=90.0),
+            ) as mock_gen,
+            patch("scalpr.brokers.dhan.auth.time.sleep") as mock_sleep,
+            pytest.raises(TotpRateLimitError),
+        ):
+            ensure_fresh_token(env_path=tmp_path / ".env", force=True)
+
+        mock_sleep.assert_not_called()
+        assert mock_gen.call_count == 1
 
 
 class TestPersistTokenBroadcast:

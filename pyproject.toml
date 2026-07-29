@@ -257,13 +257,12 @@ source_modules = [
     "scalpr.brokers.rate_limit",
 ]
 forbidden_modules = ["scalpr.brokers.dhan"]
-# Registry and facade use lazy imports inside functions for broker discovery
+# Registry uses lazy imports inside functions for broker discovery
 ignore_imports = [
     "scalpr.brokers.registry -> scalpr.brokers.dhan.gateway",
     "scalpr.brokers.registry -> scalpr.brokers.dhan.auth",
     "scalpr.brokers.registry -> scalpr.brokers.dhan.option_chain",
     "scalpr.brokers.registry -> scalpr.brokers.dhan.ws_manager",
-    "scalpr.brokers.gateway.facade -> scalpr.brokers.dhan._totp_cooldown",
 ]
 
 [[tool.importlinter.contracts]]

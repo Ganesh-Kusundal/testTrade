@@ -1,39 +1,62 @@
 #!/usr/bin/env python
-"""Generate fresh Dhan access token using TOTP.
+"""Ensure a fresh Dhan access token, minting via TOTP only when needed.
 
-Always regenerates (force refresh). For expiry-aware refresh, use
-``scalpr.brokers.dhan.auth.ensure_fresh_token`` instead.
+Probe-before-mint (mirrors Trade_XV2 v2 policy): a fresh cached token in
+.env is returned with zero network calls. Minting revokes the previously
+issued token broker-side and burns Dhan's 2-minute TOTP rate limit, so
+we never mint unless the token is stale or --force is passed.
 
 Usage:
-    python scripts/generate_dhan_token.py
+    python scripts/generate_dhan_token.py            # mint only if stale
+    python scripts/generate_dhan_token.py --force    # always re-mint
 """
 
+import argparse
 import sys
-from pathlib import Path
 
 from dotenv import load_dotenv
 
 from config.secrets_manager import SecretsManager
-from scalpr.brokers.dhan.auth import generate_token, persist_token, token_expiry
+from scalpr.brokers.dhan._totp_cooldown import TotpRateLimitError
+from scalpr.brokers.dhan.auth import (
+    ensure_fresh_token,
+    is_token_fresh,
+    token_expiry,
+)
+from scalpr.brokers.dhan.exceptions import ConfigurationError
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="re-mint even if the cached token is still fresh "
+        "(revokes the previous token and arms the 2-minute cooldown)",
+    )
+    args = parser.parse_args(argv)
+
     load_dotenv()
     secrets = SecretsManager()
-    client_id = secrets.get_dhan_client_id()
-    pin = secrets.get_dhan_pin()
-    totp_secret = secrets.get_dhan_totp_secret()
 
-    if not all([client_id, pin, totp_secret]):
-        print("❌ Missing credentials in .env file")
+    cached = secrets.get_dhan_access_token()
+    if cached and is_token_fresh(cached) and not args.force:
+        print("✅ Cached token is still fresh — no mint needed")
+        print(f"   Expires: {token_expiry(cached)}")
+        print("   Use --force to re-mint anyway")
+        return
+
+    try:
+        access_token = ensure_fresh_token(force=args.force, wait_for_cooldown=True)
+    except ConfigurationError as exc:
+        print(f"❌ {exc}")
         print("Required: DHAN_CLIENT_ID, DHAN_PIN, DHAN_TOTP_SECRET")
         sys.exit(1)
+    except TotpRateLimitError as exc:
+        print(f"❌ TOTP cooldown still active: {exc}")
+        sys.exit(1)
 
-    print(f"📡 Requesting token for client: {client_id}...")
-    access_token = generate_token(client_id, pin, totp_secret)
-    persist_token(access_token, Path(".env"))
-
-    print("\n✅ Token generated successfully!")
+    print("\n✅ Token is fresh!")
     print(f"   Expires: {token_expiry(access_token)}")
     print(f"   Token: {access_token[:60]}...")
     print("✅ Token saved to .env")

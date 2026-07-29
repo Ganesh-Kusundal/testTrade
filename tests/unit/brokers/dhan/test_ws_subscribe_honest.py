@@ -9,27 +9,34 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from scalpr.brokers.contracts import ResolverProtocol
 from scalpr.brokers.dhan.ws_client import (
     DhanWebSocketClient,
     _exchange_to_segment_int,
 )
+from scalpr.domain.instrument import Instrument
 
 
 @pytest.fixture
 def mock_resolver():
-    resolver = MagicMock()
-    inst = MagicMock()
+    resolver = MagicMock(spec=ResolverProtocol)
+    inst = MagicMock(spec=Instrument)
     inst.security_id = 2885
     resolver.resolve.return_value = inst
     resolver.wire_segment_of.return_value = "NSE_EQ"
     return resolver
 
 
+class _FeedSpec:
+    """Minimal spec for SDK MarketFeed in tests."""
+    def subscribe_symbols(self, instruments): ...
+
+
 def _connected_client(resolver) -> tuple[DhanWebSocketClient, MagicMock]:
     client = DhanWebSocketClient(
         access_token="t", client_id="c", resolver=resolver
     )
-    feed = MagicMock()
+    feed = MagicMock(spec=_FeedSpec)
     client._feed = feed
     client._connected = True
     return client, feed
@@ -53,7 +60,7 @@ class TestSubscribePerSymbolResults:
         def resolve(symbol, exchange):
             if symbol == "BAD":
                 raise ValueError("Unknown symbol")
-            inst = MagicMock()
+            inst = MagicMock(spec=Instrument)
             inst.security_id = 2885
             return inst
 

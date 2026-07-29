@@ -22,7 +22,7 @@ from scalpr.domain.events import (
     SignalGenerated,
     TickReceived,
 )
-from scalpr.domain.fill import Fill, PartialFill
+from scalpr.domain.fill import Fill
 from scalpr.domain.instrument import Exchange, Instrument, OptionType, Segment
 from scalpr.domain.order import Order, OrderSide, OrderState, OrderType
 from scalpr.domain.position import Position, PositionSide, PositionState
@@ -53,7 +53,6 @@ __all__ = [
     "OrderState",
     "OrderType",
     "OrderUpdated",
-    "PartialFill",
     "Position",
     "PositionClosed",
     "PositionOpened",

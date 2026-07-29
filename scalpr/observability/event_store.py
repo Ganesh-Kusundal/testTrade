@@ -43,6 +43,11 @@ from scalpr.domain.events import (
 
 logger = logging.getLogger(__name__)
 
+
+class EventStoreError(RuntimeError):
+    """Raised when an event cannot be persisted to the store."""
+
+
 # Event type registry for serialization/deserialization
 EVENT_TYPE_REGISTRY: dict[str, type[DomainEvent]] = {
     "OrderPlaced": OrderPlaced,
@@ -272,7 +277,7 @@ class EventStore:
 
             # Serialize and insert
             payload = json.dumps(_serialize_event(event))
-            conn.execute(
+            cursor = conn.execute(
                 """INSERT INTO events (session_id, event_type, timestamp, sequence_num, payload)
                        VALUES (?, ?, ?, ?, ?)""",
                 (
@@ -283,6 +288,12 @@ class EventStore:
                     payload,
                 )
             )
+
+            if cursor.rowcount != 1:
+                raise EventStoreError(
+                    f"Failed to insert event {event.__class__.__name__}: "
+                    f"expected 1 row, got {cursor.rowcount}"
+                )
 
             return sequence_num  # type: ignore[no-any-return]
 

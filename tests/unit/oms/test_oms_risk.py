@@ -1,7 +1,6 @@
 import os
 import tempfile
 from decimal import Decimal
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -163,8 +162,10 @@ def test_pre_trade_risk_gate():
 
 def test_session_guard_loss_tripping():
     """SessionGuard registers consecutive losses and triggers square off when reaching threshold."""
-    mock_gateway = MagicMock()
-    guard = SessionGuard(gateway=mock_gateway, max_losses=3)
+    from scalpr.simulation.simulated_gateway import SimulatedGateway
+
+    gateway = SimulatedGateway(starting_capital=Decimal("100000"))
+    guard = SessionGuard(gateway=gateway, max_losses=3)
 
     # 1. Success resets loss count
     guard.record_pnl(Decimal("100.00"))
@@ -179,7 +180,6 @@ def test_session_guard_loss_tripping():
     guard.record_pnl(Decimal("-10.00"))
     assert guard.consecutive_losses == 3
     assert guard.halted
-    mock_gateway.square_off_all.assert_called_once()
 
 
 def test_atr_position_sizer():

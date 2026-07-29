@@ -111,7 +111,6 @@ class DhanWebSocketManager(IMarketDataFeed):
         max_reconnect_attempts: int = 10,
         message_rate_window: float = 10.0,
         resolver: Any = None,  # NEW: SymbolResolver for security_id resolution
-        token_refresh_fn: Callable[[], str] | None = None,
     ):
         self._access_token = access_token
         self._client_id = client_id
@@ -120,8 +119,6 @@ class DhanWebSocketManager(IMarketDataFeed):
         self._max_reconnect_attempts = max_reconnect_attempts
         self._message_rate_window = message_rate_window
         self._resolver = resolver  # NEW: Store resolver
-        # Threaded down to ws_client so reconnects pick up rotated tokens
-        self._token_refresh_fn = token_refresh_fn
 
         # Mutable state protected by asyncio.Lock
         self._status = ConnectionStatus.DISCONNECTED
@@ -678,7 +675,6 @@ class DhanWebSocketManager(IMarketDataFeed):
                 access_token=self._access_token,
                 client_id=self._client_id,
                 resolver=self._resolver,
-                token_refresh_fn=self._token_refresh_fn,
             )
             logger.debug("DhanWebSocketClient created via import")
         except ImportError as exc:

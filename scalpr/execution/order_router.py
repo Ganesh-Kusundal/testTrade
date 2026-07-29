@@ -6,7 +6,7 @@ import logging
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from scalpr.brokers.broker_port import IBrokerGateway
+from scalpr.brokers.broker_port import ITradingPort
 from scalpr.brokers.errors import (
     CircuitBreakerTripped,
     OrderRateLimitExceeded,
@@ -49,7 +49,7 @@ class OrderRouter:
 
     def __init__(
         self,
-        gateway: IBrokerGateway,
+        gateway: ITradingPort,
         risk_gate: PreTradeRiskGate,
         circuit_breaker: CircuitBreaker,
         event_bus: IEventBus | None = None,

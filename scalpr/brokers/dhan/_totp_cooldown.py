@@ -15,16 +15,22 @@ import time
 from pathlib import Path
 from typing import ClassVar
 
+from scalpr.brokers.errors import TokenRefreshThrottled
+
 DHAN_COOLDOWN_SECONDS = 120.0
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
-class TotpRateLimitError(RuntimeError):
-    """Raised when TOTP generation is blocked by local or broker cooldown."""
+class TotpRateLimitError(TokenRefreshThrottled):
+    """Raised when TOTP generation is blocked by local or broker cooldown.
+
+    Subclass of the broker-agnostic :class:`TokenRefreshThrottled`, so
+    callers can catch ``AuthenticationError`` / ``TradingError`` without
+    knowing about Dhan's TOTP flow.
+    """
 
     def __init__(self, message: str, *, remaining_seconds: float = 0.0) -> None:
-        super().__init__(message)
-        self.remaining_seconds = remaining_seconds
+        super().__init__(message, remaining_seconds=remaining_seconds)
 
 
 class TotpCooldownGuard:

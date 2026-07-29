@@ -298,15 +298,11 @@ class TestGatewayErrorTranslation:
         from scalpr.brokers.gateway import Gateway
 
         gw = Gateway.__new__(Gateway)  # bypass __init__/connect
+        gw._broker_name = "dhan"
         conn = MagicMock()
         conn.resolver.resolve_full.side_effect = InstrumentNotFoundError("nope")
-        # Mock the adapters() method to return the connection
         gw._gateway = MagicMock()
-        gw._gateway.adapters.return_value = {
-            "connection": conn,
-            "resolver": conn.resolver,
-            "http_client": conn.http_client,
-        }
+        gw._gateway.connection = conn
         with pytest.raises(InstrumentNotFound):
             gw.instrument("ZZZZ:NSE")
 
@@ -482,13 +478,9 @@ class TestGatewayOptionChain:
         adapter_instance = MagicMock()
         adapter_instance.get_option_chain.return_value = [{"strike": 24000, "security_id": 1}]
 
-        # Mock the adapters() method
+        # Mock the connection property (replaces adapters() dict)
         gw._gateway = MagicMock()
-        gw._gateway.adapters.return_value = {
-            "connection": conn,
-            "resolver": conn.resolver,
-            "http_client": conn.http_client,
-        }
+        gw._gateway.connection = conn
 
         # Register mock adapter in registry
         AdapterCls = MagicMock(return_value=adapter_instance)
@@ -507,16 +499,14 @@ class TestGatewayOptionChain:
 
         gw = self._bare_gateway()
         conn = MagicMock()
+        conn.http_client = MagicMock()
+        conn.resolver = MagicMock()
         adapter_instance = MagicMock()
         adapter_instance.get_option_chain.return_value = []
 
-        # Mock the adapters() method
+        # Mock the connection property (replaces adapters() dict)
         gw._gateway = MagicMock()
-        gw._gateway.adapters.return_value = {
-            "connection": conn,
-            "resolver": conn.resolver,
-            "http_client": conn.http_client,
-        }
+        gw._gateway.connection = conn
 
         AdapterCls = MagicMock(return_value=adapter_instance)
         BrokerRegistry.register_adapter("dhan", "option_chain", AdapterCls)
@@ -534,16 +524,14 @@ class TestGatewayOptionChain:
 
         gw = self._bare_gateway()
         conn = MagicMock()
+        conn.http_client = MagicMock()
+        conn.resolver = MagicMock()
         adapter_instance = MagicMock()
         adapter_instance.get_option_chain.side_effect = InstrumentNotFoundError("nope")
 
-        # Mock the adapters() method
+        # Mock the connection property (replaces adapters() dict)
         gw._gateway = MagicMock()
-        gw._gateway.adapters.return_value = {
-            "connection": conn,
-            "resolver": conn.resolver,
-            "http_client": conn.http_client,
-        }
+        gw._gateway.connection = conn
 
         AdapterCls = MagicMock(return_value=adapter_instance)
         BrokerRegistry.register_adapter("dhan", "option_chain", AdapterCls)

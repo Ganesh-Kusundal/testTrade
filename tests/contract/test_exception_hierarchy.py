@@ -39,6 +39,22 @@ class TestExceptionHierarchy:
 
         assert issubclass(DhanRateLimitError, RateLimitExceeded)
 
+    def test_totp_rate_limit_is_token_refresh_throttled(self):
+        """TOTP cooldown is part of the hierarchy — no RuntimeError outlier."""
+        from scalpr.brokers.dhan._totp_cooldown import TotpRateLimitError
+        from scalpr.brokers.errors import (
+            AuthenticationError,
+            TokenRefreshThrottled,
+            TradingError,
+        )
+
+        assert issubclass(TotpRateLimitError, TokenRefreshThrottled)
+        assert issubclass(TotpRateLimitError, AuthenticationError)
+        assert issubclass(TotpRateLimitError, TradingError)
+
+        exc = TotpRateLimitError("cooldown", remaining_seconds=90.0)
+        assert exc.remaining_seconds == 90.0
+
     def test_broker_error_is_subclass_of_trading_error(self):
         from scalpr.brokers.dhan.exceptions import BrokerError
         from scalpr.brokers.errors import TradingError

@@ -36,6 +36,7 @@ from scalpr.brokers.dhan.exceptions import (
     ConfigurationError,
 )
 from scalpr.brokers.dhan.gateway import DhanGateway
+from scalpr.brokers.dhan.http_client import DhanHttpClient
 from scalpr.brokers.dhan.mapper import DhanMapper
 from scalpr.domain.fill import Fill
 from scalpr.domain.instrument import Exchange
@@ -149,13 +150,12 @@ def sample_raw_orderbook_entry():
 
 @pytest.fixture
 def fully_mocked_connection():
-    """Create a DhanConnection with all internal steps mocked for isolation."""
-    with patch.object(DhanConnection, "_validate_config"), \
-         patch.object(DhanConnection, "_create_http_client") as mock_client, \
+    """Create a DhanConnection with internal lifecycle steps mocked for isolation."""
+    with patch.object(DhanConnection, "_create_http_client") as mock_client, \
          patch.object(DhanConnection, "_create_resolver") as mock_resolver, \
          patch.object(DhanConnection, "_verify_connection"):
 
-        mock_http = MagicMock()
+        mock_http = MagicMock(spec=DhanHttpClient)
         mock_client.return_value = mock_http
         mock_resolver.return_value = MagicMock()
 
@@ -167,8 +167,8 @@ def fully_mocked_connection():
 
 @pytest.fixture
 def mocked_gateway_connection():
-    """Create a gateway with a fully mocked connection that is already 'connected'."""
-    mock_conn = MagicMock()
+    """Create a gateway with a spec-constrained mock connection that is already 'connected'."""
+    mock_conn = MagicMock(spec=DhanConnection)
     mock_conn.is_connected.return_value = True
     mock_conn.market_data = MagicMock()
     mock_conn.orders = MagicMock()
@@ -238,12 +238,11 @@ class TestDhanConnectionLifecycle:
 
     def test_should_create_http_client_on_connect(self, valid_config):
         """connect() must call _create_http_client exactly once."""
-        with patch.object(DhanConnection, '_validate_config'), \
-             patch.object(DhanConnection, '_create_http_client') as mock_client, \
+        with patch.object(DhanConnection, '_create_http_client') as mock_client, \
              patch.object(DhanConnection, '_create_resolver') as mock_resolver, \
              patch.object(DhanConnection, '_verify_connection'):
 
-            mock_http = MagicMock()
+            mock_http = MagicMock(spec=DhanHttpClient)
             mock_client.return_value = mock_http
             mock_resolver.return_value = MagicMock()
 
@@ -272,9 +271,8 @@ class TestDhanConnectionLifecycle:
 
     def test_should_start_as_not_connected(self, valid_config):
         """New connection must report is_connected() == False before connect()."""
-        with patch.object(DhanConnection, "_validate_config"):
-            conn = DhanConnection(valid_config)
-            assert conn.is_connected() is False
+        conn = DhanConnection(valid_config)
+        assert conn.is_connected() is False
 
     def test_should_be_idempotent_when_connect_called_twice(self, fully_mocked_connection):
         """Second connect() call must be a no-op, not reinitialise."""
@@ -290,12 +288,11 @@ class TestDhanConnectionLifecycle:
 
     def test_should_cleanup_on_connect_failure(self, valid_config):
         """If _verify_connection fails, connection must clean up partial state."""
-        with patch.object(DhanConnection, "_validate_config"), \
-             patch.object(DhanConnection, "_create_http_client") as mock_client, \
+        with patch.object(DhanConnection, "_create_http_client") as mock_client, \
              patch.object(DhanConnection, "_create_resolver") as mock_resolver, \
              patch.object(DhanConnection, "_verify_connection", side_effect=Exception("Network error")):
 
-            mock_http = MagicMock()
+            mock_http = MagicMock(spec=DhanHttpClient)
             mock_client.return_value = mock_http
             mock_resolver.return_value = MagicMock()
 
@@ -310,12 +307,11 @@ class TestDhanConnectionLifecycle:
 
     def test_should_re_raise_authentication_error_without_wrapping(self, valid_config):
         """AuthenticationError must propagate directly, not wrapped in BrokerError."""
-        with patch.object(DhanConnection, "_validate_config"), \
-             patch.object(DhanConnection, "_create_http_client") as mock_client, \
+        with patch.object(DhanConnection, "_create_http_client") as mock_client, \
              patch.object(DhanConnection, "_create_resolver"), \
              patch.object(DhanConnection, "_verify_connection", side_effect=AuthenticationError("Token expired")):
 
-            mock_http = MagicMock()
+            mock_http = MagicMock(spec=DhanHttpClient)
             mock_client.return_value = mock_http
 
             conn = DhanConnection(valid_config)
@@ -352,45 +348,39 @@ class TestDhanConnectionAdapterProperties:
 
     def test_should_raise_broker_error_when_market_data_accessed_before_connect(self, valid_config):
         """Accessing .market_data before connect() must raise BrokerError."""
-        with patch.object(DhanConnection, "_validate_config"):
-            conn = DhanConnection(valid_config)
-            with pytest.raises(BrokerError, match="Market data adapter not initialised"):
-                _ = conn.market_data
+        conn = DhanConnection(valid_config)
+        with pytest.raises(BrokerError, match="Market data adapter not initialised"):
+            _ = conn.market_data
 
     def test_should_raise_broker_error_when_orders_accessed_before_connect(self, valid_config):
         """Accessing .orders before connect() must raise BrokerError."""
-        with patch.object(DhanConnection, "_validate_config"):
-            conn = DhanConnection(valid_config)
-            with pytest.raises(BrokerError, match="Orders adapter not initialised"):
-                _ = conn.orders
+        conn = DhanConnection(valid_config)
+        with pytest.raises(BrokerError, match="Orders adapter not initialised"):
+            _ = conn.orders
 
     def test_should_raise_broker_error_when_portfolio_accessed_before_connect(self, valid_config):
         """Accessing .portfolio before connect() must raise BrokerError."""
-        with patch.object(DhanConnection, "_validate_config"):
-            conn = DhanConnection(valid_config)
-            with pytest.raises(BrokerError, match="Portfolio adapter not initialised"):
-                _ = conn.portfolio
+        conn = DhanConnection(valid_config)
+        with pytest.raises(BrokerError, match="Portfolio adapter not initialised"):
+            _ = conn.portfolio
 
     def test_should_raise_broker_error_when_historical_accessed_before_connect(self, valid_config):
         """Accessing .historical before connect() must raise BrokerError."""
-        with patch.object(DhanConnection, "_validate_config"):
-            conn = DhanConnection(valid_config)
-            with pytest.raises(BrokerError, match="Historical data adapter not initialised"):
-                _ = conn.historical
+        conn = DhanConnection(valid_config)
+        with pytest.raises(BrokerError, match="Historical data adapter not initialised"):
+            _ = conn.historical
 
     def test_should_raise_broker_error_when_resolver_accessed_before_connect(self, valid_config):
         """Accessing .resolver before connect() must raise BrokerError."""
-        with patch.object(DhanConnection, "_validate_config"):
-            conn = DhanConnection(valid_config)
-            with pytest.raises(BrokerError, match="Symbol resolver not initialised"):
-                _ = conn.resolver
+        conn = DhanConnection(valid_config)
+        with pytest.raises(BrokerError, match="Symbol resolver not initialised"):
+            _ = conn.resolver
 
     def test_should_raise_broker_error_when_http_client_accessed_before_connect(self, valid_config):
         """Accessing .http_client before connect() must raise BrokerError."""
-        with patch.object(DhanConnection, "_validate_config"):
-            conn = DhanConnection(valid_config)
-            with pytest.raises(BrokerError, match="HTTP client not initialised"):
-                _ = conn.http_client
+        conn = DhanConnection(valid_config)
+        with pytest.raises(BrokerError, match="HTTP client not initialised"):
+            _ = conn.http_client
 
     def test_should_return_adapters_after_connect(self, fully_mocked_connection):
         """After connect(), all adapter properties must return non-None."""
@@ -414,12 +404,11 @@ class TestDhanConnectionThreadSafety:
 
     def test_should_handle_concurrent_connect_calls_safely(self, valid_config):
         """Multiple threads calling connect() simultaneously must not corrupt state."""
-        with patch.object(DhanConnection, "_validate_config"), \
-             patch.object(DhanConnection, "_create_http_client") as mock_client, \
+        with patch.object(DhanConnection, "_create_http_client") as mock_client, \
              patch.object(DhanConnection, "_create_resolver"), \
              patch.object(DhanConnection, "_verify_connection"):
 
-            mock_http = MagicMock()
+            mock_http = MagicMock(spec=DhanHttpClient)
             mock_client.return_value = mock_http
 
             conn = DhanConnection(valid_config)
@@ -462,12 +451,11 @@ class TestDhanConnectionThreadSafety:
 
     def test_should_handle_rapid_connect_disconnect_cycles(self, valid_config):
         """Rapid connect → disconnect cycles must not leave inconsistent state."""
-        with patch.object(DhanConnection, "_validate_config"), \
-             patch.object(DhanConnection, "_create_http_client") as mock_client, \
+        with patch.object(DhanConnection, "_create_http_client") as mock_client, \
              patch.object(DhanConnection, "_create_resolver"), \
              patch.object(DhanConnection, "_verify_connection"):
 
-            mock_http = MagicMock()
+            mock_http = MagicMock(spec=DhanHttpClient)
             mock_client.return_value = mock_http
 
             conn = DhanConnection(valid_config)
@@ -489,9 +477,8 @@ class TestDhanConnectionStateTracking:
 
     def test_should_report_disconnected_before_connect(self, valid_config):
         """Initial state must be disconnected."""
-        with patch.object(DhanConnection, "_validate_config"):
-            conn = DhanConnection(valid_config)
-            assert conn.is_connected() is False
+        conn = DhanConnection(valid_config)
+        assert conn.is_connected() is False
 
     def test_should_report_connected_after_successful_connect(self, fully_mocked_connection):
         """After successful connect, state must be connected."""
@@ -506,12 +493,11 @@ class TestDhanConnectionStateTracking:
 
     def test_should_report_disconnected_after_failed_connect(self, valid_config):
         """After a failed connect attempt, state must remain disconnected."""
-        with patch.object(DhanConnection, "_validate_config"), \
-             patch.object(DhanConnection, "_create_http_client") as mock_client, \
+        with patch.object(DhanConnection, "_create_http_client") as mock_client, \
              patch.object(DhanConnection, "_create_resolver"), \
              patch.object(DhanConnection, "_verify_connection", side_effect=Exception("fail")):
 
-            mock_http = MagicMock()
+            mock_http = MagicMock(spec=DhanHttpClient)
             mock_client.return_value = mock_http
 
             conn = DhanConnection(valid_config)
@@ -527,37 +513,21 @@ class TestDhanConnectionStateTracking:
 
 
 class TestDhanConnectionTokenRefresh:
-    """Verify token_refresh_fn is passed through to the HTTP client."""
+    """Verify token_refresh_fn is NOT passed through — http_client no longer owns refresh."""
 
-    def test_should_pass_token_refresh_fn_to_http_client(self, valid_config):
-        """token_refresh_fn from config must be passed to DhanHttpClient."""
-        refresh_fn = MagicMock(return_value="new_token_xyz")
-        config = {**valid_config, "token_refresh_fn": refresh_fn}
-
+    def test_should_not_pass_token_refresh_fn_to_http_client(self, valid_config):
+        """token_refresh_fn from config must NOT be passed to DhanHttpClient."""
         with patch("scalpr.brokers.dhan.connection.DhanHttpClient") as MockHttpClient, \
              patch.object(DhanConnection, "_create_resolver"), \
              patch.object(DhanConnection, "_verify_connection"):
 
-            MockHttpClient.return_value = MagicMock()
-            conn = DhanConnection(config)
+            MockHttpClient.return_value = MagicMock(spec=DhanHttpClient)
+            conn = DhanConnection(valid_config)
             conn.connect()
 
             MockHttpClient.assert_called_once()
             call_kwargs = MockHttpClient.call_args[1]
-            assert call_kwargs["token_refresh_fn"] is refresh_fn
-
-    def test_should_handle_none_token_refresh_fn_gracefully(self, valid_config):
-        """Missing token_refresh_fn must not cause errors."""
-        with patch("scalpr.brokers.dhan.connection.DhanHttpClient") as MockHttpClient, \
-             patch.object(DhanConnection, "_create_resolver"), \
-             patch.object(DhanConnection, "_verify_connection"):
-
-            MockHttpClient.return_value = MagicMock()
-            conn = DhanConnection(valid_config)
-            conn.connect()
-
-            call_kwargs = MockHttpClient.call_args[1]
-            assert call_kwargs["token_refresh_fn"] is None
+            assert "token_refresh_fn" not in call_kwargs
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -575,7 +545,7 @@ class TestDhanConnectionHttpClientConfig:
              patch.object(DhanConnection, "_verify_connection"):
 
             from config.endpoints import Dhan
-            MockHttpClient.return_value = MagicMock()
+            MockHttpClient.return_value = MagicMock(spec=DhanHttpClient)
 
             conn = DhanConnection(valid_config)
             conn.connect()
@@ -589,7 +559,7 @@ class TestDhanConnectionHttpClientConfig:
              patch.object(DhanConnection, "_create_resolver"), \
              patch.object(DhanConnection, "_verify_connection"):
 
-            MockHttpClient.return_value = MagicMock()
+            MockHttpClient.return_value = MagicMock(spec=DhanHttpClient)
 
             conn = DhanConnection(config_with_options)
             conn.connect()
@@ -603,7 +573,7 @@ class TestDhanConnectionHttpClientConfig:
              patch.object(DhanConnection, "_create_resolver"), \
              patch.object(DhanConnection, "_verify_connection"):
 
-            MockHttpClient.return_value = MagicMock()
+            MockHttpClient.return_value = MagicMock(spec=DhanHttpClient)
 
             conn = DhanConnection(valid_config)
             conn.connect()
@@ -617,7 +587,7 @@ class TestDhanConnectionHttpClientConfig:
              patch.object(DhanConnection, "_create_resolver"), \
              patch.object(DhanConnection, "_verify_connection"):
 
-            MockHttpClient.return_value = MagicMock()
+            MockHttpClient.return_value = MagicMock(spec=DhanHttpClient)
 
             conn = DhanConnection(config_with_options)
             conn.connect()
@@ -631,7 +601,7 @@ class TestDhanConnectionHttpClientConfig:
              patch.object(DhanConnection, "_create_resolver"), \
              patch.object(DhanConnection, "_verify_connection"):
 
-            MockHttpClient.return_value = MagicMock()
+            MockHttpClient.return_value = MagicMock(spec=DhanHttpClient)
 
             conn = DhanConnection(valid_config)
             conn.connect()
@@ -645,7 +615,7 @@ class TestDhanConnectionHttpClientConfig:
              patch.object(DhanConnection, "_create_resolver"), \
              patch.object(DhanConnection, "_verify_connection"):
 
-            MockHttpClient.return_value = MagicMock()
+            MockHttpClient.return_value = MagicMock(spec=DhanHttpClient)
 
             conn = DhanConnection(config_with_options)
             conn.connect()
@@ -676,7 +646,7 @@ class TestDhanGatewayInterfaceCompliance:
 
         concrete_methods = set()
         for name, method in vars(DhanGateway).items():
-            if callable(method) and not name.startswith("_"):
+            if (callable(method) or isinstance(method, property)) and not name.startswith("_"):
                 concrete_methods.add(name)
 
         missing = abstract_methods - concrete_methods
@@ -823,7 +793,7 @@ class TestDhanGatewayPortfolioDelegation:
     def test_should_delegate_get_holdings_to_portfolio_adapter(self, mocked_gateway_connection):
         """gateway.get_holdings() must call connection.portfolio.get_holdings()."""
         gateway, mock_conn = mocked_gateway_connection
-        expected_holdings = [MagicMock(spec=Position)]
+        expected_holdings = [Position(symbol="T", exchange=Exchange.NSE)]
         mock_conn.portfolio.get_holdings.return_value = expected_holdings
         result = gateway.get_holdings()
         assert result == expected_holdings
@@ -996,7 +966,9 @@ class TestDhanGatewayOrderMapping:
 
     def test_should_map_filled_buy_limit_order(self, sample_raw_orderbook_entry):
         """A filled BUY LIMIT order must map to OrderState.FILLED and OrderSide.BUY."""
-        order = DhanMapper.raw_order_to_order(sample_raw_orderbook_entry)
+        result = DhanMapper.raw_order_to_order(sample_raw_orderbook_entry)
+        assert result.is_ok
+        order = result.value
 
         assert order.order_id == "dhan_ord_12345"
         assert order.symbol == "RELIANCE"
@@ -1025,7 +997,9 @@ class TestDhanGatewayOrderMapping:
             "product_type": "DELIVERY",
             "validity": "DAY",
         }
-        order = DhanMapper.raw_order_to_order(raw)
+        result = DhanMapper.raw_order_to_order(raw)
+        assert result.is_ok
+        order = result.value
 
         assert order.side == OrderSide.SELL
         assert order.order_type == OrderType.MARKET
@@ -1044,7 +1018,9 @@ class TestDhanGatewayOrderMapping:
             "price": Decimal("1500"),
             "trigger_price": Decimal("1490"),
         }
-        order = DhanMapper.raw_order_to_order(raw)
+        result = DhanMapper.raw_order_to_order(raw)
+        assert result.is_ok
+        order = result.value
 
         assert order.order_type == OrderType.STOP_LOSS
 
@@ -1061,7 +1037,9 @@ class TestDhanGatewayOrderMapping:
             "price": Decimal("0"),
             "trigger_price": Decimal("1490"),
         }
-        order = DhanMapper.raw_order_to_order(raw)
+        result = DhanMapper.raw_order_to_order(raw)
+        assert result.is_ok
+        order = result.value
 
         assert order.order_type == OrderType.STOP_LOSS_MARKET
 
@@ -1076,7 +1054,9 @@ class TestDhanGatewayOrderMapping:
             "status": "OPEN",
             "quantity": 1,
         }
-        order = DhanMapper.raw_order_to_order(raw)
+        result = DhanMapper.raw_order_to_order(raw)
+        assert result.is_ok
+        order = result.value
         assert order.order_type == OrderType.STOP_LOSS
 
     def test_should_map_stop_loss_market_full_name(self):
@@ -1090,7 +1070,9 @@ class TestDhanGatewayOrderMapping:
             "status": "OPEN",
             "quantity": 1,
         }
-        order = DhanMapper.raw_order_to_order(raw)
+        result = DhanMapper.raw_order_to_order(raw)
+        assert result.is_ok
+        order = result.value
         assert order.order_type == OrderType.STOP_LOSS_MARKET
 
     def test_should_map_mcx_exchange(self):
@@ -1105,7 +1087,9 @@ class TestDhanGatewayOrderMapping:
             "price": Decimal("50000"),
             "quantity": 1,
         }
-        order = DhanMapper.raw_order_to_order(raw)
+        result = DhanMapper.raw_order_to_order(raw)
+        assert result.is_ok
+        order = result.value
         assert order.exchange == Exchange.MCX
 
     def test_should_default_to_nse_exchange(self):
@@ -1120,7 +1104,9 @@ class TestDhanGatewayOrderMapping:
             "price": Decimal("100"),
             "quantity": 1,
         }
-        order = DhanMapper.raw_order_to_order(raw)
+        result = DhanMapper.raw_order_to_order(raw)
+        assert result.is_ok
+        order = result.value
         assert order.exchange == Exchange.NSE
 
     def test_should_map_all_order_states(self):
@@ -1146,7 +1132,9 @@ class TestDhanGatewayOrderMapping:
                 "status": status_str,
                 "quantity": 1,
             }
-            order = DhanMapper.raw_order_to_order(raw)
+            result = DhanMapper.raw_order_to_order(raw)
+            assert result.is_ok
+            order = result.value
             assert order.state == expected_state, f"Failed for status: {status_str}"
 
     def test_should_default_to_pending_for_unknown_status(self):
@@ -1160,7 +1148,9 @@ class TestDhanGatewayOrderMapping:
             "status": "UNKNOWN_STATUS",
             "quantity": 1,
         }
-        order = DhanMapper.raw_order_to_order(raw)
+        result = DhanMapper.raw_order_to_order(raw)
+        assert result.is_ok
+        order = result.value
         assert order.state == OrderState.PENDING
 
     def test_should_default_to_limit_for_unknown_order_type(self):
@@ -1175,19 +1165,25 @@ class TestDhanGatewayOrderMapping:
             "price": Decimal("100"),
             "quantity": 1,
         }
-        order = DhanMapper.raw_order_to_order(raw)
+        result = DhanMapper.raw_order_to_order(raw)
+        assert result.is_ok
+        order = result.value
         assert order.order_type == OrderType.LIMIT
 
     def test_should_map_reject_reason(self, sample_raw_orderbook_entry):
         """Reject reason must be mapped from raw data."""
         raw = {**sample_raw_orderbook_entry, "reject_reason": "Insufficient margin"}
-        order = DhanMapper.raw_order_to_order(raw)
+        result = DhanMapper.raw_order_to_order(raw)
+        assert result.is_ok
+        order = result.value
         assert order.reject_reason == "Insufficient margin"
 
     def test_should_map_correlation_id(self, sample_raw_orderbook_entry):
         """Correlation ID must be mapped from raw data."""
         raw = {**sample_raw_orderbook_entry, "correlation_id": "corr_999"}
-        order = DhanMapper.raw_order_to_order(raw)
+        result = DhanMapper.raw_order_to_order(raw)
+        assert result.is_ok
+        order = result.value
         assert order.correlation_id == "corr_999"
 
     def test_should_handle_missing_optional_fields(self):
@@ -1201,7 +1197,9 @@ class TestDhanGatewayOrderMapping:
             "status": "OPEN",
             "quantity": 1,
         }
-        order = DhanMapper.raw_order_to_order(raw)
+        result = DhanMapper.raw_order_to_order(raw)
+        assert result.is_ok
+        order = result.value
 
         assert order.order_id == "ord_minimal"
         assert order.quantity == 1

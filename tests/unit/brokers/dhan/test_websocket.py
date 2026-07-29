@@ -17,11 +17,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from scalpr.brokers.contracts import ResolverProtocol
 from scalpr.brokers.dhan.ws_client import DhanWebSocketClient
 from scalpr.brokers.dhan.ws_manager import (
     ConnectionStatus,
     DhanWebSocketManager,
 )
+from scalpr.domain.instrument import Instrument
 from scalpr.domain.tick import Tick
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -31,14 +33,13 @@ from scalpr.domain.tick import Tick
 def _make_manager(**kwargs):
     """Helper to create a manager with mocked dependencies."""
     mgr = DhanWebSocketManager(access_token="t", client_id="c", **kwargs)
-    mock_client = MagicMock()
+    mock_client = MagicMock(spec=DhanWebSocketClient)
     mock_client.connect = AsyncMock(return_value=True)
     mock_client.disconnect = AsyncMock(return_value=True)
     mock_client.subscribe = AsyncMock(return_value=True)
     mock_client.unsubscribe = AsyncMock(return_value=True)
-    mock_client.on_tick = MagicMock()
     mgr._ws_client = mock_client
-    mgr._ws_parser = MagicMock()
+    mgr._ws_parser = None
     return mgr
 
 
@@ -274,7 +275,7 @@ class TestClientBasic:
     def test_on_tick_registers_callback(self):
         """on_tick() should store the callback."""
         client = DhanWebSocketClient(access_token="t")
-        cb = MagicMock()
+        cb = MagicMock(spec=lambda x: None)
         client.on_tick(cb)
         assert client._tick_callback is cb
 
@@ -287,8 +288,8 @@ class TestClientBasic:
 
 
 def _make_resolver(security_id="2885", wire_segment="NSE_EQ"):
-    resolver = MagicMock()
-    inst = MagicMock()
+    resolver = MagicMock(spec=ResolverProtocol)
+    inst = MagicMock(spec=Instrument)
     inst.security_id = security_id
     resolver.resolve.return_value = inst
     resolver.wire_segment_of.return_value = wire_segment

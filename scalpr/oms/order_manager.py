@@ -41,6 +41,9 @@ class OrderManager:
         with self._lock:
             if order.order_id in self.orders:
                 raise ValueError(f"Duplicate order ID: {order.order_id}")
+
+            self._append_event(OrderPlaced(timestamp=_now(), order=order))
+
             self.orders[order.order_id] = order
             self._log_event(order.order_id, f"Created order as {order.state.value}")
 
@@ -51,8 +54,6 @@ class OrderManager:
                 except Exception as e:
                     logger.error("Failed to persist order %s: %s", order.order_id, e)
 
-            self._append_event(OrderPlaced(timestamp=_now(), order=order))
-
     def update_order_state(self, order_id: str, new_state: OrderState) -> Order:
         """Atomically transition order state and record event."""
         with self._lock:
@@ -60,6 +61,11 @@ class OrderManager:
             if not order:
                 raise ValueError(f"Order not found: {order_id}")
             updated = order.transition_to(new_state)
+
+            self._append_event(
+                OrderUpdated(timestamp=_now(), order=updated, previous_state=order.state.value)
+            )
+
             self.orders[order_id] = updated
             self._log_event(order_id, f"State changed from {order.state.value} to {new_state.value}")
 
@@ -70,9 +76,6 @@ class OrderManager:
                 except Exception as e:
                     logger.error("Failed to persist order state update %s: %s", order_id, e)
 
-            self._append_event(
-                OrderUpdated(timestamp=_now(), order=updated, previous_state=order.state.value)
-            )
             return updated
 
     def process_fill(self, fill: Fill) -> Order:
@@ -83,20 +86,22 @@ class OrderManager:
             if not order:
                 raise ValueError(f"Order not found for fill: {order_id}")
 
-            if order_id not in self.fills:
-                self.fills[order_id] = []
-
             # Idempotency: silently ignore duplicate fill_id (broker may resend)
-            existing_ids = {f.fill_id for f in self.fills[order_id]}
+            existing_ids = {f.fill_id for f in self.fills.get(order_id, [])}
             if fill.fill_id in existing_ids:
                 return order
 
-            prospective_total = sum(f.quantity for f in self.fills[order_id]) + fill.quantity
+            prospective_total = sum(f.quantity for f in self.fills.get(order_id, [])) + fill.quantity
             if prospective_total > order.quantity:
                 raise ValueError(
                     f"Overfill rejected: fill {fill.fill_id} would push "
                     f"filled_quantity to {prospective_total}, exceeding order quantity {order.quantity}"
                 )
+
+            self._append_event(FillReceived(timestamp=_now(), fill=fill))
+
+            if order_id not in self.fills:
+                self.fills[order_id] = []
 
             self.fills[order_id].append(fill)
 
@@ -137,7 +142,6 @@ class OrderManager:
                 except Exception as e:
                     logger.error("Failed to persist fill %s: %s", fill.fill_id, e)
 
-            self._append_event(FillReceived(timestamp=_now(), fill=fill))
             return updated
 
     def get_order(self, order_id: str) -> Order | None:
@@ -149,13 +153,14 @@ class OrderManager:
         self.event_log.append(f"[{ts}] Order {order_id}: {message}")
 
     def _append_event(self, event: DomainEvent) -> None:
-        """Persist domain event for audit/replay. Failure must never break trading."""
+        """Persist domain event for audit/replay."""
         if not self._event_store:
             return
         try:
             self._event_store.append(event, session_id=self._session_id)
         except Exception as e:
             logger.error("Failed to append %s to event store: %s", event.__class__.__name__, e)
+            raise
 
     def restore_state(self) -> None:
         """Restore orders and fills from persistence (crash recovery)."""

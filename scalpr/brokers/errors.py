@@ -97,6 +97,20 @@ class RateLimitExceeded(TradingError):
         self.retry_after_s = retry_after_s
 
 
+class TokenRefreshThrottled(AuthenticationError):
+    """Token refresh blocked by provider cooldown — retry after remaining_seconds."""
+
+    def __init__(
+        self,
+        message: str = "",
+        remaining_seconds: float = 0.0,
+        correlation_id: str | None = None,
+        context: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message, correlation_id=correlation_id, context=context)
+        self.remaining_seconds = remaining_seconds
+
+
 class MarketDataError(TradingError):
     """Market data fetch failure (HTTP error, timeout, bad payload)."""
 

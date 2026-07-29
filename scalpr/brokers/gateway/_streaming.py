@@ -228,7 +228,6 @@ class StreamingMixin:
             access_token=self._config.get("access_token", ""),
             client_id=self._config.get("client_id", ""),
             resolver=resolver,
-            token_refresh_fn=self._config.get("token_refresh_fn"),
         )
         # Registered before start(): no loop running in this thread, so
         # add_subscriber takes its synchronous append path.

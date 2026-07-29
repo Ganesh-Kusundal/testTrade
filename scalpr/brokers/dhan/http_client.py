@@ -14,16 +14,6 @@ from typing import Any
 import requests
 
 from config.endpoints import Dhan
-from scalpr.brokers.dhan._http_common import (
-    _MAX_RETRIES,
-    _ORDERS_ACQUIRE_TIMEOUT_S,
-    backoff_delay,
-    bucket_for,
-    build_url,
-    classify_response,
-    try_refresh_token,
-)
-from scalpr.brokers.dhan.auth import is_expiring_soon
 from scalpr.brokers.dhan.exceptions import (
     AuthenticationError,
     BrokerError,
@@ -38,8 +28,75 @@ from scalpr.brokers.rate_limit import (
 
 logger = logging.getLogger(__name__)
 
+# ── Endpoint → rate-limit bucket mapping ────────────────────────────────────
+_ENDPOINT_BUCKETS: dict[str, str] = {
+    "/marketfeed/quote": "quotes",
+    "/marketfeed/ltp": "historical",
+    "/marketfeed/ohlc": "historical",
+    "/optionchain": "optionchain",
+    "/charts/": "historical",
+    "/orders": "orders",
+    "/profile": "admin",
+    "/fundlimit": "admin",
+    "/positions": "admin",
+    "/holdings": "admin",
+    "/orderbook": "admin",
+    "/tradebook": "admin",
+}
+_DEFAULT_BUCKET = "admin"
 
-class CircuitBreaker:
+# ── Retry / backoff configuration ───────────────────────────────────────────
+_MAX_RETRIES = 3
+_BASE_DELAY_MS = 500
+_MAX_DELAY_MS = 5000
+
+# Fail-fast timeout for the orders bucket — order path must never block.
+_ORDERS_ACQUIRE_TIMEOUT_S = 0.5
+
+
+def bucket_for(endpoint: str) -> str:
+    """Resolve endpoint to rate-limit bucket name via prefix match."""
+    if endpoint in _ENDPOINT_BUCKETS:
+        return _ENDPOINT_BUCKETS[endpoint]
+    for prefix, bucket in _ENDPOINT_BUCKETS.items():
+        if endpoint.startswith(prefix):
+            return bucket
+    return _DEFAULT_BUCKET
+
+
+def backoff_delay(attempt: int) -> float:
+    """Exponential backoff: 500ms, 1s, 2s, 4s... capped at 5s."""
+    delay_ms: int = min(_BASE_DELAY_MS * (2 ** (attempt - 1)), _MAX_DELAY_MS)
+    return delay_ms / 1000.0
+
+
+def build_url(base_url: str, endpoint: str) -> str:
+    """Build full URL from base_url and endpoint."""
+    return f"{base_url}{endpoint}" if endpoint.startswith("/") else endpoint
+
+
+def classify_response(status: int, text: str) -> str:
+    """Classify HTTP response into a category for decision-making.
+
+    Returns one of: 'success', 'auth_rejected', 'rate_limited',
+    'server_error', 'client_error'.
+    """
+    if status < 400:
+        return "success"
+
+    if status == 401 or (status >= 400 and "DH-906" in (text or "")):
+        return "auth_rejected"
+
+    if status == 429:
+        return "rate_limited"
+
+    if status >= 500:
+        return "server_error"
+
+    return "client_error"
+
+
+class HttpCircuitBreaker:
     """Simple circuit breaker for fault isolation."""
 
     def __init__(self, failure_threshold: int = 5, recovery_timeout: float = 5.0):
@@ -82,7 +139,7 @@ class DhanHttpClient:
     - Automatic retry with exponential backoff
     - Rate limiting per endpoint
     - Circuit breaker for fault isolation
-    - Token refresh on 401
+    - 401 propagates as AuthenticationError (caller handles refresh+retry)
     - Comprehensive error handling
     """
 
@@ -94,7 +151,7 @@ class DhanHttpClient:
         timeout: float = 15.0,
         token_refresh_fn: Callable[[], str] | None = None,
         enable_retry: bool = True,
-        circuit_breaker: CircuitBreaker | None = None,
+        circuit_breaker: HttpCircuitBreaker | None = None,
         session: requests.Session | None = None,
         limiter: MultiBucketRateLimiter | None = None,
     ) -> None:
@@ -104,7 +161,7 @@ class DhanHttpClient:
         self._timeout = timeout
         self._token_refresh_fn = token_refresh_fn
         self._enable_retry = enable_retry
-        self._circuit_breaker = circuit_breaker or CircuitBreaker()
+        self._circuit_breaker = circuit_breaker or HttpCircuitBreaker()
 
         # Use provided session or create new one
         if session is not None:
@@ -147,34 +204,13 @@ class DhanHttpClient:
         """DELETE request to Dhan API."""
         return self._request("DELETE", endpoint)
 
-    @staticmethod
-    def _bucket_for(endpoint: str) -> str:
-        """Resolve endpoint to rate-limit bucket name via prefix match."""
-        return bucket_for(endpoint)
-
-    def _try_refresh_token(self, force: bool = False) -> bool:
-        """Attempt token refresh. Returns True if successful.
-
-        When ``force`` is True (e.g. after a 401), the ``is_expiring_soon``
-        guard is bypassed — a broker rejection means the token is invalid
-        regardless of its JWT expiry.
-
-        Cooldown is enforced by the TOTP cooldown guard (single source of truth).
-        """
-        return try_refresh_token(
-            self._token_refresh_fn,
-            self.update_token,
-            self.client_id,
-            is_expiring_soon_fn=None if force else lambda: is_expiring_soon(self.access_token),
-        )
-
     def _request(self, method: str, endpoint: str, json: dict[str, Any] | None = None) -> dict[str, Any]:
         """Execute HTTP request with retry, rate limiting, and circuit breaker."""
         # Circuit breaker check
         if not self._circuit_breaker.allow_request():
             raise BrokerError(f"Circuit breaker open: {method} {endpoint}")
 
-        bucket = self._bucket_for(endpoint)
+        bucket = bucket_for(endpoint)
         if bucket == "orders":
             # Fail-fast on the order path: bounded wait, then reject.
             if not self._limiter.acquire(bucket, timeout=_ORDERS_ACQUIRE_TIMEOUT_S):
@@ -213,12 +249,10 @@ class DhanHttpClient:
             category = classify_response(resp.status_code, resp.text or "")
 
             if category == "auth_rejected":
-                # 401 = token rejected by broker. Force refresh regardless of
-                # JWT expiry — a broker rejection means the token is invalid
-                # even if it hasn't expired locally.
-                if attempt == 1 and self._try_refresh_token(force=True):
-                    logger.info("http_retry_after_refresh", extra={"method": method, "endpoint": endpoint})
-                    continue
+                # 401 or DH-906 = token rejected by broker. The transport layer
+                # does NOT try to refresh — it raises and lets the caller (e.g.
+                # DhanConnection._verify_connection) handle refresh+retry.
+                # This avoids burning TOTP attempts on double-refresh.
                 raise AuthenticationError(
                     f"Token rejected: HTTP {resp.status_code} on {method} {endpoint}"
                     + (" (DH-906 Invalid Token)" if resp.status_code != 401 else "")
@@ -268,8 +302,3 @@ class DhanHttpClient:
         if last_exc:
             raise last_exc
         raise BrokerError(f"Request failed after {max_attempts} attempts: {method} {url}")
-
-    @staticmethod
-    def _backoff_delay(attempt: int) -> float:
-        """Exponential backoff: 500ms, 1s, 2s, 4s... capped at 5s."""
-        return backoff_delay(attempt)

@@ -171,7 +171,6 @@ class DhanWebSocketClient:
         client_id: str = "",
         mode: str = _DEFAULT_MODE,
         resolver: Any = None,  # NEW: SymbolResolver for security_id resolution
-        token_refresh_fn: Callable[[], str] | None = None,
     ) -> None:
         """Initialise the WebSocket client.
 
@@ -180,15 +179,11 @@ class DhanWebSocketClient:
             client_id: Dhan API client ID.
             mode: Subscription mode — "ltp", "quote", "depth", or "full".
             resolver: Optional SymbolResolver for symbol-to-security_id resolution.
-            token_refresh_fn: Optional callable returning a fresh access token.
-                Consulted on every (re)connect so a reconnect after token
-                expiry (DH-906) does not replay the stale token forever.
         """
         self._client_id = client_id
         self._token = access_token
         self._mode = mode
         self._resolver = resolver  # NEW: Store resolver
-        self._token_refresh_fn = token_refresh_fn
 
         # SDK instance (created on connect)
         self._feed: Any = None
@@ -216,25 +211,6 @@ class DhanWebSocketClient:
 
     # ── Public API ────────────────────────────────────────────────────────────
 
-    def _maybe_refresh_token(self) -> None:
-        """Swap in a fresh access token if a refresh source is configured.
-
-        Failures are non-fatal: the current token is kept and the connect
-        attempt proceeds (it may still succeed if the token is not expired).
-        """
-        if self._token_refresh_fn is None:
-            return
-        try:
-            new_token = self._token_refresh_fn()
-        except Exception as exc:
-            logger.warning("ws_token_refresh_failed: %s — keeping current token", exc)
-            return
-        if new_token and new_token != self._token:
-            self._token = new_token
-            if self._context is not None:
-                self._context.update_token(new_token)
-            logger.info("ws_token_refreshed")
-
     async def connect(self) -> bool:
         """Establish WebSocket connection using SDK.
 
@@ -251,10 +227,6 @@ class DhanWebSocketClient:
 
         self._shutting_down = False
         self._stop_event.clear()
-
-        # Pick up a rotated token before handing credentials to the SDK —
-        # this is the reconnect-after-expiry path (DH-906).
-        self._maybe_refresh_token()
 
         try:
             # Create SDK MarketFeed instance with current instruments

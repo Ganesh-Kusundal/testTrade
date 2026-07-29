@@ -6,10 +6,11 @@ margins; missing risk data blocks the order (fail-closed).
 from datetime import datetime, timezone
 from decimal import Decimal
 from types import SimpleNamespace
-from unittest.mock import MagicMock, create_autospec
+from unittest.mock import create_autospec
 
 import pytest
 
+from scalpr.brokers.broker_port import IBrokerGateway
 from scalpr.brokers.contracts import Funds
 from scalpr.domain.tick import Tick
 from scalpr.execution.order_router import OrderRouter
@@ -44,7 +45,7 @@ def _funds(available="500000", total="1000000"):
 @pytest.fixture
 def router():
     r = create_autospec(OrderRouter, instance=True)
-    r.gateway = MagicMock()
+    r.gateway = create_autospec(IBrokerGateway, instance=True)
     return r
 
 

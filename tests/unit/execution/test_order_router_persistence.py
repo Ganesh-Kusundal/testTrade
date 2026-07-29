@@ -4,10 +4,23 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from scalpr.domain.fill import Fill
 from scalpr.domain.instrument import Exchange
 from scalpr.domain.order import Order, OrderSide, OrderState, OrderType
 from scalpr.execution.order_router import OrderRouter
+from scalpr.simulation.simulated_gateway import SimulatedGateway
+
+
+class _GatewaySpy(SimulatedGateway):
+    """SimulatedGateway with call tracking for test assertions."""
+    def __init__(self, call_list=None):
+        super().__init__(starting_capital=Decimal("1000000"))
+        self._track = call_list if call_list is not None else []
+        self.place_order_called = False
+
+    def place_order(self, order):
+        self.place_order_called = True
+        self._track.append("broker")
+        return super().place_order(order)
 
 
 def _make_order():
@@ -18,7 +31,7 @@ def _make_order():
     )
 
 
-def _make_router(mock_gateway, mock_oms, mock_risk_gate=None, mock_cb=None):
+def _make_router(gateway, mock_oms, mock_risk_gate=None, mock_cb=None):
     if mock_risk_gate is None:
         mock_risk_gate = MagicMock()
         mock_risk_gate.check_order.return_value = (True, "ok")
@@ -26,7 +39,7 @@ def _make_router(mock_gateway, mock_oms, mock_risk_gate=None, mock_cb=None):
         mock_cb = MagicMock()
         mock_cb.check_limits.return_value = True
     return OrderRouter(
-        gateway=mock_gateway,
+        gateway=gateway,
         risk_gate=mock_risk_gate,
         circuit_breaker=mock_cb,
         order_manager=mock_oms,
@@ -40,15 +53,12 @@ class TestPersistenceBeforeBrokerSubmission:
         """add_order must be called BEFORE place_order — prevents orphaned broker orders."""
         call_order = []
 
-        mock_gateway = MagicMock()
-        mock_gateway.place_order.side_effect = lambda o: call_order.append("broker")
-        fill = Fill("f1", "ord_1", "RELIANCE", OrderSide.BUY, 10, Decimal("2500"))
-        mock_gateway.place_order.return_value = fill
+        gateway = _GatewaySpy(call_order)
 
         mock_oms = MagicMock()
         mock_oms.add_order.side_effect = lambda o: call_order.append("oms")
 
-        router = _make_router(mock_gateway, mock_oms)
+        router = _make_router(gateway, mock_oms)
         order = _make_order()
 
         router.submit_order(
@@ -64,14 +74,12 @@ class TestPersistenceBeforeBrokerSubmission:
 
     def test_broker_not_called_if_persistence_fails(self):
         """If OMS persistence fails, broker must NEVER receive the order."""
-        mock_gateway = MagicMock()
-        fill = Fill("f1", "ord_1", "RELIANCE", OrderSide.BUY, 10, Decimal("2500"))
-        mock_gateway.place_order.return_value = fill
+        gateway = _GatewaySpy()
 
         mock_oms = MagicMock()
         mock_oms.add_order.side_effect = Exception("DB write failed")
 
-        router = _make_router(mock_gateway, mock_oms)
+        router = _make_router(gateway, mock_oms)
         order = _make_order()
 
         with pytest.raises(Exception, match="DB write failed"):
@@ -83,26 +91,20 @@ class TestPersistenceBeforeBrokerSubmission:
             )
 
         # Broker must NOT have been called
-        mock_gateway.place_order.assert_not_called()
+        assert not gateway.place_order_called, \
+            "Broker must NOT have been called when persistence fails"
 
     def test_fill_processed_after_persistence(self):
         """Fill processing happens after both OMS persist and broker submission."""
         call_order = []
-        fill = Fill("f1", "ord_1", "RELIANCE", OrderSide.BUY, 10, Decimal("2500"))
 
-        mock_gateway = MagicMock()
-
-        def place_order_side_effect(o):
-            call_order.append("broker")
-            return fill
-
-        mock_gateway.place_order.side_effect = place_order_side_effect
+        gateway = _GatewaySpy(call_order)
 
         mock_oms = MagicMock()
         mock_oms.add_order.side_effect = lambda o: call_order.append("oms_add")
         mock_oms.process_fill.side_effect = lambda f: call_order.append("oms_fill")
 
-        router = _make_router(mock_gateway, mock_oms)
+        router = _make_router(gateway, mock_oms)
         order = _make_order()
 
         router.submit_order(

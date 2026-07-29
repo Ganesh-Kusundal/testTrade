@@ -41,6 +41,10 @@ class PaperOms(IBrokerGateway):
         self._connected = True
         self.event_bus = event_bus
 
+    @property
+    def connection(self) -> None:
+        return None
+
     def set_last_price(self, symbol: str, price: Decimal) -> None:
         """Update last known price (used for market fills and mark-to-market)."""
         with self._lock:
@@ -138,10 +142,11 @@ class PaperOms(IBrokerGateway):
             return fill
 
     def modify_order(self, order_id: str, price: Decimal, quantity: int) -> bool:
-        # In paper OMS, orders fill immediately, so modifying them is generally too late.
+        # no-op: paper OMS fills immediately on place_order, nothing to modify
         return False
 
     def cancel_order(self, order_id: str) -> bool:
+        # no-op: paper OMS fills immediately, no pending order to cancel
         return False
 
     def get_order_status(self, order_id: str) -> Order:

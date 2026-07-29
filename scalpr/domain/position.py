@@ -64,64 +64,29 @@ class Position:
 
     def with_fill(self, quantity: int, price: Decimal, side: OrderSide) -> Position:
         """Calculate updated position state after applying a signed fill quantity."""
-        if not isinstance(price, Decimal):
-            raise TypeError("price must be a Decimal")
-        if not isinstance(quantity, int):
-            raise TypeError("quantity must be an integer")
+        self._validate_fill_params(quantity, price)
 
         old_qty = self.quantity
-        old_avg = self.avg_price
         delta = quantity
-        new_qty = old_qty + delta
+        new_qty = self._compute_new_quantity(old_qty, delta)
 
-        # Defaults
-        new_avg = old_avg
-        new_realised = self.realised_pnl
-        new_state = self.state
+        new_avg, new_realised, new_state = self._compute_avg_realised_and_state(
+            old_qty=old_qty,
+            old_avg=self.avg_price,
+            delta=delta,
+            new_qty=new_qty,
+            price=price,
+            realised_pnl=self.realised_pnl,
+            state=self.state,
+        )
 
-        if old_qty == 0:
-            new_avg = price
-        elif (old_qty > 0 and delta > 0) or (old_qty < 0 and delta < 0):
-            # Adding to position
-            new_avg = (Decimal(old_qty) * old_avg + Decimal(delta) * price) / Decimal(new_qty)
-        else:
-            # Reducing position or reversing position
-            closed = min(abs(old_qty), abs(delta))
-            pnl_factor = Decimal("1") if old_qty > 0 else Decimal("-1")
-            new_realised = self.realised_pnl + Decimal(closed) * (price - old_avg) * pnl_factor
+        new_side, new_state = self._resolve_side_and_state(
+            new_qty=new_qty,
+            current_state=self.state,
+            new_state=new_state,
+        )
 
-            if new_qty == 0:
-                new_avg = ZERO
-                new_state = PositionState.CLOSED
-            elif abs(delta) > abs(old_qty):
-                # Position reversed
-                new_avg = price
-                new_state = PositionState.REVERSED
-            else:
-                # Position reduced but same side remains
-                new_avg = old_avg
-                new_state = PositionState.REDUCING
-
-        # Determine PositionSide
-        if new_qty > 0:
-            new_side = PositionSide.LONG
-            if new_state == self.state:
-                new_state = PositionState.OPEN
-        elif new_qty < 0:
-            new_side = PositionSide.SHORT
-            if new_state == self.state:
-                new_state = PositionState.OPEN
-        else:
-            new_side = PositionSide.FLAT
-            new_state = PositionState.FLAT
-
-        # Calculate unrealised PnL at the fill price (as new LTP)
-        if new_qty > 0:
-            unrealised = Decimal(new_qty) * (price - new_avg)
-        elif new_qty < 0:
-            unrealised = Decimal(abs(new_qty)) * (new_avg - price)
-        else:
-            unrealised = ZERO
+        unrealised = self._compute_unrealised_pnl(new_qty, price, new_avg)
 
         return replace(
             self,
@@ -133,6 +98,78 @@ class Position:
             position_side=new_side,
             state=new_state,
         )
+
+    def _validate_fill_params(self, quantity: int, price: Decimal) -> None:
+        if not isinstance(price, Decimal):
+            raise TypeError("price must be a Decimal")
+        if not isinstance(quantity, int):
+            raise TypeError("quantity must be an integer")
+
+    @staticmethod
+    def _compute_new_quantity(old_qty: int, delta: int) -> int:
+        return old_qty + delta
+
+    @staticmethod
+    def _compute_avg_realised_and_state(
+        old_qty: int,
+        old_avg: Decimal,
+        delta: int,
+        new_qty: int,
+        price: Decimal,
+        realised_pnl: Decimal,
+        state: PositionState,
+    ) -> tuple[Decimal, Decimal, PositionState]:
+        new_avg = old_avg
+        new_realised = realised_pnl
+        new_state = state
+
+        if old_qty == 0:
+            new_avg = price
+        elif (old_qty > 0 and delta > 0) or (old_qty < 0 and delta < 0):
+            new_avg = (Decimal(old_qty) * old_avg + Decimal(delta) * price) / Decimal(new_qty)
+        else:
+            closed = min(abs(old_qty), abs(delta))
+            pnl_factor = Decimal("1") if old_qty > 0 else Decimal("-1")
+            new_realised = realised_pnl + Decimal(closed) * (price - old_avg) * pnl_factor
+
+            if new_qty == 0:
+                new_avg = ZERO
+                new_state = PositionState.CLOSED
+            elif abs(delta) > abs(old_qty):
+                new_avg = price
+                new_state = PositionState.REVERSED
+            else:
+                new_avg = old_avg
+                new_state = PositionState.REDUCING
+
+        return new_avg, new_realised, new_state
+
+    @staticmethod
+    def _resolve_side_and_state(
+        new_qty: int,
+        current_state: PositionState,
+        new_state: PositionState,
+    ) -> tuple[PositionSide, PositionState]:
+        if new_qty > 0:
+            new_side = PositionSide.LONG
+            if new_state == current_state:
+                new_state = PositionState.OPEN
+        elif new_qty < 0:
+            new_side = PositionSide.SHORT
+            if new_state == current_state:
+                new_state = PositionState.OPEN
+        else:
+            new_side = PositionSide.FLAT
+            new_state = PositionState.FLAT
+        return new_side, new_state
+
+    @staticmethod
+    def _compute_unrealised_pnl(new_qty: int, price: Decimal, new_avg: Decimal) -> Decimal:
+        if new_qty > 0:
+            return Decimal(new_qty) * (price - new_avg)
+        elif new_qty < 0:
+            return Decimal(abs(new_qty)) * (new_avg - price)
+        return ZERO
 
     def is_reducing(self, fill_side: OrderSide) -> bool:
         """Check if a fill would reduce this position's exposure."""

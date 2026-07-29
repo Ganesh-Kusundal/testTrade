@@ -14,7 +14,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from scalpr.brokers.dhan.http_client import DhanHttpClient
 from scalpr.brokers.dhan.option_chain import OptionChainAdapter
+from scalpr.brokers.dhan.resolution import SymbolResolver
+from scalpr.brokers.errors import OptionChainNotSupported
 
 # Shape captured from a live /optionchain response (NIFTY 2026-07-28)
 LIVE_CHAIN_RESPONSE = {
@@ -47,21 +50,68 @@ LIVE_CHAIN_RESPONSE = {
 }
 
 
-def _adapter():
-    client = MagicMock()
-    resolver = MagicMock()
-    resolved = MagicMock()
-    resolved.security_id = 13
-    resolved.wire_segment = "IDX_I"
-    resolver.resolve_full.return_value = resolved
+def _row(**overrides) -> dict:
+    base = {
+        "SEM_EXM_EXCH_ID": "NSE",
+        "SEM_SEGMENT": "E",
+        "SEM_SMST_SECURITY_ID": "2885",
+        "SEM_INSTRUMENT_NAME": "EQUITY",
+        "SEM_TRADING_SYMBOL": "RELIANCE",
+        "SEM_LOT_UNITS": 1,
+        "SEM_TICK_SIZE": 0.05,
+        "SEM_EXPIRY_DATE": None,
+        "SEM_STRIKE_PRICE": None,
+        "SEM_OPTION_TYPE": None,
+        "SEM_CUSTOM_SYMBOL": None,
+        "SM_SYMBOL_NAME": None,
+    }
+    base.update(overrides)
+    return base
 
-    # _resolve_underlying now delegates to the resolver; mirror the direct
-    # lookup so existing test setups (which stub resolve_full) keep working.
-    def _underlying(symbol, exchange):
-        r = resolver.resolve_full(symbol, exchange)
-        return int(r.security_id), r.wire_segment
 
-    resolver.resolve_underlying_for_options.side_effect = _underlying
+def _resolver(include_options=False):
+    """Real SymbolResolver populated with test instruments.
+
+    Args:
+        include_options: If True, load NIFTY option contracts at security_ids
+            49081/49082 so ``get_by_security_id`` returns real Instruments.
+    """
+    rows = [
+        _row(SEM_TRADING_SYMBOL="NIFTY", SEM_SMST_SECURITY_ID="13",
+             SEM_SEGMENT="I", SEM_INSTRUMENT_NAME="INDEX"),
+        _row(SEM_TRADING_SYMBOL="TCS", SEM_SMST_SECURITY_ID="2885"),
+        _row(SEM_TRADING_SYMBOL="RELIANCE", SEM_SMST_SECURITY_ID="5000",
+             SEM_EXM_EXCH_ID="BSE"),
+        _row(SEM_TRADING_SYMBOL="GOLD-01Aug2026-FUT", SEM_SMST_SECURITY_ID="12345",
+             SEM_EXM_EXCH_ID="MCX", SEM_SEGMENT="M",
+             SEM_INSTRUMENT_NAME="FUTCOM",
+             SEM_EXPIRY_DATE="2026-08-01", SM_SYMBOL_NAME="GOLD"),
+        _row(SEM_TRADING_SYMBOL="SILVER-30Jul2026-FUT", SEM_SMST_SECURITY_ID="471725",
+             SEM_EXM_EXCH_ID="MCX", SEM_SEGMENT="M",
+             SEM_INSTRUMENT_NAME="FUTCOM",
+             SEM_EXPIRY_DATE="2026-07-30", SM_SYMBOL_NAME="SILVER"),
+    ]
+    if include_options:
+        rows.extend([
+            _row(SEM_TRADING_SYMBOL="NIFTY 28JUL26 23800 CE", SEM_SMST_SECURITY_ID="49081",
+                 SEM_SEGMENT="D", SEM_INSTRUMENT_NAME="OPTIDX",
+                 SEM_LOT_UNITS=25,
+                 SEM_EXPIRY_DATE="2026-07-28", SEM_STRIKE_PRICE=23800.0,
+                 SEM_OPTION_TYPE="CE", SM_SYMBOL_NAME="NIFTY"),
+            _row(SEM_TRADING_SYMBOL="NIFTY 28JUL26 23800 PE", SEM_SMST_SECURITY_ID="49082",
+                 SEM_SEGMENT="D", SEM_INSTRUMENT_NAME="OPTIDX",
+                 SEM_LOT_UNITS=25,
+                 SEM_EXPIRY_DATE="2026-07-28", SEM_STRIKE_PRICE=23800.0,
+                 SEM_OPTION_TYPE="PE", SM_SYMBOL_NAME="NIFTY"),
+        ])
+    r = SymbolResolver()
+    r.load_from_rows(rows)
+    return r
+
+
+def _adapter(**resolver_kwargs):
+    client = MagicMock(spec=DhanHttpClient)
+    resolver = _resolver(**resolver_kwargs)
     return OptionChainAdapter(client, resolver), client, resolver
 
 
@@ -93,10 +143,12 @@ class TestOptionChainPayloadContract:
         }
 
     def test_underlying_resolved_via_resolve_full(self):
-        adapter, client, resolver = _adapter()
+        adapter, client, _ = _adapter()
         client.post.return_value = LIVE_CHAIN_RESPONSE
         adapter.get_option_chain("NIFTY", "NSE", expiry=date(2026, 7, 28))
-        resolver.resolve_full.assert_called_once_with("NIFTY", "NSE")
+        payload = client.post.call_args_list[0].kwargs["json"]
+        assert payload["UnderlyingScrip"] == 13
+        assert payload["UnderlyingSeg"] == "IDX_I"
 
 
 class TestFlattenChain:
@@ -116,10 +168,7 @@ class TestFlattenChain:
     def test_symbol_backfilled_from_resolver(self):
         # Live responses carry no trading_symbol; the flat form must backfill
         # it from the resolver by security_id so callers can resolve the leg.
-        adapter, client, resolver = _adapter()
-        inst = MagicMock()
-        inst.symbol = "NIFTY 28JUL26 23800 CE"
-        resolver.get_by_security_id.return_value = inst
+        adapter, client, _ = _adapter(include_options=True)
         client.post.return_value = LIVE_CHAIN_RESPONSE
         chain = adapter.get_option_chain("NIFTY", "NSE", expiry=date(2026, 7, 28))
         ce = next(c for c in chain if c["security_id"] == 49081)
@@ -127,8 +176,7 @@ class TestFlattenChain:
 
     def test_missing_symbol_in_master_yields_empty_symbol(self):
         # Contract absent from the instrument master -> symbol stays ""
-        adapter, client, resolver = _adapter()
-        resolver.get_by_security_id.return_value = None
+        adapter, client, _ = _adapter()
         client.post.return_value = LIVE_CHAIN_RESPONSE
         chain = adapter.get_option_chain("NIFTY", "NSE", expiry=date(2026, 7, 28))
         assert all(c["symbol"] == "" for c in chain)
@@ -186,35 +234,17 @@ class TestOptionChainValidation:
     """Option chain must reject non-optionable instruments with clear error."""
 
     def test_equity_nse_raises_option_chain_not_supported(self):
-        from scalpr.brokers.errors import OptionChainNotSupported
-
-        adapter, _client, resolver = _adapter()
-        resolved = MagicMock()
-        resolved.security_id = 2885
-        resolved.wire_segment = "NSE_EQ"  # plain equity
-        resolver.resolve_full.return_value = resolved
-
+        adapter, _client, _ = _adapter()
         with pytest.raises(OptionChainNotSupported, match="TCS"):
             adapter.get_option_chain("TCS", "NSE")
 
     def test_equity_bse_raises_option_chain_not_supported(self):
-        from scalpr.brokers.errors import OptionChainNotSupported
-
-        adapter, _client, resolver = _adapter()
-        resolved = MagicMock()
-        resolved.security_id = 5000
-        resolved.wire_segment = "BSE_EQ"
-        resolver.resolve_full.return_value = resolved
-
+        adapter, _client, _ = _adapter()
         with pytest.raises(OptionChainNotSupported, match="RELIANCE"):
             adapter.get_option_chain("RELIANCE", "BSE")
 
     def test_index_idx_i_succeeds(self):
-        adapter, client, resolver = _adapter()
-        resolved = MagicMock()
-        resolved.security_id = 13
-        resolved.wire_segment = "IDX_I"
-        resolver.resolve_full.return_value = resolved
+        adapter, client, _ = _adapter()
         client.post.side_effect = [
             {"data": ["2026-07-28"]},
             LIVE_CHAIN_RESPONSE,
@@ -223,11 +253,15 @@ class TestOptionChainValidation:
         assert len(chain) > 0
 
     def test_fno_nse_fno_succeeds(self):
-        adapter, client, resolver = _adapter()
-        resolved = MagicMock()
-        resolved.security_id = 49081
-        resolved.wire_segment = "NSE_FNO"
-        resolver.resolve_full.return_value = resolved
+        client = MagicMock(spec=DhanHttpClient)
+        resolver = SymbolResolver()
+        resolver.load_from_rows([
+            _row(SEM_TRADING_SYMBOL="TCS", SEM_SMST_SECURITY_ID="49081",
+                 SEM_SEGMENT="D", SEM_INSTRUMENT_NAME="OPTSTK",
+                 SEM_EXPIRY_DATE="2026-07-28", SEM_STRIKE_PRICE=24000.0,
+                 SEM_OPTION_TYPE="CE", SM_SYMBOL_NAME="TCS"),
+        ])
+        adapter = OptionChainAdapter(client, resolver)
         client.post.side_effect = [
             {"data": ["2026-07-28"]},
             LIVE_CHAIN_RESPONSE,
@@ -236,11 +270,7 @@ class TestOptionChainValidation:
         assert len(chain) > 0
 
     def test_mcx_commodity_succeeds(self):
-        adapter, client, resolver = _adapter()
-        resolved = MagicMock()
-        resolved.security_id = 12345
-        resolved.wire_segment = "MCX_COMM"
-        resolver.resolve_full.return_value = resolved
+        adapter, client, _ = _adapter()
         client.post.side_effect = [
             {"data": ["2026-08-01"]},
             LIVE_CHAIN_RESPONSE,
@@ -251,15 +281,12 @@ class TestOptionChainValidation:
     def test_commodity_underlying_falls_back_to_futures(self):
         """MCX underlyings like SILVER aren't indexed as direct symbols.
 
-        The fallback logic now lives in the resolver
+        The fallback logic lives in the resolver
         (``resolve_underlying_for_options``); here we verify the adapter
         delegates and uses the resolver-supplied scrip/segment for the
         /optionchain call.
         """
-        adapter, client, resolver = _adapter()
-        # Clear the default _underlying side_effect so the explicit return_value wins.
-        resolver.resolve_underlying_for_options.side_effect = None
-        resolver.resolve_underlying_for_options.return_value = (471725, "MCX_COMM")
+        adapter, client, _ = _adapter()
         client.post.side_effect = [
             {"data": ["2026-07-30"]},
             LIVE_CHAIN_RESPONSE,
@@ -272,27 +299,16 @@ class TestOptionChainValidation:
             "UnderlyingScrip": 471725,
             "UnderlyingSeg": "MCX_COMM",
         }
-        resolver.resolve_underlying_for_options.assert_called_once_with("SILVER", "MCX")
 
     def test_commodity_underlying_no_futures_reraises(self):
         from scalpr.brokers.dhan.exceptions import InstrumentNotFoundError
 
-        adapter, _client, resolver = _adapter()
-        resolver.resolve_underlying_for_options.side_effect = InstrumentNotFoundError(
-            "Instrument not found: symbol='GHOST', exchange='MCX'"
-        )
+        adapter, _client, _ = _adapter()
         with pytest.raises(InstrumentNotFoundError):
             adapter.get_option_chain("GHOST", "MCX")
 
     def test_error_message_contains_symbol_and_exchange(self):
-        from scalpr.brokers.errors import OptionChainNotSupported
-
-        adapter, _client, resolver = _adapter()
-        resolved = MagicMock()
-        resolved.security_id = 2885
-        resolved.wire_segment = "NSE_EQ"
-        resolver.resolve_full.return_value = resolved
-
+        adapter, _client, _ = _adapter()
         with pytest.raises(OptionChainNotSupported) as exc_info:
             adapter.get_option_chain("TCS", "NSE")
         assert "TCS" in str(exc_info.value)
@@ -305,17 +321,25 @@ class TestScannerAcceptsAdapterOutput:
         # resolve them via resolver.get_by_security_id
         from scalpr.scanner.options_scanner import OptionsScanner
 
-        adapter, client, _ = _adapter()
+        adapter, client, _ = _adapter(include_options=True)
         client.post.return_value = LIVE_CHAIN_RESPONSE
         chain = adapter.get_option_chain("NIFTY", "NSE", expiry=date(2026, 7, 28))
 
-        resolver = MagicMock()
-        inst = MagicMock()
-        resolver.get_by_security_id.return_value = inst
-        scanner = OptionsScanner(resolver, min_oi=1, min_volume=1, max_spread=Decimal("5"))
+        scanner_resolver = SymbolResolver()
+        scanner_resolver.load_from_rows([
+            _row(SEM_TRADING_SYMBOL="NIFTY 28JUL26 23800 CE", SEM_SMST_SECURITY_ID="49081",
+                 SEM_SEGMENT="D", SEM_INSTRUMENT_NAME="OPTIDX",
+                 SEM_LOT_UNITS=25,
+                 SEM_EXPIRY_DATE="2026-07-28", SEM_STRIKE_PRICE=23800.0,
+                 SEM_OPTION_TYPE="CE", SM_SYMBOL_NAME="NIFTY"),
+            _row(SEM_TRADING_SYMBOL="NIFTY 28JUL26 23800 PE", SEM_SMST_SECURITY_ID="49082",
+                 SEM_SEGMENT="D", SEM_INSTRUMENT_NAME="OPTIDX",
+                 SEM_LOT_UNITS=25,
+                 SEM_EXPIRY_DATE="2026-07-28", SEM_STRIKE_PRICE=23800.0,
+                 SEM_OPTION_TYPE="PE", SM_SYMBOL_NAME="NIFTY"),
+        ])
+        scanner = OptionsScanner(scanner_resolver, min_oi=1, min_volume=1, max_spread=Decimal("5"))
 
         picks = scanner.scan(Decimal("23800"), chain)
-        assert picks == [inst, inst]  # CE + PE, both ATM and liquid
-        resolver.get_by_security_id.assert_any_call(49081)
-        resolver.get_by_security_id.assert_any_call(49082)
-        resolver.resolve.assert_not_called()  # no empty-symbol resolve attempts
+        assert len(picks) == 2  # CE + PE, both ATM and liquid
+        assert {p.security_id for p in picks} == {"49081", "49082"}

@@ -2,9 +2,15 @@
 from decimal import Decimal
 from unittest.mock import MagicMock
 
+import pytest
+
 from scalpr.domain.instrument import Exchange
 from scalpr.domain.order import Order, OrderSide, OrderState, OrderType
 from scalpr.execution.order_router import OrderRouter
+from scalpr.oms.order_manager import OrderManager
+from scalpr.risk.circuit_breaker import CircuitBreaker
+from scalpr.risk.pre_trade import PreTradeRiskGate
+from scalpr.simulation.simulated_gateway import SimulatedGateway
 
 
 def _make_order():
@@ -17,24 +23,20 @@ def _make_order():
 
 def test_submit_order_should_raise_on_persistence_failure():
     """K-016: If OMS persistence fails, broker must never be called."""
-    mock_gateway = MagicMock()
+    mock_gateway = MagicMock(spec=SimulatedGateway)
 
-    mock_risk_gate = MagicMock()
-    mock_risk_gate.check_order.return_value = (True, "ok")
+    risk_gate = PreTradeRiskGate(max_capital_risk_pct=0.03)
+    cb = CircuitBreaker()
 
-    mock_cb = MagicMock()
-    mock_cb.check_limits.return_value = True
-
-    mock_oms = MagicMock()
+    mock_oms = MagicMock(spec=OrderManager)
     mock_oms.add_order.side_effect = Exception("DB write failed")
 
     router = OrderRouter(
-        gateway=mock_gateway, risk_gate=mock_risk_gate,
-        circuit_breaker=mock_cb, order_manager=mock_oms,
+        gateway=mock_gateway, risk_gate=risk_gate,
+        circuit_breaker=cb, order_manager=mock_oms,
     )
 
     order = _make_order()
-    import pytest
     with pytest.raises(Exception, match="DB write failed"):
         router.submit_order(
             order=order, positions=[],

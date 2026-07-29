@@ -12,8 +12,10 @@ from decimal import Decimal
 from unittest.mock import MagicMock, patch
 
 from scalpr.brokers.dhan.connection import DhanConnection
+from scalpr.brokers.dhan.http_client import DhanHttpClient
 from scalpr.brokers.dhan.mapper import DhanMapper
 from scalpr.brokers.dhan.orders import OrdersAdapter
+from scalpr.brokers.dhan.resolution import SymbolResolver
 from scalpr.brokers.rate_limit import DHAN_RATE_LIMITS
 from scalpr.domain.instrument import Exchange
 from scalpr.domain.order import Order, OrderSide, OrderState, OrderType
@@ -67,7 +69,7 @@ class TestDecimalPrecision:
 
     def test_orders_api_receives_string_not_float(self):
         """Order payload must use strings for prices to preserve Decimal precision."""
-        mock_client = MagicMock()
+        mock_client = MagicMock(spec=DhanHttpClient)
         mock_client.client_id = "c1"
         mock_client.post.return_value = {
             "orderId": "ord_123",
@@ -76,7 +78,7 @@ class TestDecimalPrecision:
             "tradedPrice": "2500.50",
         }
 
-        resolver = MagicMock()
+        resolver = MagicMock(spec=SymbolResolver)
         resolver.resolve.return_value = MagicMock(symbol="12345")
         resolver.wire_segment_of.return_value = "NSE_EQ"
 
@@ -106,13 +108,13 @@ class TestDecimalPrecision:
 
     def test_modify_order_uses_string_prices(self):
         """Modify order payload must use strings for prices."""
-        mock_client = MagicMock()
+        mock_client = MagicMock(spec=DhanHttpClient)
         mock_client.put.return_value = {
             "orderId": "ord_123",
             "orderStatus": "MODIFIED",
         }
 
-        resolver = MagicMock()
+        resolver = MagicMock(spec=SymbolResolver)
         adapter = OrdersAdapter(client=mock_client, resolver=resolver)
 
         adapter.modify_order(
@@ -141,7 +143,7 @@ class TestProfileValidation:
     def test_connect_warns_on_inactive_data_plan(self, caplog):
         """Connection should warn if dataPlan is not active."""
         # Create mock HTTP client
-        mock_http = MagicMock()
+        mock_http = MagicMock(spec=DhanHttpClient)
         mock_http.get.return_value = {
             "dataPlan": "inactive",
             "dataValidity": "2025-01-01",
@@ -174,7 +176,7 @@ class TestProfileValidation:
         import logging
         caplog.set_level(logging.INFO)
 
-        mock_http = MagicMock()
+        mock_http = MagicMock(spec=DhanHttpClient)
         mock_http.get.return_value = {
             "dataPlan": "active",
             "dataValidity": "2025-12-31",
@@ -215,7 +217,7 @@ class TestMarketOrderFills:
         import logging
         caplog.set_level(logging.WARNING)
 
-        mock_client = MagicMock()
+        mock_client = MagicMock(spec=DhanHttpClient)
         mock_client.client_id = "c1"
         mock_client.post.return_value = {
             "orderId": "ord_123",
@@ -224,7 +226,7 @@ class TestMarketOrderFills:
             "tradedPrice": 0,  # Not filled yet
         }
 
-        resolver = MagicMock()
+        resolver = MagicMock(spec=SymbolResolver)
         resolver.resolve.return_value = MagicMock(symbol="12345")
         resolver.wire_segment_of.return_value = "NSE_EQ"
 
@@ -249,7 +251,7 @@ class TestMarketOrderFills:
 
     def test_limit_order_uses_price_fallback(self):
         """LIMIT orders should use order.price as fallback if no fill yet."""
-        mock_client = MagicMock()
+        mock_client = MagicMock(spec=DhanHttpClient)
         mock_client.client_id = "c1"
         mock_client.post.return_value = {
             "orderId": "ord_123",
@@ -258,7 +260,7 @@ class TestMarketOrderFills:
             "tradedPrice": 0,
         }
 
-        resolver = MagicMock()
+        resolver = MagicMock(spec=SymbolResolver)
         resolver.resolve.return_value = MagicMock(symbol="12345")
         resolver.wire_segment_of.return_value = "NSE_EQ"
 
@@ -282,7 +284,7 @@ class TestMarketOrderFills:
 
     def test_market_order_with_fill_uses_traded_price(self):
         """MARKET orders with actual fill should use traded_price."""
-        mock_client = MagicMock()
+        mock_client = MagicMock(spec=DhanHttpClient)
         mock_client.client_id = "c1"
         mock_client.post.return_value = {
             "orderId": "ord_123",
@@ -291,7 +293,7 @@ class TestMarketOrderFills:
             "tradedPrice": "2510.50",
         }
 
-        resolver = MagicMock()
+        resolver = MagicMock(spec=SymbolResolver)
         resolver.resolve.return_value = MagicMock(symbol="12345")
         resolver.wire_segment_of.return_value = "NSE_EQ"
 
@@ -347,7 +349,7 @@ class TestIntegrationFixes:
 
     def test_mcx_order_uses_correct_segment_and_string_prices(self):
         """MCX order should use MCX_COMM segment AND string prices."""
-        mock_client = MagicMock()
+        mock_client = MagicMock(spec=DhanHttpClient)
         mock_client.client_id = "c1"
         mock_client.post.return_value = {
             "orderId": "ord_mcx_123",
@@ -356,7 +358,7 @@ class TestIntegrationFixes:
             "tradedPrice": "5000.50",
         }
 
-        resolver = MagicMock()
+        resolver = MagicMock(spec=SymbolResolver)
         resolver.resolve.return_value = MagicMock(symbol="99999")
         resolver.wire_segment_of.return_value = "MCX_COMM"
 

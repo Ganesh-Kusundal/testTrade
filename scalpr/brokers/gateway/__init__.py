@@ -16,7 +16,7 @@ Usage::
     g = Gateway()
     ltp = g.ltp("TCS")
 """
-from scalpr.brokers.broker_port import IBrokerGateway
+from scalpr.brokers.broker_port import IAccountPort, IBrokerGateway, IMarketDataPort, ITradingPort
 from scalpr.brokers.gateway.facade import Gateway
 
-__all__ = ["Gateway", "IBrokerGateway"]
+__all__ = ["Gateway", "IAccountPort", "IBrokerGateway", "IMarketDataPort", "ITradingPort"]

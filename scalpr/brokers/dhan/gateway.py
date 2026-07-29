@@ -200,7 +200,10 @@ class DhanGateway(IBrokerGateway):
 
         for entry in orderbook:
             if entry.get("order_id") == order_id:
-                return DhanMapper.raw_order_to_order(entry)
+                result = DhanMapper.raw_order_to_order(entry)
+                if not result.is_ok:
+                    raise BrokerError(f"Failed to map order: {result.error}")
+                return result.value
 
         raise BrokerError(f"Order not found in orderbook: order_id={order_id}")
 
@@ -214,7 +217,7 @@ class DhanGateway(IBrokerGateway):
             BrokerError: If orderbook fetch fails.
         """
         raw_orders = self._connection.orders.get_orderbook()
-        return [DhanMapper.raw_order_to_order(raw) for raw in raw_orders]
+        return [DhanMapper.raw_order_to_order(raw).value for raw in raw_orders]
 
     def get_tradebook(self) -> list[Fill]:
         """Fetch the day's tradebook (execution fills) from Dhan.
@@ -226,7 +229,7 @@ class DhanGateway(IBrokerGateway):
             BrokerError: If tradebook fetch fails.
         """
         raw_trades = self._connection.orders.get_tradebook()
-        return [DhanMapper.raw_trade_to_fill(raw) for raw in raw_trades]
+        return [DhanMapper.raw_trade_to_fill(raw).value for raw in raw_trades]
 
     # ------------------------------------------------------------------
     # IBrokerGateway — Portfolio
@@ -389,16 +392,3 @@ class DhanGateway(IBrokerGateway):
         not covered by IBrokerGateway (e.g., batch LTP, depth, tradebook).
         """
         return self._connection
-
-    def adapters(self) -> dict[str, Any]:
-        """Return Dhan-specific adapters for advanced operations.
-
-        Returns a dict with 'connection' and 'resolver' keys that the
-        broker-agnostic layer can use for operations like option chains.
-        This eliminates the need to reach into private state.
-        """
-        return {
-            "connection": self._connection,
-            "resolver": self._connection.resolver,
-            "http_client": self._connection.http_client,
-        }

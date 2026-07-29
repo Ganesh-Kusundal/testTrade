@@ -15,17 +15,16 @@ import threading
 from typing import Any
 
 from config.endpoints import Dhan
-from scalpr.brokers.dhan._token_lifecycle import TokenRefreshScheduler
-from scalpr.brokers.dhan._totp_cooldown import TotpRateLimitError
-from scalpr.brokers.dhan.auth import ensure_fresh_token, get_broadcast
-from scalpr.brokers.dhan.exceptions import AuthenticationError, BrokerError, ConfigurationError
+from scalpr.brokers.dhan.auth import ensure_fresh_token
+from scalpr.brokers.dhan.exceptions import BrokerError, ConfigurationError
 from scalpr.brokers.dhan.historical import HistoricalDataAdapter
-from scalpr.brokers.dhan.http_client import CircuitBreaker, DhanHttpClient
+from scalpr.brokers.dhan.http_client import DhanHttpClient, HttpCircuitBreaker
 from scalpr.brokers.dhan.loader import InstrumentLoader
 from scalpr.brokers.dhan.market_data import MarketDataAdapter
 from scalpr.brokers.dhan.orders import OrdersAdapter
 from scalpr.brokers.dhan.portfolio import PortfolioAdapter
 from scalpr.brokers.dhan.resolution import SymbolResolver
+from scalpr.brokers.errors import AuthenticationError
 from scalpr.domain.values import RECOVERY_TIMEOUT_S
 
 logger = logging.getLogger(__name__)
@@ -82,7 +81,6 @@ class DhanConnection:
 
         self._connected = False
         self._lock = threading.RLock()
-        self._scheduler: TokenRefreshScheduler | None = None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -128,20 +126,11 @@ class DhanConnection:
                 # Step 5: Mark active
                 self._connected = True
 
-                # Step 6: Start background token refresh scheduler
-                import os
-                self._scheduler = TokenRefreshScheduler(
-                    broker_id="dhan",
-                    ensure_token_fn=lambda: ensure_fresh_token(),
-                    current_token_fn=lambda: os.environ.get("DHAN_ACCESS_TOKEN", ""),
-                    broadcast=get_broadcast(),
-                    interval_seconds=300.0,
-                )
-                self._scheduler.start()
-
                 logger.info("dhan_connection_connected")
 
-            except (AuthenticationError, TotpRateLimitError):
+            except AuthenticationError:
+                # TokenRefreshThrottled (TOTP cooldown) is an
+                # AuthenticationError subclass — both pass through typed.
                 raise
             except Exception as exc:
                 # Clean up partial initialisation
@@ -160,9 +149,6 @@ class DhanConnection:
                 return
 
             logger.info("dhan_connection_disconnecting")
-            if self._scheduler is not None:
-                self._scheduler.stop()
-                self._scheduler = None
             self._cleanup()
             self._connected = False
             logger.info("dhan_connection_disconnected")
@@ -264,10 +250,9 @@ class DhanConnection:
         access_token: str = self._config["access_token"]
         base_url: str = self._config.get("base_url", Dhan.REST_BASE)
         timeout: float = float(self._config.get("timeout", 15.0))
-        token_refresh_fn = self._config.get("token_refresh_fn")
         enable_retry: bool = self._config.get("enable_retry", True)
 
-        circuit_breaker = CircuitBreaker(
+        circuit_breaker = HttpCircuitBreaker(
             failure_threshold=5,
             recovery_timeout=RECOVERY_TIMEOUT_S,
         )
@@ -277,7 +262,6 @@ class DhanConnection:
             access_token=access_token,
             base_url=base_url,
             timeout=timeout,
-            token_refresh_fn=token_refresh_fn,
             enable_retry=enable_retry,
             circuit_breaker=circuit_breaker,
         )
@@ -304,105 +288,81 @@ class DhanConnection:
         )
         return resolver
 
-    def _verify_connection(self) -> None:
-        """Verify the connection and validate account setup.
+    def _fetch_profile(self) -> dict[str, Any]:
+        """GET /profile with up to 3 retries on AuthenticationError.
 
-        Checks:
-        - /profile endpoint is reachable
-        - dataPlan status (warns if inactive)
-        - token validity
-        - active segments
-
-        On 401 (token rejected), force-regenerates via TOTP and retries.
-        If TOTP cooldown is active, sleeps for the remaining cooldown
-        duration before retrying — this avoids the death spiral where
-        rapid retries burn through the 120s TOTP lockout.
+        On 401 (or TOTP cooldown), force-regenerates the token via
+        ``ensure_fresh_token(force=True, wait_for_cooldown=True)``
+        and retries. Cooldown waiting is owned by auth.py — this method
+        never sleeps itself.
 
         Raises:
-            AuthenticationError: If token is rejected after all retries.
-            BrokerError: If the profile call fails.
+            AuthenticationError: If token is rejected after all retries
+                (includes TokenRefreshThrottled when cooldown persists).
         """
         if self._client is None:
             raise BrokerError("HTTP client not available for verification")
 
-        import time
-
         max_attempts = 3
-        last_exc: Exception | None = None
 
         for attempt in range(1, max_attempts + 1):
             try:
-                profile = self._client.get("/profile")
-
-                # Validate data plan
-                data_plan = profile.get("dataPlan", "")
-                if data_plan.lower() != "active":
-                    logger.warning(
-                        "dhan_data_plan_inactive",
-                        extra={"dataPlan": data_plan},
-                    )
-                    # Don't raise - user might only need order APIs
-
-                # Validate token validity
-                token_validity = profile.get("dataValidity", "")
-                if not token_validity:
-                    logger.warning("dhan_token_validity_missing")
-
-                # Log active segments
-                active_segments = profile.get("activeSegment", [])
-
-                logger.info(
-                    "dhan_connection_verified",
-                    extra={
-                        "profile": profile.get("name", ""),
-                        "dataPlan": data_plan,
-                        "activeSegments": active_segments,
-                        "tokenValidity": token_validity,
-                    },
-                )
-                return  # Success
-
-            except TotpRateLimitError as exc:
-                # TOTP cooldown active — sleep for the remaining cooldown
-                # then retry. This is the key fix: instead of burning
-                # through retries in <5s, we wait for the cooldown.
-                last_exc = exc
-                if attempt < max_attempts:
-                    wait = exc.remaining_seconds + 1.0  # +1s buffer
-                    logger.warning(
-                        "dhan_verify_totp_cooldown",
-                        extra={
-                            "attempt": attempt,
-                            "wait_seconds": round(wait, 1),
-                        },
-                    )
-                    time.sleep(wait)
-                    new_token = ensure_fresh_token(force=True)
-                    self._client.update_token(new_token)
-                    continue
-                raise
-
+                return self._client.get("/profile")
             except AuthenticationError as exc:
-                last_exc = exc
-                if attempt < max_attempts:
-                    logger.warning(
-                        "dhan_verify_retry",
-                        extra={"attempt": attempt, "error": str(exc)},
-                    )
-                    time.sleep(2)
-                    # 401 = token rejected by broker. Force regeneration
-                    # regardless of JWT expiry — a broker rejection means
-                    # the token is invalid even if it hasn't expired locally.
-                    # The HTTP client already attempted a forced refresh on
-                    # its own 401, but if we're still here the token is
-                    # persistently rejected — force another regeneration.
-                    new_token = ensure_fresh_token(force=True)
-                    self._client.update_token(new_token)
-                    continue
-                raise
+                if attempt >= max_attempts:
+                    raise
+                logger.warning(
+                    "dhan_verify_retry",
+                    extra={"attempt": attempt, "error": str(exc)},
+                )
+                new_token = ensure_fresh_token(force=True, wait_for_cooldown=True)
+                self._client.update_token(new_token)
 
-        if last_exc:
-            raise last_exc
+        return {}  # unreachable
+
+    def _validate_data_plan(self, profile: dict[str, Any]) -> None:
+        """Check dataPlan status and warn if inactive.
+
+        Does not raise — user might only need order APIs.
+        """
+        data_plan = profile.get("dataPlan", "")
+        if data_plan.lower() != "active":
+            logger.warning(
+                "dhan_data_plan_inactive",
+                extra={"dataPlan": data_plan},
+            )
+
+    def _log_connection_status(self, profile: dict[str, Any]) -> None:
+        """Log token validity date and active segments."""
+        token_validity = profile.get("dataValidity", "")
+        if not token_validity:
+            logger.warning("dhan_token_validity_missing")
+
+        active_segments = profile.get("activeSegment", [])
+
+        logger.info(
+            "dhan_connection_verified",
+            extra={
+                "profile": profile.get("name", ""),
+                "dataPlan": profile.get("dataPlan", ""),
+                "activeSegments": active_segments,
+                "tokenValidity": token_validity,
+            },
+        )
+
+    def _verify_connection(self) -> None:
+        """Verify the connection and validate account setup.
+
+        Orchestrates profile fetch → data plan validation → status logging.
+        Delegates authentication retry to ``_fetch_profile``.
+
+        Raises:
+            AuthenticationError: If token is rejected after all retries
+                (includes TokenRefreshThrottled when cooldown persists).
+        """
+        profile = self._fetch_profile()
+        self._validate_data_plan(profile)
+        self._log_connection_status(profile)
 
     def _cleanup(self) -> None:
         """Release all resources."""

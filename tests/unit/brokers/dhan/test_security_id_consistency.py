@@ -11,28 +11,49 @@ Catches regressions for the 4 critical bugs fixed in Phase 1:
 """
 
 from decimal import Decimal
-from unittest.mock import MagicMock
 
 import pytest
 
 from scalpr.brokers.dhan.ws_client import DhanWebSocketClient
 from scalpr.domain.instrument import Exchange, Instrument, Segment
 
-# ── Fixtures ──────────────────────────────────────────────────────────────────
+# ── Test helpers: minimal stubs (zero MagicMock dependency) ──────────────
 
-@pytest.fixture
-def mock_resolver():
-    """Create a mock SymbolResolver that returns real instruments."""
-    resolver = MagicMock()
 
-    def resolve(symbol, exchange="NSE"):
-        # Simulate real instrument resolution
-        instruments = {
+class _CallRecorder:
+    """Records calls to a method — replaces MagicMock call tracking."""
+    def __init__(self):
+        self.calls = []
+
+    def __call__(self, *args, **kwargs):
+        self.calls.append((args, kwargs))
+
+    @property
+    def call_args(self):
+        if not self.calls:
+            return None
+        return self.calls[0]
+
+    def assert_not_called(self):
+        assert len(self.calls) == 0, f"Expected no calls, got {len(self.calls)}"
+
+
+class _FakeFeed:
+    """Minimal SDK feed stub — records subscribe_symbols calls."""
+    def __init__(self):
+        self.subscribe_symbols = _CallRecorder()
+
+
+class _FakeResolver:
+    """Minimal SymbolResolver stub with known instruments."""
+    def __init__(self):
+        self._resolve_calls = []
+        self._instruments = {
             "RELIANCE": Instrument(
                 symbol="RELIANCE",
                 exchange=Exchange.NSE,
                 segment=Segment.EQUITY,
-                security_id="2885",  # Real Dhan security_id for RELIANCE
+                security_id="2885",
                 lot_size=1,
                 tick_size=Decimal("0.05"),
             ),
@@ -40,18 +61,35 @@ def mock_resolver():
                 symbol="TCS",
                 exchange=Exchange.NSE,
                 segment=Segment.EQUITY,
-                security_id="11536",  # Real Dhan security_id for TCS
+                security_id="11536",
                 lot_size=1,
                 tick_size=Decimal("0.05"),
             ),
         }
-        inst = instruments.get(symbol)
+
+    def resolve(self, symbol, exchange="NSE"):
+        self._resolve_calls.append((symbol, exchange))
+        inst = self._instruments.get(symbol)
         if inst is None:
             raise ValueError(f"Unknown symbol: {symbol}")
         return inst
 
-    resolver.resolve.side_effect = resolve
-    return resolver
+    def wire_segment_of(self, symbol, exchange="NSE"):
+        return "NSE_EQ"
+
+    def assert_resolve_called_once_with(self, symbol, exchange):
+        assert len(self._resolve_calls) == 1, \
+            f"Expected 1 resolve call, got {len(self._resolve_calls)}"
+        assert self._resolve_calls[0] == (symbol, exchange), \
+            f"Expected resolve({symbol!r}, {exchange!r}), got {self._resolve_calls[0]}"
+
+
+# ── Fixtures ──────────────────────────────────────────────────────────────────
+
+@pytest.fixture
+def fake_resolver():
+    """Create a fake SymbolResolver that returns real instruments."""
+    return _FakeResolver()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -62,76 +100,66 @@ class TestWebSocketSecurityIdResolution:
     """Verify WebSocket client resolves symbols to security_ids before subscribing."""
 
     @pytest.mark.asyncio
-    async def test_subscribe_resolves_security_id_via_resolver(self, mock_resolver):
+    async def test_subscribe_resolves_security_id_via_resolver(self, fake_resolver):
         """subscribe() should resolve symbol to security_id using resolver."""
         client = DhanWebSocketClient(
             access_token="test_token",
             client_id="test_client",
-            resolver=mock_resolver,
+            resolver=fake_resolver,
         )
 
-        # Mock the SDK feed to capture subscription calls
-        mock_feed = MagicMock()
-        client._feed = mock_feed
+        feed = _FakeFeed()
+        client._feed = feed
         client._connected = True
 
-        # Subscribe to RELIANCE
         result = await client.subscribe([("RELIANCE", "NSE")])
 
-        # Verify resolver was called with correct arguments
-        mock_resolver.resolve.assert_called_once_with("RELIANCE", "NSE")
+        fake_resolver.assert_resolve_called_once_with("RELIANCE", "NSE")
         assert result == {("RELIANCE", "NSE"): True}
 
     @pytest.mark.asyncio
-    async def test_subscribe_uses_string_security_id(self, mock_resolver):
+    async def test_subscribe_uses_string_security_id(self, fake_resolver):
         """Security ID must be a string in the SDK v2 tuple — int SecurityId
         is silently accepted by the server but streams nothing (verified live 2026-07-27)."""
         client = DhanWebSocketClient(
             access_token="test_token",
             client_id="test_client",
-            resolver=mock_resolver,
+            resolver=fake_resolver,
         )
 
-        mock_feed = MagicMock()
-        client._feed = mock_feed
+        feed = _FakeFeed()
+        client._feed = feed
         client._connected = True
 
         await client.subscribe([("RELIANCE", "NSE")])
 
-        # Verify SDK feed received subscription with string security_id
-        call_args = mock_feed.subscribe_symbols.call_args
+        call_args = feed.subscribe_symbols.call_args
         assert call_args is not None, "subscribe_symbols should be called"
 
         instruments = call_args[0][0] if call_args[0] else []
         assert len(instruments) > 0, "Should have at least one instrument"
 
-        # SDK v2 format: (exchange_int, security_id_str, mode_int)
         _exch_int, sec_id, _mode_int = instruments[0]
         assert isinstance(sec_id, str), f"security_id must be str, got {type(sec_id)}"
         assert sec_id == "2885", f"Expected RELIANCE security_id='2885', got {sec_id}"
 
     @pytest.mark.asyncio
-    async def test_subscribe_handles_resolution_failure_gracefully(self, mock_resolver):
+    async def test_subscribe_handles_resolution_failure_gracefully(self, fake_resolver):
         """S-3: resolution failure must be reported as False per-pair, not hidden."""
-        # Make resolver raise for unknown symbol
-        mock_resolver.resolve.side_effect = ValueError("Unknown symbol: UNKNOWN")
-
         client = DhanWebSocketClient(
             access_token="test_token",
             client_id="test_client",
-            resolver=mock_resolver,
+            resolver=fake_resolver,
         )
 
-        mock_feed = MagicMock()
-        client._feed = mock_feed
+        feed = _FakeFeed()
+        client._feed = feed
         client._connected = True
 
-        # Should not raise, but must report the dropped pair honestly.
         result = await client.subscribe([("UNKNOWN", "NSE")])
         assert result == {("UNKNOWN", "NSE"): False}
 
-        # Verify SDK feed was NOT called (no valid instruments)
-        mock_feed.subscribe_symbols.assert_not_called()
+        feed.subscribe_symbols.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_subscribe_fallback_without_resolver(self):
@@ -139,17 +167,15 @@ class TestWebSocketSecurityIdResolution:
         client = DhanWebSocketClient(
             access_token="test_token",
             client_id="test_client",
-            resolver=None,  # No resolver
+            resolver=None,
         )
 
-        mock_feed = MagicMock()
-        client._feed = mock_feed
+        feed = _FakeFeed()
+        client._feed = feed
         client._connected = True
 
-        # Subscribe using security_id directly as symbol (backward compat)
         result = await client.subscribe([("2885", "NSE")])
 
-        # Should succeed by parsing "2885" as int
         assert result == {("2885", "NSE"): True}
 
 
@@ -166,10 +192,8 @@ class TestOrdersSecurityIdUsage:
 
         from scalpr.brokers.dhan.orders import OrdersAdapter
 
-        # Get the source code of place_order method
         source = inspect.getsource(OrdersAdapter.place_order)
 
-        # Verify it uses security_id, not symbol
         assert "inst.security_id" in source, \
             "OrdersAdapter.place_order should use inst.security_id, not inst.symbol"
         assert "inst.symbol" not in source or "inst.security_id" in source, \
@@ -189,10 +213,8 @@ class TestHistoricalSecurityIdUsage:
 
         from scalpr.brokers.dhan.historical import HistoricalDataAdapter
 
-        # Get the source code of _resolve_segment method (where security_id is extracted)
         source = inspect.getsource(HistoricalDataAdapter._resolve_segment)
 
-        # Verify it uses security_id, not symbol
         assert "inst.security_id" in source, \
             "HistoricalDataAdapter._resolve_segment should use inst.security_id, not inst.symbol"
 
@@ -208,10 +230,10 @@ class TestOptionsScannerSecurityIds:
         """OptionsScanner should accept resolver parameter."""
         from scalpr.scanner.options_scanner import OptionsScanner
 
-        mock_resolver = MagicMock()
-        scanner = OptionsScanner(resolver=mock_resolver)
+        resolver = _FakeResolver()
+        scanner = OptionsScanner(resolver=resolver)
 
-        assert scanner._resolver is mock_resolver
+        assert scanner._resolver is resolver
 
     def test_scanner_code_resolves_instruments(self):
         """OptionsScanner scan method should use resolver to get instruments."""
@@ -221,11 +243,9 @@ class TestOptionsScannerSecurityIds:
 
         source = inspect.getsource(OptionsScanner.scan)
 
-        # Should reference resolver
         assert "self._resolver" in source or "resolver" in source, \
             "OptionsScanner.scan should use resolver to get real instruments"
 
-        # Should NOT create fake security_ids like "NIFTY_ID"
         assert "_ID" not in source or "security_id" in source, \
             "OptionsScanner should not create fake security_id strings ending with _ID"
 
@@ -238,55 +258,48 @@ class TestEndToEndSecurityIdFlow:
     """Verify security_id flows correctly through WebSocket subscription."""
 
     @pytest.mark.asyncio
-    async def test_full_subscription_flow_reliance(self, mock_resolver):
+    async def test_full_subscription_flow_reliance(self, fake_resolver):
         """Complete flow: Symbol → Resolver → security_id int → SDK subscription."""
         client = DhanWebSocketClient(
             access_token="test_token",
             client_id="test_client",
-            resolver=mock_resolver,
+            resolver=fake_resolver,
         )
 
-        mock_feed = MagicMock()
-        client._feed = mock_feed
+        feed = _FakeFeed()
+        client._feed = feed
         client._connected = True
 
-        # Subscribe to RELIANCE
         await client.subscribe([("RELIANCE", "NSE")])
 
-        # Verify the complete chain
-        # 1. Resolver was called
-        mock_resolver.resolve.assert_called_once_with("RELIANCE", "NSE")
+        fake_resolver.assert_resolve_called_once_with("RELIANCE", "NSE")
 
-        # 2. SDK received correct subscription
-        call_args = mock_feed.subscribe_symbols.call_args
+        call_args = feed.subscribe_symbols.call_args
         instruments = call_args[0][0]
         _exch_int, sec_id, mode_int = instruments[0]
 
-        # 3. Security ID is the correct string (SDK v2 JSON packet requires str)
         assert sec_id == "2885"
         assert isinstance(sec_id, str)
 
-        # 4. Mode is valid SDK integer (15=Ticker, 17=Quote, 21=Full)
         assert mode_int in (15, 17, 21), f"Invalid SDK mode: {mode_int}"
 
     @pytest.mark.asyncio
-    async def test_full_subscription_flow_tcs(self, mock_resolver):
+    async def test_full_subscription_flow_tcs(self, fake_resolver):
         """Complete flow for TCS symbol."""
         client = DhanWebSocketClient(
             access_token="test_token",
             client_id="test_client",
-            resolver=mock_resolver,
+            resolver=fake_resolver,
         )
 
-        mock_feed = MagicMock()
-        client._feed = mock_feed
+        feed = _FakeFeed()
+        client._feed = feed
         client._connected = True
 
         await client.subscribe([("TCS", "NSE")])
 
-        call_args = mock_feed.subscribe_symbols.call_args
+        call_args = feed.subscribe_symbols.call_args
         instruments = call_args[0][0]
         _exch_int, sec_id, _mode_int = instruments[0]
 
-        # TCS security_id is "11536" (string — SDK v2 JSON packet)
         assert sec_id == "11536"

@@ -16,13 +16,52 @@ import pytest
 
 from scalpr.brokers.dhan.exceptions import BrokerError, InstrumentNotFoundError, OrderError
 from scalpr.brokers.dhan.historical import HistoricalDataAdapter
+from scalpr.brokers.dhan.http_client import DhanHttpClient
 from scalpr.brokers.dhan.market_data import MarketDataAdapter
 from scalpr.brokers.dhan.orders import OrdersAdapter
 from scalpr.brokers.dhan.portfolio import PortfolioAdapter
+from scalpr.brokers.dhan.resolution import SymbolResolver
 from scalpr.domain.fill import Fill
 from scalpr.domain.instrument import Exchange
 from scalpr.domain.order import Order, OrderSide, OrderState, OrderType
 from scalpr.domain.position import Position, PositionSide, PositionState
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _row(**overrides) -> dict:
+    base = {
+        "SEM_EXM_EXCH_ID": "NSE",
+        "SEM_SEGMENT": "E",
+        "SEM_SMST_SECURITY_ID": "1",
+        "SEM_INSTRUMENT_NAME": "EQUITY",
+        "SEM_TRADING_SYMBOL": "RELIANCE",
+        "SEM_LOT_UNITS": 1,
+        "SEM_TICK_SIZE": 0.05,
+        "SEM_EXPIRY_DATE": None,
+        "SEM_STRIKE_PRICE": None,
+        "SEM_OPTION_TYPE": None,
+        "SEM_CUSTOM_SYMBOL": None,
+        "SM_SYMBOL_NAME": None,
+    }
+    base.update(overrides)
+    return base
+
+
+def _make_resolver():
+    """Real SymbolResolver populated with test instruments."""
+    r = SymbolResolver()
+    r.load_from_rows([
+        _row(SEM_TRADING_SYMBOL="RELIANCE", SEM_SMST_SECURITY_ID="1"),
+        _row(SEM_TRADING_SYMBOL="TCS", SEM_SMST_SECURITY_ID="2"),
+        _row(SEM_TRADING_SYMBOL="NIFTY", SEM_SMST_SECURITY_ID="13",
+             SEM_SEGMENT="I", SEM_INSTRUMENT_NAME="INDEX"),
+        _row(SEM_TRADING_SYMBOL="INFY", SEM_SMST_SECURITY_ID="3"),
+        _row(SEM_TRADING_SYMBOL="HDFC", SEM_SMST_SECURITY_ID="4"),
+    ])
+    return r
+
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -30,28 +69,16 @@ from scalpr.domain.position import Position, PositionSide, PositionState
 
 @pytest.fixture
 def mock_http_client():
-    """Provide a MagicMock DhanHttpClient."""
-    client = MagicMock()
+    """Provide a spec'd MagicMock for DhanHttpClient."""
+    client = MagicMock(spec=DhanHttpClient)
     client.client_id = "test_client_123"
     return client
 
 
 @pytest.fixture
 def mock_resolver():
-    """Provide a SymbolResolver stub that resolves known symbols."""
-    resolver = MagicMock()
-    inst = MagicMock()
-    inst.symbol = "RELIANCE"
-    inst.exchange = Exchange.NSE
-    inst.segment = MagicMock()
-    inst.segment.value = "EQUITY"
-    inst.security_id = 1  # Integer, not string
-    inst.lot_size = 1
-    inst.tick_size = Decimal("0.05")
-    resolver.resolve.return_value = inst
-    resolver.wire_segment_of.return_value = "NSE_EQ"
-    resolver.instrument_kind_of.return_value = "EQUITY"
-    return resolver
+    """Real SymbolResolver pre-loaded with test instruments."""
+    return _make_resolver()
 
 
 @pytest.fixture
@@ -130,12 +157,15 @@ class TestMarketDataAdapter:
         with pytest.raises(ValueError, match="No LTP data for RELIANCE"):
             market_adapter.get_ltp("RELIANCE", "NSE")
 
-    def test_should_resolve_segment_via_resolver_for_ltp(self, market_adapter, mock_http_client, mock_resolver):
+    def test_should_resolve_segment_via_resolver_for_ltp(self, market_adapter, mock_http_client):
         mock_http_client.post.return_value = {
             "data": {"NSE_EQ": {"1": {"last_price": "100"}}}
         }
-        market_adapter.get_ltp("RELIANCE", "NSE")
-        mock_resolver.resolve.assert_called_once_with("RELIANCE", "NSE")
+        ltp = market_adapter.get_ltp("RELIANCE", "NSE")
+        assert ltp == Decimal("100")
+        mock_http_client.post.assert_called_once_with(
+            "/marketfeed/ltp", json={"NSE_EQ": [1]}
+        )
 
     # --- get_quote ---
 
@@ -217,7 +247,7 @@ class TestMarketDataAdapter:
                 }
             }
         }
-        quote = market_adapter.get_quote("TEST", "NSE")
+        quote = market_adapter.get_quote("RELIANCE", "NSE")
         assert quote["change_percent"] == Decimal("0")
 
     def test_should_raise_when_quote_entry_empty(self, market_adapter, mock_http_client):
@@ -275,15 +305,7 @@ class TestMarketDataAdapter:
 
     # --- get_batch_ltp ---
 
-    def test_should_return_ltp_for_multiple_symbols(self, market_adapter, mock_http_client, mock_resolver):
-        inst_tcs = MagicMock()
-        inst_tcs.symbol = "TCS"
-        inst_tcs.exchange = Exchange.NSE
-        inst_tcs.security_id = "2"
-        mock_resolver.resolve.side_effect = lambda sym, exch: {
-            "RELIANCE": MagicMock(symbol="RELIANCE", exchange=Exchange.NSE, security_id="1"),
-            "TCS": inst_tcs,
-        }[sym]
+    def test_should_return_ltp_for_multiple_symbols(self, market_adapter, mock_http_client):
         mock_http_client.post.return_value = {
             "data": {
                 "NSE_EQ": {
@@ -295,28 +317,18 @@ class TestMarketDataAdapter:
         result = market_adapter.get_batch_ltp(["RELIANCE", "TCS"], "NSE")
         assert result == {"RELIANCE": Decimal("2510"), "TCS": Decimal("3600")}
 
-    def test_should_skip_unresolvable_symbols_in_batch(self, market_adapter, mock_http_client, mock_resolver):
-        mock_resolver.resolve.side_effect = InstrumentNotFoundError("not found")
-        result = market_adapter.get_batch_ltp(["RELIANCE"], "NSE")
+    def test_should_skip_unresolvable_symbols_in_batch(self, market_adapter, mock_http_client):
+        result = market_adapter.get_batch_ltp(["UNKNOWN"], "NSE")
         assert result == {}
         mock_http_client.post.assert_not_called()
 
-    def test_should_return_empty_dict_when_no_symbols_resolve(self, market_adapter, mock_http_client, mock_resolver):
-        mock_resolver.resolve.side_effect = InstrumentNotFoundError("not found")
+    def test_should_return_empty_dict_when_no_symbols_resolve(self, market_adapter, mock_http_client):
         result = market_adapter.get_batch_ltp(["UNKNOWN"], "NSE")
         assert result == {}
 
     # --- get_batch_quote ---
 
-    def test_should_return_quotes_for_multiple_symbols(self, market_adapter, mock_http_client, mock_resolver):
-        inst_tcs = MagicMock()
-        inst_tcs.symbol = "TCS"
-        inst_tcs.exchange = Exchange.NSE
-        inst_tcs.security_id = "2"
-        mock_resolver.resolve.side_effect = lambda sym, exch: {
-            "RELIANCE": MagicMock(symbol="RELIANCE", exchange=Exchange.NSE, security_id="1"),
-            "TCS": inst_tcs,
-        }[sym]
+    def test_should_return_quotes_for_multiple_symbols(self, market_adapter, mock_http_client):
         mock_http_client.post.return_value = {
             "data": {
                 "NSE_EQ": {
@@ -331,11 +343,8 @@ class TestMarketDataAdapter:
         assert result["RELIANCE"]["ltp"] == Decimal("2510")
         assert result["TCS"]["volume"] == 2000
 
-    def test_batch_quote_includes_change_and_change_percent(self, market_adapter, mock_http_client, mock_resolver):
+    def test_batch_quote_includes_change_and_change_percent(self, market_adapter, mock_http_client):
         """S-4: batch quotes must carry change/change_percent like single quotes (B-003 class)."""
-        mock_resolver.resolve.side_effect = lambda sym, exch: MagicMock(
-            symbol="RELIANCE", exchange=Exchange.NSE, security_id="1"
-        )
         mock_http_client.post.return_value = {
             "data": {
                 "NSE_EQ": {
@@ -353,7 +362,7 @@ class TestMarketDataAdapter:
         assert quote["change"] == Decimal("15.30")
         assert quote["change_percent"] == Decimal("15.30") / Decimal("2495.20") * 100
 
-    def test_batch_quote_field_set_matches_single_quote(self, market_adapter, mock_http_client, mock_resolver):
+    def test_batch_quote_field_set_matches_single_quote(self, market_adapter, mock_http_client):
         """S-4 contract: batch and single quotes are built by one shared builder —
         identical key sets, so they can never silently diverge again."""
         raw = {
@@ -378,7 +387,7 @@ class TestMarketDataAdapter:
         assert set(batch.keys()) == set(single.keys())
         assert batch == single
 
-    def test_batch_quote_zero_close_guard(self, market_adapter, mock_http_client, mock_resolver):
+    def test_batch_quote_zero_close_guard(self, market_adapter, mock_http_client):
         """S-4: zero close in a batch entry must not divide by zero."""
         mock_http_client.post.return_value = {
             "data": {"NSE_EQ": {"1": {"last_price": 100.0, "net_change": 5.0, "ohlc": {"close": 0}}}}
@@ -389,9 +398,9 @@ class TestMarketDataAdapter:
     def test_should_make_correct_api_call_with_segment_for_market_data(self, market_adapter, mock_http_client):
         mock_http_client.post.return_value = {"data": {"NSE_EQ": {"1": {"last_price": 100}}}}
         market_adapter.get_ltp("RELIANCE", "NSE")
-        args, kwargs = mock_http_client.post.call_args
-        assert args[0] == "/marketfeed/ltp"
-        assert "NSE_EQ" in kwargs["json"]
+        mock_http_client.post.assert_called_once_with(
+            "/marketfeed/ltp", json={"NSE_EQ": [1]}
+        )
 
 
 # ===================================================================
@@ -512,23 +521,13 @@ class TestOrdersAdapter:
         with pytest.raises(OrderError, match="Order rejected by broker"):
             orders_adapter.place_order(order)
 
-    def test_should_raise_order_error_when_symbol_resolution_fails(self, orders_adapter, mock_resolver):
-        mock_resolver.resolve.side_effect = InstrumentNotFoundError("not found")
-        order = make_order()
+    def test_should_raise_order_error_when_symbol_resolution_fails(self, orders_adapter):
+        order = make_order(symbol="UNKNOWN")
         with pytest.raises(OrderError, match="Cannot resolve security_id"):
             orders_adapter.place_order(order)
 
-    def test_should_raise_order_error_when_mapper_fails_for_unsupported_exchange(self, orders_adapter, mock_http_client, mock_resolver):
-        # The DhanMapper returns Result.failure for exchanges other than NSE/MCX
-        # Exchange.MCX is supported, so we need to mock an exchange the mapper doesn't handle
-        # We use BSE which is in the Exchange enum but not in the mapper's segment map
-        inst = MagicMock()
-        inst.symbol = "RELIANCE"
-        inst.exchange = Exchange.NSE  # Resolver returns NSE
-        mock_resolver.resolve.return_value = inst
-        # But we create an order with BSE exchange (mapper doesn't support BSE)
+    def test_should_raise_order_error_when_mapper_fails_for_unsupported_exchange(self, orders_adapter, mock_http_client):
         order = make_order(exchange=Exchange.NSE)
-        # Patch the mapper to simulate a failure
         from scalpr.brokers.dhan import mapper as mapper_mod
         original = mapper_mod.DhanMapper.order_to_dhan_request
         mapper_mod.DhanMapper.order_to_dhan_request = staticmethod(
@@ -998,7 +997,7 @@ class TestHistoricalDataAdapter:
         body = kwargs["json"]
         assert body["interval"] == "15"
         assert body["instrument"] == "EQUITY"
-        assert body["securityId"] == 1
+        assert body["securityId"] == "1"
         assert body["exchangeSegment"] == "NSE_EQ"
         assert body["fromDate"] == "2024-01-15"
         assert body["toDate"] == "2024-01-15"
@@ -1020,8 +1019,7 @@ class TestHistoricalDataAdapter:
         assert body["instrument"] == "EQUITY"
         assert "interval" not in body
 
-    def test_should_use_resolver_instrument_kind_in_body(self, historical_adapter, mock_http_client, mock_resolver):
-        mock_resolver.instrument_kind_of.return_value = "INDEX"
+    def test_should_use_resolver_instrument_kind_in_body(self, historical_adapter, mock_http_client):
         mock_http_client.post.return_value = {}
         historical_adapter.get_ohlcv(
             symbol="NIFTY",
@@ -1206,11 +1204,11 @@ class TestHistoricalDataAdapter:
 
     # --- resolve segment integration ---
 
-    def test_should_resolve_segment_via_resolver(self, historical_adapter, mock_resolver):
-        historical_adapter._resolve_segment("RELIANCE", "NSE")
-        mock_resolver.resolve.assert_called_once_with("RELIANCE", "NSE")
+    def test_should_resolve_segment_via_resolver(self, historical_adapter):
+        security_id, segment = historical_adapter._resolve_segment("RELIANCE", "NSE")
+        assert security_id == "1"
+        assert segment == "NSE_EQ"
 
-    def test_should_raise_instrument_not_found_when_resolver_fails(self, historical_adapter, mock_resolver):
-        mock_resolver.resolve.side_effect = InstrumentNotFoundError("not found")
+    def test_should_raise_instrument_not_found_when_resolver_fails(self, historical_adapter):
         with pytest.raises(InstrumentNotFoundError):
             historical_adapter._resolve_segment("UNKNOWN", "NSE")

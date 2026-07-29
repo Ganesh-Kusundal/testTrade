@@ -8,7 +8,10 @@ import pytest
 from scalpr.domain.instrument import Exchange
 from scalpr.domain.order import Order, OrderSide, OrderType
 from scalpr.execution.order_router import OrderRateLimitExceeded, OrderRouter
+from scalpr.risk.circuit_breaker import CircuitBreaker
 from scalpr.risk.order_rate_limiter import OrderRateLimitConfig, OrderRateLimiter
+from scalpr.risk.pre_trade import PreTradeRiskGate
+from scalpr.simulation.simulated_gateway import SimulatedGateway
 
 
 def _make_order(order_id="ord_1"):
@@ -20,19 +23,14 @@ def _make_order(order_id="ord_1"):
 
 
 def _make_router(rate_limiter=None):
-    mock_gateway = MagicMock()
-    mock_gateway.place_order.return_value = None
-
-    mock_risk_gate = MagicMock()
-    mock_risk_gate.check_order.return_value = (True, "ok")
-
-    mock_cb = MagicMock()
-    mock_cb.check_limits.return_value = True
+    gateway = SimulatedGateway(starting_capital=Decimal("1000000"))
+    risk_gate = PreTradeRiskGate(max_capital_risk_pct=0.03)
+    cb = CircuitBreaker()
 
     return OrderRouter(
-        gateway=mock_gateway,
-        risk_gate=mock_risk_gate,
-        circuit_breaker=mock_cb,
+        gateway=gateway,
+        risk_gate=risk_gate,
+        circuit_breaker=cb,
         rate_limiter=rate_limiter,
     )
 
@@ -123,10 +121,10 @@ class TestOrderRouterRateLimiting:
         """Rate limit is checked before risk checks (fail fast)."""
         call_order = []
 
-        mock_gateway = MagicMock()
-        mock_risk_gate = MagicMock()
+        mock_gateway = MagicMock(spec=SimulatedGateway)
+        mock_risk_gate = MagicMock(spec=PreTradeRiskGate)
         mock_risk_gate.check_order.side_effect = lambda **kw: call_order.append("risk") or (True, "ok")
-        mock_cb = MagicMock()
+        mock_cb = MagicMock(spec=CircuitBreaker)
         mock_cb.check_limits.side_effect = lambda **kw: call_order.append("cb") or True
 
         config = OrderRateLimitConfig(max_orders_per_second=10.0, burst_capacity=1)
