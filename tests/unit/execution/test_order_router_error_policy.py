@@ -1,11 +1,10 @@
-"""OrderRouter must raise on persistence failure after order placed."""
+"""OrderRouter must raise on persistence failure before order placed (K-016)."""
 from decimal import Decimal
 from unittest.mock import MagicMock
 
-from scalpr.domain.fill import Fill
 from scalpr.domain.instrument import Exchange
 from scalpr.domain.order import Order, OrderSide, OrderState, OrderType
-from scalpr.execution.order_router import OrderRouter, PersistenceError
+from scalpr.execution.order_router import OrderRouter
 
 
 def _make_order():
@@ -17,10 +16,8 @@ def _make_order():
 
 
 def test_submit_order_should_raise_on_persistence_failure():
-    """If OMS persistence fails after broker order placed, must raise PersistenceError."""
+    """K-016: If OMS persistence fails, broker must never be called."""
     mock_gateway = MagicMock()
-    fill = Fill("f1", "ord_1", "RELIANCE", OrderSide.BUY, 10, Decimal("2500"))
-    mock_gateway.place_order.return_value = fill
 
     mock_risk_gate = MagicMock()
     mock_risk_gate.check_order.return_value = (True, "ok")
@@ -38,10 +35,12 @@ def test_submit_order_should_raise_on_persistence_failure():
 
     order = _make_order()
     import pytest
-    with pytest.raises(PersistenceError, match="DB write failed"):
+    with pytest.raises(Exception, match="DB write failed"):
         router.submit_order(
             order=order, positions=[],
             available_margin=Decimal("100000"),
             daily_loss=Decimal("0"),
             portfolio_value=Decimal("1000000"),
         )
+    # Broker must NOT have been called — persistence happens first
+    mock_gateway.place_order.assert_not_called()

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from scalpr.domain.order import Order, OrderSide
+from scalpr.domain.order import Order, OrderSide, OrderType
 from scalpr.domain.position import Position, PositionSide
 from scalpr.domain.values import ZERO
 
@@ -33,6 +33,7 @@ class PreTradeRiskGate:
         available_margin: Decimal,
         required_margin: Decimal,
         daily_loss: Decimal,
+        ltp: Decimal | None = None,
     ) -> tuple[bool, str]:
         """Check order. Returns (allowed: bool, reason: str)."""
         if self.halted:
@@ -49,24 +50,39 @@ class PreTradeRiskGate:
                 or (existing_pos.position_side == PositionSide.SHORT and order.side == OrderSide.BUY)
             )
 
-        # If reducing, bypass some checks (we should always allow position reduction for safety)
-        if is_reducing:
-            return True, "Allowed: Order reduces existing exposure"
-
-        # 1. Daily loss limit not breached (e.g. daily loss max 3%)
+        # 1. Daily loss limit not breached (e.g. daily loss max 3%) — ALWAYS checked
         if daily_loss > self.portfolio_value * Decimal("0.03"):
             return False, "Daily loss limit breached"
+
+        # K-017: Reducing orders bypass concentration only — still check margin and quantity
+        if is_reducing:
+            # Validate quantity does not exceed existing position (prevents reversal)
+            if abs(order.quantity) > abs(existing_pos.quantity):
+                return False, (
+                    f"Order quantity ({order.quantity}) exceeds position ({existing_pos.quantity}) "
+                    f"— position reversal not permitted through reducing bypass"
+                )
+            # Margin check still applies (regulatory requirement)
+            if available_margin < required_margin * self.margin_buffer_factor:
+                return False, f"Insufficient margin: Available {available_margin} < Required {required_margin * self.margin_buffer_factor}"
+            return True, "Allowed: Order reduces existing exposure"
 
         # 2. Max open positions check
         active_positions_count = len(pos_map)
         if active_positions_count >= self.max_open_positions:
             return False, f"Max open positions ({self.max_open_positions}) reached"
 
-        # 3. Capital at risk per trade <= 1%
-        order_notional = order.price * Decimal(order.quantity) if order.price > 0 else Decimal(order.quantity) * Decimal("2500.00")
-        # Let's say risk = 1% of portfolio for simplicity if SL distance is not given, or if risk is calculated
+        # 3. Order notional limit per trade <= 1% of portfolio
+        # K-020: Use order.price for LIMIT, LTP for MARKET (no magic numbers)
+        if order.order_type == OrderType.MARKET:
+            if ltp is None or ltp <= 0:
+                return False, "MARKET order requires LTP for notional calculation"
+            effective_price = ltp
+        else:
+            effective_price = order.price
+        order_notional = effective_price * Decimal(order.quantity)
         if order_notional > self.portfolio_value * self.max_capital_risk:
-            return False, f"Order notional ({order_notional}) exceeds max capital risk per trade ({self.portfolio_value * self.max_capital_risk})"
+            return False, f"Order notional ({order_notional}) exceeds max notional limit per trade ({self.portfolio_value * self.max_capital_risk})"
 
         # 4. Instrument concentration <= 20% of portfolio
         current_notional = ZERO

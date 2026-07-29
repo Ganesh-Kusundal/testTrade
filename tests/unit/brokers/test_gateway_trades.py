@@ -8,7 +8,7 @@ from decimal import Decimal
 from unittest.mock import create_autospec
 
 from scalpr.brokers.broker_port import IBrokerGateway
-from scalpr.brokers.dhan.gateway import DhanGateway
+from scalpr.brokers.dhan.mapper import DhanMapper
 from scalpr.brokers.gateway import Gateway
 from scalpr.domain.fill import Fill
 from scalpr.domain.order import OrderSide
@@ -70,7 +70,7 @@ def test_map_raw_trade_populates_exchange_from_segment() -> None:
         "trade_date": "2025-01-15T10:30:00",
         "exchange_segment": "NSE_EQ",
     }
-    fill = DhanGateway._map_raw_trade_to_fill(raw)
+    fill = DhanMapper.raw_trade_to_fill(raw)
     assert fill.exchange == "NSE"
 
 
@@ -83,5 +83,5 @@ def test_map_raw_trade_missing_segment_yields_empty_exchange() -> None:
         "quantity": 5,
         "price": Decimal("4000"),
     }
-    fill = DhanGateway._map_raw_trade_to_fill(raw)
+    fill = DhanMapper.raw_trade_to_fill(raw)
     assert fill.exchange == ""

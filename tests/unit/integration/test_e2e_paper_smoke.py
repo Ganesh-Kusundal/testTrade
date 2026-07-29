@@ -1,15 +1,15 @@
 """E2E paper smoke: proves the chain tick → strategy → risk → OMS → broker exists.
 
-Everything real except the broker port (autospec'd) and the signal gate
-(forced open). No network, runs in the normal suite.
+Uses a real SimulatedGateway (not an autospec mock) as the broker port,
+so fills, positions, and margins come from the actual paper-trading path.
+The signal gate is still forced open — this test proves wiring, not alpha.
+No network, runs in the normal suite.
 """
 import asyncio
 from datetime import datetime, timezone
 from decimal import Decimal
-from unittest.mock import create_autospec
 
-from scalpr.brokers.broker_port import IBrokerGateway
-from scalpr.domain.fill import Fill
+from scalpr.domain.clock import SimulatedClock
 from scalpr.domain.order import OrderSide
 from scalpr.domain.tick import Tick
 from scalpr.execution.order_router import OrderRouter
@@ -17,29 +17,21 @@ from scalpr.oms.order_manager import OrderManager
 from scalpr.risk.circuit_breaker import CircuitBreaker
 from scalpr.risk.pre_trade import PreTradeRiskGate
 from scalpr.signals.gate_fsm import GateFSM
+from scalpr.simulation.simulated_gateway import SimulatedGateway
 from scalpr.strategy.executor import StrategyExecutor
 from scalpr.strategy.scalpr_amt import ScalprAmtStrategy
 
+T0 = datetime(2026, 1, 5, 9, 15, tzinfo=timezone.utc)
+
 
 def test_tick_to_broker_paper_smoke(monkeypatch):
-    # Broker port is the only fake: returns a valid Fill for the order the
-    # strategy will generate (amt_RELIANCE_1)
-    gateway = create_autospec(IBrokerGateway, instance=True)
-    gateway.get_positions.return_value = []
-    gateway.get_margins.return_value = {
-        "available_margin": Decimal("500000"),
-        "total_balance": Decimal("1000000"),
-    }
-    gateway.place_order.return_value = Fill(
-        fill_id="f1",
-        order_id="amt_RELIANCE_1",
-        symbol="RELIANCE",
-        side=OrderSide.BUY,
-        quantity=50,
-        price=Decimal("100"),
-        timestamp=datetime.now(timezone.utc),
-        exchange="NSE",
+    # Real SimulatedGateway — fills, positions, and margins are live
+    gateway = SimulatedGateway(
+        starting_capital=Decimal("1000000"),
+        clock=SimulatedClock(T0),
     )
+    gateway.connect()
+    gateway.set_ltp("RELIANCE", Decimal("100"))
 
     # Force a signal — this test proves the wiring, not the alpha
     monkeypatch.setattr(GateFSM, "evaluate", staticmethod(lambda state: (True, "test", {})))
@@ -63,11 +55,22 @@ def test_tick_to_broker_paper_smoke(monkeypatch):
 
     asyncio.run(executor.on_tick(tick))
 
-    gateway.place_order.assert_called_once()
-    placed = gateway.place_order.call_args.args[0]
-    assert placed.symbol == "RELIANCE"
-    assert placed.order_id == "amt_RELIANCE_1"
+    # SimulatedGateway produced a real fill
+    tradebook = gateway.get_tradebook()
+    assert len(tradebook) == 1
+    fill = tradebook[0]
+    assert fill.order_id == "amt_RELIANCE_1"
+    assert fill.symbol == "RELIANCE"
+    assert fill.side == OrderSide.BUY
+    assert fill.quantity == 100
 
     # OMS persisted the order and its fill
     assert "amt_RELIANCE_1" in order_manager.orders
     assert len(order_manager.fills["amt_RELIANCE_1"]) == 1
+
+    # Position and margins are real (not mocked)
+    positions = gateway.get_positions()
+    assert len(positions) == 1
+    assert positions[0].symbol == "RELIANCE"
+    margins = gateway.get_margins()
+    assert margins.total_balance > Decimal("0")

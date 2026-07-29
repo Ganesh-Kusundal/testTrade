@@ -145,7 +145,7 @@ def test_pre_trade_risk_gate():
     )
     allowed, reason = gate.check_order(order_too_large, [], Decimal("100000"), Decimal("0"), Decimal("0"))
     assert not allowed
-    assert "exceeds max capital risk" in reason
+    assert "exceeds max notional limit" in reason
 
     # Order passing pre-trade risk
     order_ok = Order(

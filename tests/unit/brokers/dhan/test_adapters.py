@@ -542,14 +542,14 @@ class TestOrdersAdapter:
 
     # --- validation ---
 
-    def test_should_raise_error_for_zero_quantity(self, orders_adapter):
-        order = make_order(quantity=0)
-        with pytest.raises(OrderError, match="Invalid quantity"):
-            orders_adapter.place_order(order)
+    def test_should_raise_error_for_zero_quantity(self):
+        """Order domain rejects zero quantity at construction (K-018)."""
+        with pytest.raises(ValueError, match="quantity must be positive"):
+            make_order(quantity=0)
 
     def test_should_not_construct_order_with_negative_quantity(self):
         """Order domain object prevents negative quantity at construction."""
-        with pytest.raises(ValueError, match="quantity must be non-negative"):
+        with pytest.raises(ValueError, match="quantity must be positive"):
             make_order(quantity=-5)
 
     def test_should_not_construct_limit_order_with_zero_price(self):

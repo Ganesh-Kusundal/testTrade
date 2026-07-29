@@ -628,6 +628,27 @@ class DhanWebSocketManager(IMarketDataFeed):
         logger.info("Restored %d persisted subscriptions", len(subscriptions))
 
     # ------------------------------------------------------------------
+    # Token change handler (broadcast receiver)
+    # ------------------------------------------------------------------
+
+    def _handle_token_change(self, new_token: str) -> None:
+        """Called by TokenBroadcast when a fresh token is minted.
+
+        Closes the existing WS client so the next reconnect picks up
+        the new token. Thread-safe: may be called from any thread.
+        """
+        logger.info("ws_token_change: closing existing WS for token refresh")
+        self._access_token = new_token
+        if self._ws_client is not None:
+            try:
+                loop = asyncio.get_running_loop()
+                # Hold a reference so the task isn't GC'd mid-disconnect
+                self._token_change_disconnect_task = loop.create_task(self._ws_client.disconnect())
+            except RuntimeError:
+                pass
+            self._ws_client = None
+
+    # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 

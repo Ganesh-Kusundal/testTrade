@@ -12,12 +12,14 @@ def test_mapper_should_handle_nse_fno_exchange_segment():
     """NSE F&O orders must map to exchangeSegment NSE_FNO."""
     order = Order(
         order_id="fno_ord_1", symbol="NIFTY26JUN22000CE",
-        exchange=Exchange.NSE_FNO, side=OrderSide.BUY,
+        exchange=Exchange.NSE, side=OrderSide.BUY,
         order_type=OrderType.LIMIT, quantity=50,
         price=Decimal("150.00"), state=OrderState.PENDING,
         product_type="INTRADAY",
     )
-    result = DhanMapper.order_to_dhan_request(order, "client123", "security456")
+    result = DhanMapper.order_to_dhan_request(
+        order, "client123", "security456", exchange_segment="NSE_FNO"
+    )
     assert result.is_ok
     assert result.value.exchangeSegment == "NSE_FNO"
 
@@ -52,7 +54,6 @@ def test_mapper_should_still_handle_mcx():
 # the pre-consolidation if/elif chain produced.
 @pytest.mark.parametrize("exchange,expected_segment", [
     (Exchange.NSE, "NSE_EQ"),
-    (Exchange.NSE_FNO, "NSE_FNO"),
     (Exchange.MCX, "MCX_COMM"),
     (Exchange.BSE, "BSE_EQ"),
 ])

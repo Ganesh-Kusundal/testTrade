@@ -14,18 +14,16 @@ a system that is slow and right." — delegation over duplication.
 
 from __future__ import annotations
 
-import contextlib
 import logging
-from datetime import date, datetime
+from datetime import date
 from decimal import Decimal
 from typing import Any
 
 from scalpr.brokers.broker_port import IBrokerGateway
 from scalpr.brokers.dhan.connection import DhanConnection
 from scalpr.brokers.dhan.exceptions import BrokerError
-from scalpr.brokers.dhan.resolution import SEGMENT_TO_EXCHANGE
+from scalpr.brokers.dhan.mapper import DhanMapper
 from scalpr.domain.fill import Fill
-from scalpr.domain.instrument import Exchange
 from scalpr.domain.order import Order, OrderSide, OrderState, OrderType
 from scalpr.domain.position import Position
 from scalpr.domain.values import ZERO
@@ -202,7 +200,7 @@ class DhanGateway(IBrokerGateway):
 
         for entry in orderbook:
             if entry.get("order_id") == order_id:
-                return self._map_raw_order_to_order(entry)
+                return DhanMapper.raw_order_to_order(entry)
 
         raise BrokerError(f"Order not found in orderbook: order_id={order_id}")
 
@@ -216,7 +214,7 @@ class DhanGateway(IBrokerGateway):
             BrokerError: If orderbook fetch fails.
         """
         raw_orders = self._connection.orders.get_orderbook()
-        return [self._map_raw_order_to_order(raw) for raw in raw_orders]
+        return [DhanMapper.raw_order_to_order(raw) for raw in raw_orders]
 
     def get_tradebook(self) -> list[Fill]:
         """Fetch the day's tradebook (execution fills) from Dhan.
@@ -228,7 +226,7 @@ class DhanGateway(IBrokerGateway):
             BrokerError: If tradebook fetch fails.
         """
         raw_trades = self._connection.orders.get_tradebook()
-        return [self._map_raw_trade_to_fill(raw) for raw in raw_trades]
+        return [DhanMapper.raw_trade_to_fill(raw) for raw in raw_trades]
 
     # ------------------------------------------------------------------
     # IBrokerGateway — Portfolio
@@ -378,109 +376,6 @@ class DhanGateway(IBrokerGateway):
 
         logger.info("square_off_all_complete: %s positions closed", len(fills))
         return fills
-
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _map_raw_order_to_order(raw: dict[str, Any]) -> Order:
-        """Map a raw orderbook entry to a SCALPR Order domain object.
-
-        Args:
-            raw: Dict from OrdersAdapter.get_orderbook().
-
-        Returns:
-            Order domain object.
-        """
-        # Map order status string to OrderState
-        status_str = raw.get("status", "").upper()
-        state_map: dict[str, OrderState] = {
-            "PENDING": OrderState.PENDING,
-            "OPEN": OrderState.OPEN,
-            "PARTIALLY FILLED": OrderState.PARTIALLY_FILLED,
-            "FILLED": OrderState.FILLED,
-            "CANCELLED": OrderState.CANCELLED,
-            "REJECTED": OrderState.REJECTED,
-            "EXPIRED": OrderState.EXPIRED,
-            "TRIGGER PENDING": OrderState.PENDING,
-        }
-        state = state_map.get(status_str, OrderState.PENDING)
-
-        # Map side string to OrderSide
-        side_str = raw.get("side", "").upper()
-        side = OrderSide.BUY if side_str == "BUY" else OrderSide.SELL
-
-        # Map order type string to OrderType
-        type_str = raw.get("order_type", "").upper()
-        type_map: dict[str, OrderType] = {
-            "LIMIT": OrderType.LIMIT,
-            "MARKET": OrderType.MARKET,
-            "SL": OrderType.STOP_LOSS,
-            "SL-M": OrderType.STOP_LOSS_MARKET,
-            "STOPLIMIT": OrderType.STOP_LOSS,
-            "STOPMARKET": OrderType.STOP_LOSS_MARKET,
-            "STOP LOSS": OrderType.STOP_LOSS,
-            "STOP LOSS MARKET": OrderType.STOP_LOSS_MARKET,
-        }
-        order_type = type_map.get(type_str, OrderType.LIMIT)
-
-        # Map exchange segment to Exchange
-        exchange_segment = raw.get("exchange_segment", "NSE_EQ")
-        exchange_segment_upper = exchange_segment.upper()
-        exchange = Exchange.NSE  # Default
-        if "MCX" in exchange_segment_upper:
-            exchange = Exchange.MCX
-        elif "BSE" in exchange_segment_upper:
-            exchange = Exchange.BSE
-
-        return Order(
-            order_id=raw.get("order_id", ""),
-            symbol=raw.get("symbol", ""),
-            exchange=exchange,
-            side=side,
-            order_type=order_type,
-            quantity=raw.get("quantity", 0),
-            price=raw.get("price", ZERO),
-            trigger_price=raw.get("trigger_price", ZERO),
-            state=state,
-            filled_quantity=raw.get("filled_quantity", 0),
-            avg_price=raw.get("traded_price", ZERO),
-            product_type=raw.get("product_type", "INTRADAY"),
-            validity=raw.get("validity", "DAY"),
-            reject_reason=raw.get("reject_reason", ""),
-            correlation_id=raw.get("correlation_id"),
-        )
-
-    @staticmethod
-    def _map_raw_trade_to_fill(raw: dict[str, Any]) -> Fill:
-        """Map a raw tradebook entry to a SCALPR Fill domain object.
-
-        Args:
-            raw: Dict from OrdersAdapter.get_tradebook().
-
-        Returns:
-            Fill domain object.
-        """
-        side_str = raw.get("side", "").upper()
-        side = OrderSide.BUY if side_str == "BUY" else OrderSide.SELL
-
-        trade_date_str = raw.get("trade_date", "")
-        timestamp = None
-        if trade_date_str:
-            with contextlib.suppress(ValueError, TypeError):
-                timestamp = datetime.fromisoformat(trade_date_str)
-
-        return Fill(
-            fill_id=raw.get("trade_id", ""),
-            order_id=raw.get("order_id", ""),
-            symbol=raw.get("symbol", ""),
-            side=side,
-            quantity=raw.get("quantity", 0),
-            price=raw.get("price", ZERO),
-            timestamp=timestamp,
-            exchange=SEGMENT_TO_EXCHANGE.get(raw.get("exchange_segment", ""), ""),
-        )
 
     # ------------------------------------------------------------------
     # Properties for direct adapter access (when needed)

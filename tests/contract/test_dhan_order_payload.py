@@ -70,12 +70,13 @@ class TestDhanOrderPayloadContract:
 
     def test_nse_fno_exchange_segment(self):
         order = Order(
-            order_id="t4", symbol="NIFTY26JUN22000CE", exchange=Exchange.NSE_FNO,
+            order_id="t4", symbol="NIFTY26JUN22000CE", exchange=Exchange.NSE,
             side=OrderSide.BUY, order_type=OrderType.LIMIT,
             quantity=50, price=Decimal("150"), state=OrderState.PENDING,
         )
-        dto = self._map(order)
-        assert dto.exchangeSegment == "NSE_FNO"
+        result = DhanMapper.order_to_dhan_request(order, "CLIENT_ID", "12345", exchange_segment="NSE_FNO")
+        assert result.is_ok
+        assert result.value.exchangeSegment == "NSE_FNO"
 
     def test_mcx_comm_exchange_segment(self):
         order = Order(

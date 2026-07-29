@@ -4,6 +4,8 @@ No side effects at import time. All initialization happens in create_app().
 Trading wiring (strategies, feed, OMS) is gated behind SCALPR_TRADING_ENABLED=1
 + SCALPR_WATCHLIST so plain API boots remain unchanged.
 """
+from __future__ import annotations
+
 import asyncio
 import logging
 import os
@@ -11,7 +13,11 @@ from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from scalpr.execution.order_router import OrderRouter
+    from scalpr.strategy.executor import StrategyExecutor
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -44,8 +50,8 @@ def _create_gateway() -> tuple[Any, str | None]:
 @dataclass
 class AppContext:
     """The wired trading object graph."""
-    order_router: object
-    executor: object
+    order_router: OrderRouter | None
+    executor: StrategyExecutor | None
 
 
 def wire(
@@ -120,7 +126,7 @@ async def _start_trading(app: FastAPI) -> None:
 
     ctx = wire(gateway, watchlist)
 
-    from scalpr.brokers.dhan.auth import ensure_fresh_token
+    from scalpr.brokers.dhan.auth import ensure_fresh_token, get_broadcast
 
     feed = DhanWebSocketManager(
         access_token=os.environ.get("DHAN_ACCESS_TOKEN", ""),
@@ -129,6 +135,10 @@ async def _start_trading(app: FastAPI) -> None:
         # Reconnects after token expiry (DH-906) force TOTP regeneration
         token_refresh_fn=lambda: ensure_fresh_token(force=True),
     )
+
+    # Register WS as a broadcast receiver — when the token changes,
+    # the WS closes its existing connection and reconnects with the fresh token
+    get_broadcast().register(feed._handle_token_change)
     await feed.start()
     await feed.subscribe_pairs([(s, "NSE") for s in watchlist])
 
@@ -243,6 +253,10 @@ def create_app() -> FastAPI:
     app.include_router(orders.router)
     app.include_router(portfolio.router)
     app.include_router(replay.router)
+
+    # Register exception handlers for structured error responses
+    from scalpr.api.error_handler import register_exception_handlers
+    register_exception_handlers(app)
 
     # JWT auth middleware — only when SCALPR_JWT_SECRET is set (Bloomberg plan Module 10).
     # Health probes stay exempt via EXEMPT_PATHS in scalpr.api.auth.

@@ -69,7 +69,9 @@ class TestRateLimitExceeded:
 
     def test_message_preserved(self):
         err = RateLimitExceeded("Custom message")
-        assert str(err) == "Custom message"
+        assert err.message == "Custom message"
+        # str() now includes correlation_id for user-friendly output
+        assert "Custom message" in str(err)
 
 
 class TestProviderErrorInfo:

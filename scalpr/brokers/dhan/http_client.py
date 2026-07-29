@@ -17,13 +17,13 @@ from config.endpoints import Dhan
 from scalpr.brokers.dhan._http_common import (
     _MAX_RETRIES,
     _ORDERS_ACQUIRE_TIMEOUT_S,
-    _REFRESH_COOLDOWN_SECONDS,
     backoff_delay,
     bucket_for,
     build_url,
     classify_response,
     try_refresh_token,
 )
+from scalpr.brokers.dhan.auth import is_expiring_soon
 from scalpr.brokers.dhan.exceptions import (
     AuthenticationError,
     BrokerError,
@@ -121,7 +121,6 @@ class DhanHttpClient:
             "access-token": access_token,
         })
         self._limiter: MultiBucketRateLimiter = limiter or limiter_from_table(DHAN_RATE_LIMITS)
-        self._last_refresh_time: float = 0.0
 
     def update_token(self, access_token: str) -> None:
         """Update access token in session headers."""
@@ -153,16 +152,21 @@ class DhanHttpClient:
         """Resolve endpoint to rate-limit bucket name via prefix match."""
         return bucket_for(endpoint)
 
-    def _try_refresh_token(self) -> bool:
-        """Attempt token refresh. Returns True if successful."""
-        success, self._last_refresh_time = try_refresh_token(
-            self._last_refresh_time,
-            _REFRESH_COOLDOWN_SECONDS,
+    def _try_refresh_token(self, force: bool = False) -> bool:
+        """Attempt token refresh. Returns True if successful.
+
+        When ``force`` is True (e.g. after a 401), the ``is_expiring_soon``
+        guard is bypassed — a broker rejection means the token is invalid
+        regardless of its JWT expiry.
+
+        Cooldown is enforced by the TOTP cooldown guard (single source of truth).
+        """
+        return try_refresh_token(
             self._token_refresh_fn,
             self.update_token,
             self.client_id,
+            is_expiring_soon_fn=None if force else lambda: is_expiring_soon(self.access_token),
         )
-        return success
 
     def _request(self, method: str, endpoint: str, json: dict[str, Any] | None = None) -> dict[str, Any]:
         """Execute HTTP request with retry, rate limiting, and circuit breaker."""
@@ -209,7 +213,10 @@ class DhanHttpClient:
             category = classify_response(resp.status_code, resp.text or "")
 
             if category == "auth_rejected":
-                if attempt == 1 and self._try_refresh_token():
+                # 401 = token rejected by broker. Force refresh regardless of
+                # JWT expiry — a broker rejection means the token is invalid
+                # even if it hasn't expired locally.
+                if attempt == 1 and self._try_refresh_token(force=True):
                     logger.info("http_retry_after_refresh", extra={"method": method, "endpoint": endpoint})
                     continue
                 raise AuthenticationError(

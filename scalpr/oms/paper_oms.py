@@ -22,7 +22,13 @@ class PaperOms(IBrokerGateway):
         default_tick_size: Decimal = Decimal("0.05"),
         slippage_ticks: int = 1,
         event_bus: IEventBus | None = None,
+        config: dict[str, Any] | None = None,
     ) -> None:
+        # Accept config dict for BrokerRegistry compatibility (K-004)
+        if config is not None:
+            initial_balance = config.get("initial_balance", initial_balance)
+            default_tick_size = config.get("default_tick_size", default_tick_size)
+            slippage_ticks = config.get("slippage_ticks", slippage_ticks)
         self.balance = initial_balance
         self.peak_balance = initial_balance
         self.positions_dict: dict[str, Position] = {}

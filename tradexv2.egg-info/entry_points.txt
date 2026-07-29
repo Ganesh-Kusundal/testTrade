@@ -1,2 +1,7 @@
 [console_scripts]
 tradex = scalpr.cli.main:main
+
+[tradex.brokers]
+dhan = scalpr.brokers.dhan.gateway:DhanGateway
+paper = scalpr.oms.paper_oms:PaperOms
+simulated = scalpr.simulation.simulated_gateway:SimulatedGateway

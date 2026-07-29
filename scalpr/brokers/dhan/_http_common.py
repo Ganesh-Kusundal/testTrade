@@ -7,7 +7,6 @@ Both clients import from here instead of duplicating the logic.
 from __future__ import annotations
 
 import logging
-import time
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -34,7 +33,9 @@ _DEFAULT_BUCKET = "admin"
 _MAX_RETRIES = 3
 _BASE_DELAY_MS = 500
 _MAX_DELAY_MS = 5000
-_REFRESH_COOLDOWN_SECONDS = 60
+# Cooldown is now owned by _totp_cooldown.py (single source of truth).
+# The HTTP client no longer has its own refresh cooldown — it delegates
+# to ensure_fresh_token which checks the TOTP cooldown guard.
 
 # Fail-fast timeout for the orders bucket — order path must never block.
 _ORDERS_ACQUIRE_TIMEOUT_S = 0.5
@@ -57,35 +58,39 @@ def backoff_delay(attempt: int) -> float:
 
 
 def try_refresh_token(
-    last_refresh_time: float,
-    refresh_cooldown: float,
     token_refresh_fn: Any,
     update_token_fn: Any,
     client_id: str,
-) -> tuple[bool, float]:
-    """Attempt token refresh. Returns (success, new_last_refresh_time).
+    is_expiring_soon_fn: Any = None,
+) -> bool:
+    """Attempt token refresh. Returns True if successful.
 
-    Stateless helper used by both sync and async clients.
+    Cooldown is enforced by the TOTP cooldown guard (single source of truth).
+    This helper no longer has its own cooldown layer.
+
+    Args:
+        is_expiring_soon_fn: Optional callable returning True when the
+            current token is near expiry. When provided and returns False,
+            the refresh is skipped — a 401 on a fresh token is likely
+            a scope/entitlement error, not staleness.
     """
-    now = time.time()
-
-    if now - last_refresh_time < refresh_cooldown:
-        logger.debug("token_refresh_skipped: cooldown_active")
-        return False, last_refresh_time
-
     if token_refresh_fn is None:
-        return False, last_refresh_time
+        return False
+
+    if is_expiring_soon_fn is not None and not is_expiring_soon_fn():
+        logger.info("token_refresh_skipped: token_is_fresh_not_expiring_soon")
+        return False
 
     try:
         new_token = token_refresh_fn()
         if new_token:
             update_token_fn(new_token)
             logger.info("token_refreshed", extra={"client_id": client_id})
-            return True, now
+            return True
     except Exception as exc:
         logger.warning("token_refresh_failed", extra={"error": str(exc)})
 
-    return False, last_refresh_time
+    return False
 
 
 def build_url(base_url: str, endpoint: str) -> str:

@@ -19,6 +19,8 @@ import pyotp
 import requests
 
 from config.secrets_manager import SecretsManager
+from scalpr.brokers.dhan._token_lifecycle import TokenBroadcast
+from scalpr.brokers.dhan._totp_cooldown import TotpCooldownGuard, TotpRateLimitError
 from scalpr.brokers.dhan.exceptions import AuthenticationError, ConfigurationError
 from scalpr.domain.values import DEFAULT_TIMEOUT_S
 
@@ -26,6 +28,13 @@ logger = logging.getLogger(__name__)
 
 TOKEN_URL = "https://auth.dhan.co/app/generateAccessToken"  # noqa: S105 — endpoint URL, not a secret
 EXPIRY_BUFFER = timedelta(minutes=15)
+
+_broadcast = TokenBroadcast()
+
+
+def get_broadcast() -> TokenBroadcast:
+    """Access the module-level token broadcast for registering receivers."""
+    return _broadcast
 
 
 def token_expiry(token: str) -> datetime | None:
@@ -45,8 +54,25 @@ def is_token_fresh(token: str, buffer: timedelta = EXPIRY_BUFFER) -> bool:
     return expiry is not None and expiry > datetime.now() + buffer
 
 
+def is_expiring_soon(token: str, buffer: timedelta = EXPIRY_BUFFER) -> bool:
+    """True if the token will expire within the buffer window.
+
+    Used by the smart 401 guard: a 401 on a token that is NOT near expiry
+    is a scope/entitlement error, not staleness — skip TOTP remint.
+    """
+    expiry = token_expiry(token)
+    return expiry is None or expiry <= datetime.now() + buffer
+
+
 def generate_token(client_id: str, pin: str, totp_secret: str) -> str:
-    """Generate a fresh access token via Dhan's TOTP login flow."""
+    """Generate a fresh access token via Dhan's TOTP login flow.
+
+    Enforces local cooldown (120s) to avoid burning Dhan's rate limit.
+    """
+    cooldown = TotpCooldownGuard.for_broker("dhan")
+    cooldown.check_allowed()
+
+    cooldown.record_attempt()
     totp_code = pyotp.TOTP(totp_secret).now()
     resp = requests.post(
         TOKEN_URL,
@@ -58,9 +84,20 @@ def generate_token(client_id: str, pin: str, totp_secret: str) -> str:
             f"Dhan token generation failed: HTTP {resp.status_code}: {resp.text}"
         )
     body = resp.json()
+
+    message = str(body.get("message", ""))
+    if "once every 2 minutes" in message:
+        cooldown.record_rate_limited()
+        raise TotpRateLimitError(
+            f"Dhan TOTP rate limit: {message}",
+            remaining_seconds=cooldown.remaining_cooldown_seconds() or 120.0,
+        )
+
     access_token: str = body.get("accessToken", "")
     if not access_token:
         raise AuthenticationError(f"Dhan token missing in response: {body}")
+
+    cooldown.record_success()
     logger.info(
         "dhan_token_generated: client=%s expires=%s",
         body.get("dhanClientUcc"),
@@ -97,6 +134,7 @@ def persist_token(access_token: str, env_path: Path) -> None:
         os.unlink(tmp_path)
         raise
     os.environ["DHAN_ACCESS_TOKEN"] = access_token
+    _broadcast.broadcast(access_token)
 
 
 def ensure_fresh_token(env_path: Path | None = None, force: bool = False) -> str:
@@ -105,6 +143,14 @@ def ensure_fresh_token(env_path: Path | None = None, force: bool = False) -> str
     Cache hit (token in env/.env still fresh) returns immediately with no
     network I/O. On miss, regenerates through the TOTP flow and persists
     the new token to ``.env`` and ``os.environ``.
+
+    Contract:
+    - Returns a valid token on success.
+    - Raises ``AuthenticationError`` if credentials are missing or the
+      Dhan API rejects the token.
+    - Raises ``TotpRateLimitError`` if TOTP generation is blocked by
+      cooldown — callers can inspect ``remaining_seconds`` to decide
+      whether to wait and retry.
 
     Args:
         env_path: Location of the ``.env`` token cache (default: ./.env).
@@ -129,6 +175,13 @@ def ensure_fresh_token(env_path: Path | None = None, force: bool = False) -> str
         )
 
     logger.info("dhan_token_stale: regenerating via TOTP flow")
-    access_token = generate_token(client_id, pin, totp_secret)  # type: ignore[arg-type]
+    try:
+        access_token = generate_token(client_id, pin, totp_secret)  # type: ignore[arg-type]
+    except TotpRateLimitError:
+        # Propagate — callers with cooldown-aware retry (e.g.
+        # _verify_connection) can sleep for remaining_seconds.
+        raise
+    except Exception as exc:
+        raise AuthenticationError(f"Token generation failed: {exc}") from exc
     persist_token(access_token, env_path)
     return access_token

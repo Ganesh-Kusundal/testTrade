@@ -178,7 +178,6 @@ class TestWireSegmentFor:
         assert wire_segment_for(Exchange.MCX, Segment.FUTURES) == "MCX_COMM"
         assert wire_segment_for(Exchange.NSE, Segment.OPTIONS) == "NSE_FNO"
         assert wire_segment_for(Exchange.BSE, Segment.FUTURES) == "BSE_FNO"
-        assert wire_segment_for(Exchange.NSE_FNO, Segment.OPTIONS) == "NSE_FNO"
 
 
 # ── resolver integration: the live regression ───────────────────────────

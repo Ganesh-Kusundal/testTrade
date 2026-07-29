@@ -26,9 +26,27 @@ class ScalprAmtStrategy(IStrategy):
         self.cvd_tracker = CvdTracker()
         self._trade_count = 0
 
+        # Load quantities from env, with safe defaults
+        import os
+
+        self._ask_qty = int(os.environ.get("SCALPR_AMT_ASK_QTY", "100"))
+        self._bid_qty = int(os.environ.get("SCALPR_AMT_BID_QTY", "90"))
+        self._max_trades_per_day = int(os.environ.get("SCALPR_AMT_MAX_TRADES", "10"))
+
+        # Validate bounds
+        if self._ask_qty <= 0 or self._bid_qty <= 0:
+            raise ValueError("SCALPR_AMT_ASK_QTY and SCALPR_AMT_BID_QTY must be positive")
+        if self._ask_qty > 1000 or self._bid_qty > 1000:
+            raise ValueError("SCALPR_AMT_ASK_QTY and SCALPR_AMT_BID_QTY must be <= 1000")
+
     def get_status(self) -> dict[str, Any]:
         """Return strategy status for observability endpoint."""
-        return {"trade_count": self._trade_count, "max_trades_per_day": 10}
+        return {
+            "trade_count": self._trade_count,
+            "max_trades_per_day": self._max_trades_per_day,
+            "ask_qty": self._ask_qty,
+            "bid_qty": self._bid_qty,
+        }
 
     def on_tick(self, tick: Tick) -> None:
         """Process live tick, feed CVD, evaluate Gate FSM, and trigger buy/sell orders."""
@@ -36,9 +54,7 @@ class ScalprAmtStrategy(IStrategy):
             return
 
         # 1. Update CVD (Simulate bid/ask depths for calculation)
-        ask_qty = 100
-        bid_qty = 90  # Positive delta buy pressure
-        self.cvd_tracker.process_tick(tick, ask_qty, bid_qty)
+        self.cvd_tracker.process_tick(tick, self._ask_qty, self._bid_qty)
 
         # 2. Evaluate FSM State
         is_lvn = self.volume_profile.is_lvn(tick.ltp)
@@ -69,7 +85,7 @@ class ScalprAmtStrategy(IStrategy):
                     exchange=Exchange.NSE,
                     side=OrderSide.BUY,
                     order_type=OrderType.MARKET,
-                    quantity=50,  # 1 lot size
+                    quantity=self._ask_qty,
                     price=tick.ltp,
                     state=OrderState.PENDING,
                 )
@@ -78,8 +94,8 @@ class ScalprAmtStrategy(IStrategy):
                 # Submit through OrderRouter (enforces risk checks)
                 try:
                     margins = self.order_router.gateway.get_margins()
-                    available_margin = margins.get("available_margin") or ZERO
-                    portfolio_value = margins.get("total_balance") or ZERO
+                    available_margin = margins.available_margin
+                    portfolio_value = margins.total_balance
                     if portfolio_value <= 0:
                         # Fail-closed: no trade without real risk data
                         logger.error("risk_inputs_unavailable — order blocked")
@@ -95,6 +111,7 @@ class ScalprAmtStrategy(IStrategy):
                         available_margin=available_margin,
                         daily_loss=daily_loss,
                         portfolio_value=portfolio_value,
+                        ltp=tick.ltp,  # K-020: LTP for MARKET order notional
                     )
                     logger.info("AMT Strategy: Order %s submitted successfully", order.order_id)
                 except Exception as exc:

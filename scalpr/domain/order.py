@@ -99,8 +99,8 @@ class Order:
             raise TypeError("quantity must be an integer")
         if not isinstance(self.filled_quantity, int):
             raise TypeError("filled_quantity must be an integer")
-        if self.quantity < 0:
-            raise ValueError("quantity must be non-negative")
+        if self.quantity <= 0:
+            raise ValueError("quantity must be positive")
         if self.filled_quantity < 0:
             raise ValueError("filled_quantity must be non-negative")
         if self.filled_quantity > self.quantity:

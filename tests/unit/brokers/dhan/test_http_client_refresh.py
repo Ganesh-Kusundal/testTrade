@@ -89,3 +89,50 @@ def test_dh906_after_refresh_raises_authentication_error():
     with pytest.raises(AuthenticationError, match="DH-906"):
         client.get("/positions")
     refresh_fn.assert_called_once()
+
+
+def _make_jwt(exp_epoch: int) -> str:
+    import base64
+    import json
+    header = base64.urlsafe_b64encode(b'{"alg":"HS512"}').rstrip(b"=").decode()
+    payload = base64.urlsafe_b64encode(
+        json.dumps({"exp": exp_epoch}).encode()
+    ).rstrip(b"=").decode()
+    return f"{header}.{payload}.sig"
+
+
+def test_401_with_fresh_token_forces_refresh():
+    """401 = broker rejection; force refresh regardless of JWT freshness."""
+    import time
+    fresh_token = _make_jwt(int(time.time()) + 3600)
+
+    session = MagicMock()
+    session.headers = {}
+    session.request.side_effect = [_resp(401), _resp(200, {"ok": True})]
+    refresh_fn = MagicMock(return_value="new-token")
+
+    client = DhanHttpClient(
+        client_id="cid", access_token=fresh_token,
+        token_refresh_fn=refresh_fn, session=session,
+    )
+    assert client.get("/positions") == {"ok": True}
+    refresh_fn.assert_called_once()
+    assert client.access_token == "new-token"
+
+
+def test_401_with_expiring_token_triggers_refresh():
+    """Smart guard: a 401 on an expiring token proceeds with refresh."""
+    import time
+    expiring_token = _make_jwt(int(time.time()) + 60)
+
+    session = MagicMock()
+    session.headers = {}
+    session.request.side_effect = [_resp(401), _resp(200, {"ok": True})]
+    refresh_fn = MagicMock(return_value="new-token")
+
+    client = DhanHttpClient(
+        client_id="cid", access_token=expiring_token,
+        token_refresh_fn=refresh_fn, session=session,
+    )
+    assert client.get("/positions") == {"ok": True}
+    refresh_fn.assert_called_once()

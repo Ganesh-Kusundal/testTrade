@@ -10,8 +10,7 @@ class Exchange(str, Enum):
     NSE = "NSE"
     BSE = "BSE"
     MCX = "MCX"
-    NSE_FNO = "NSE_FNO"  # F&O segment
-    # Note: indices use Exchange.NSE + Segment.INDEX (not a separate exchange).
+    # Note: F&O uses Exchange.NSE + Segment.FUTURES/OPTIONS (not a separate exchange).
     # Currency uses Exchange.NSE + Segment.CURRENCY.
 
 

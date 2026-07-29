@@ -383,3 +383,72 @@ class OptionChainAdapter:
                 })
 
         return result
+
+    def pivot_to_dataframe(
+        self,
+        chain: list[dict[str, Any]],
+        underlying: str,
+        exchange: str,
+    ) -> tuple[Any, Any]:
+        """Pivot flat option chain into Tradehull-compatible DataFrame.
+
+        Args:
+            chain: Flat list of option chain legs from get_option_chain().
+            underlying: Underlying symbol (e.g. "NIFTY").
+            exchange: Exchange code (e.g. "NSE").
+
+        Returns:
+            Tuple of (atm_strike: Decimal, df: pd.DataFrame) with 27 columns
+            in Tradehull-compatible format.
+        """
+        import pandas as pd
+
+        if not chain:
+            return Decimal("0"), pd.DataFrame()
+
+        # Approximate spot from chain using put-call parity
+        spot = self._approximate_spot_from_chain(chain)
+
+        strikes = sorted({Decimal(str(leg["strike"])) for leg in chain})
+        if spot > 0 and strikes:
+            atm_strike = min(strikes, key=lambda s: abs(s - spot))
+        else:
+            atm_strike = strikes[len(strikes) // 2] if strikes else Decimal("0")
+
+        # Default 10 strikes around ATM (matches Tradehull)
+        if strikes and atm_strike:
+            atm_idx = strikes.index(atm_strike) if atm_strike in strikes else len(strikes) // 2
+            lo = max(0, atm_idx - 10)
+            hi = min(len(strikes), atm_idx + 11)
+            selected = set(strikes[lo:hi])
+            chain = [leg for leg in chain if Decimal(str(leg["strike"])) in selected]
+
+        by_strike: dict[Any, Any] = {}
+        for leg in chain:
+            strike = Decimal(str(leg["strike"]))
+            opt_type = leg.get("option_type", "")
+            by_strike.setdefault(strike, {})[opt_type] = leg
+
+        rows = []
+        for strike in sorted(by_strike):
+            ce = by_strike[strike].get("CE", {})
+            pe = by_strike[strike].get("PE", {})
+            rows.append({
+                "CE OI": ce.get("oi"), "CE Chg in OI": (ce.get("oi", 0) or 0) - (ce.get("previous_oi", 0) or 0),
+                "CE Volume": ce.get("volume"), "CE IV": ce.get("iv"), "CE LTP": ce.get("ltp"),
+                "CE Bid Qty": ce.get("bid_qty"), "CE Bid": ce.get("bid"),
+                "CE Ask": ce.get("ask"), "CE Ask Qty": ce.get("ask_qty"),
+                "CE Delta": ce.get("delta"), "CE Theta": ce.get("theta"),
+                "CE Gamma": ce.get("gamma"), "CE Vega": ce.get("vega"),
+                "Strike Price": strike,
+                "PE Bid Qty": pe.get("bid_qty"), "PE Bid": pe.get("bid"),
+                "PE Ask": pe.get("ask"), "PE Ask Qty": pe.get("ask_qty"),
+                "PE LTP": pe.get("ltp"), "PE IV": pe.get("iv"),
+                "PE Volume": pe.get("volume"),
+                "PE Chg in OI": (pe.get("oi", 0) or 0) - (pe.get("previous_oi", 0) or 0),
+                "PE OI": pe.get("oi"),
+                "PE Delta": pe.get("delta"), "PE Theta": pe.get("theta"),
+                "PE Gamma": pe.get("gamma"), "PE Vega": pe.get("vega"),
+            })
+
+        return atm_strike, pd.DataFrame(rows)

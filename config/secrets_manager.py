@@ -48,7 +48,7 @@ class SecretsManager:
 
     def get_dhan_client_id(self) -> str:
         """Get Dhan client ID from environment variable or file fallback.
-        
+
         Returns:
             Dhan client ID string. Returns empty string if not found.
         """
@@ -60,7 +60,7 @@ class SecretsManager:
 
     def get_dhan_access_token(self) -> str:
         """Get Dhan access token from environment variable or file fallback.
-        
+
         Returns:
             Dhan access token string. Returns empty string if not found.
         """
@@ -72,7 +72,7 @@ class SecretsManager:
 
     def get_dhan_totp_secret(self) -> str | None:
         """Get TOTP secret from environment variable or file fallback.
-        
+
         Returns:
             TOTP secret string, or None if not configured.
         """
@@ -85,7 +85,7 @@ class SecretsManager:
 
     def get_dhan_pin(self) -> str | None:
         """Get PIN from environment variable or file fallback.
-        
+
         Returns:
             PIN string, or None if not configured.
         """
@@ -96,17 +96,9 @@ class SecretsManager:
         value = self.get_file(file_path)
         return value if value else None
 
-    def get_dhan_auth_mode(self) -> str:
-        """Get authentication mode (STATIC vs TOTP_GENERATED).
-        
-        Returns:
-            Authentication mode string. Defaults to 'STATIC' if not set.
-        """
-        return self.get_env("DHAN_AUTH_MODE", "STATIC")
-
     def get_dhan_environment(self) -> str:
         """Get Dhan environment (LIVE vs SANDBOX).
-        
+
         Returns:
             Environment string. Defaults to 'LIVE' if not set.
         """

@@ -16,7 +16,8 @@ from typing import Any
 
 from config.endpoints import Dhan
 from scalpr.brokers.dhan._token_lifecycle import TokenRefreshScheduler
-from scalpr.brokers.dhan.auth import ensure_fresh_token, get_broadcast, is_token_fresh
+from scalpr.brokers.dhan._totp_cooldown import TotpRateLimitError
+from scalpr.brokers.dhan.auth import ensure_fresh_token, get_broadcast
 from scalpr.brokers.dhan.exceptions import AuthenticationError, BrokerError, ConfigurationError
 from scalpr.brokers.dhan.historical import HistoricalDataAdapter
 from scalpr.brokers.dhan.http_client import CircuitBreaker, DhanHttpClient
@@ -140,7 +141,7 @@ class DhanConnection:
 
                 logger.info("dhan_connection_connected")
 
-            except AuthenticationError:
+            except (AuthenticationError, TotpRateLimitError):
                 raise
             except Exception as exc:
                 # Clean up partial initialisation
@@ -312,8 +313,10 @@ class DhanConnection:
         - token validity
         - active segments
 
-        Retries up to 3 times with 2-second delays to handle newly generated
-        tokens that aren't activated yet on Dhan's side.
+        On 401 (token rejected), force-regenerates via TOTP and retries.
+        If TOTP cooldown is active, sleeps for the remaining cooldown
+        duration before retrying — this avoids the death spiral where
+        rapid retries burn through the 120s TOTP lockout.
 
         Raises:
             AuthenticationError: If token is rejected after all retries.
@@ -321,6 +324,8 @@ class DhanConnection:
         """
         if self._client is None:
             raise BrokerError("HTTP client not available for verification")
+
+        import time
 
         max_attempts = 3
         last_exc: Exception | None = None
@@ -357,6 +362,26 @@ class DhanConnection:
                 )
                 return  # Success
 
+            except TotpRateLimitError as exc:
+                # TOTP cooldown active — sleep for the remaining cooldown
+                # then retry. This is the key fix: instead of burning
+                # through retries in <5s, we wait for the cooldown.
+                last_exc = exc
+                if attempt < max_attempts:
+                    wait = exc.remaining_seconds + 1.0  # +1s buffer
+                    logger.warning(
+                        "dhan_verify_totp_cooldown",
+                        extra={
+                            "attempt": attempt,
+                            "wait_seconds": round(wait, 1),
+                        },
+                    )
+                    time.sleep(wait)
+                    new_token = ensure_fresh_token(force=True)
+                    self._client.update_token(new_token)
+                    continue
+                raise
+
             except AuthenticationError as exc:
                 last_exc = exc
                 if attempt < max_attempts:
@@ -364,14 +389,15 @@ class DhanConnection:
                         "dhan_verify_retry",
                         extra={"attempt": attempt, "error": str(exc)},
                     )
-                    import time
                     time.sleep(2)
-                    # 401 on a fresh token = Dhan activation delay — retry
-                    # the SAME token. Mint only when actually stale; a
-                    # force-mint here would burn a rate-limited TOTP attempt.
-                    if not is_token_fresh(self._client.access_token):
-                        new_token = ensure_fresh_token()
-                        self._client.update_token(new_token)
+                    # 401 = token rejected by broker. Force regeneration
+                    # regardless of JWT expiry — a broker rejection means
+                    # the token is invalid even if it hasn't expired locally.
+                    # The HTTP client already attempted a forced refresh on
+                    # its own 401, but if we're still here the token is
+                    # persistently rejected — force another regeneration.
+                    new_token = ensure_fresh_token(force=True)
+                    self._client.update_token(new_token)
                     continue
                 raise
 

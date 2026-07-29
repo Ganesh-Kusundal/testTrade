@@ -5,6 +5,7 @@ references to the adapter stack for data operations.
 """
 from __future__ import annotations
 
+import logging
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
@@ -12,6 +13,8 @@ from typing import Any
 from scalpr.brokers.errors import OptionChainNotSupported
 from scalpr.domain.instrument import ResolvedInstrument
 from scalpr.domain.values import DEFAULT_TIMEOUT_S, OPTIONABLE_SEGMENTS
+
+logger = logging.getLogger(__name__)
 
 
 class InstrumentHandle:
@@ -332,6 +335,7 @@ class InstrumentHandle:
                 symbol=self.symbol,
             )
         except Exception:
+            logger.warning("quote_fetch_failed for %s", self.symbol, exc_info=True)
             return None
 
         today = date.today()
@@ -438,7 +442,7 @@ class InstrumentHandle:
                 symbol=self.symbol,
             )))
         except Exception:
-            # If we can't get spot price, return unfiltered chain
+            logger.warning("spot_fetch_failed for %s, returning unfiltered chain", self.symbol, exc_info=True)
             return chain
 
         # Parse moneyness filter
@@ -589,6 +593,7 @@ class InstrumentHandle:
                 symbol=self.symbol,
             )))
         except Exception:
+            logger.warning("spot_fetch_failed_for_chain %s", self.symbol, exc_info=True)
             return Decimal("0")
 
     def subscribe(

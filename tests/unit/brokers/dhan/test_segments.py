@@ -46,12 +46,6 @@ class TestToDhanWire:
     def test_bse_index(self):
         assert to_dhan_wire(Exchange.BSE, Segment.INDEX) == "IDX_I"
 
-    def test_nse_fno_futures(self):
-        assert to_dhan_wire(Exchange.NSE_FNO, Segment.FUTURES) == "NSE_FNO"
-
-    def test_nse_fno_options(self):
-        assert to_dhan_wire(Exchange.NSE_FNO, Segment.OPTIONS) == "NSE_FNO"
-
     def test_unsupported_combination_raises(self):
         with pytest.raises(ValueError, match="No Dhan wire mapping"):
             to_dhan_wire(Exchange.MCX, Segment.EQUITY)
@@ -150,5 +144,6 @@ class TestWireSegmentForConsolidation:
         assert wire_segment_for(Exchange.MCX, Segment.FUTURES) == "MCX_COMM"
 
     def test_string_path_knows_nse_fno_and_currency(self):
+        assert exchange_to_wire("NSE") == "NSE_EQ"
         assert exchange_to_wire("NSE_FNO") == "NSE_FNO"
         assert exchange_to_wire("CURRENCY") == "NSE_CURRENCY"

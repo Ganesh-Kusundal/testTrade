@@ -36,6 +36,7 @@ from scalpr.brokers.dhan.exceptions import (
     ConfigurationError,
 )
 from scalpr.brokers.dhan.gateway import DhanGateway
+from scalpr.brokers.dhan.mapper import DhanMapper
 from scalpr.domain.fill import Fill
 from scalpr.domain.instrument import Exchange
 from scalpr.domain.order import Order, OrderSide, OrderState, OrderType
@@ -991,11 +992,11 @@ class TestDhanGatewaySquareOff:
 
 
 class TestDhanGatewayOrderMapping:
-    """Verify _map_raw_order_to_order correctly maps Dhan responses to domain objects."""
+    """Verify DhanMapper.raw_order_to_order correctly maps Dhan responses to domain objects."""
 
     def test_should_map_filled_buy_limit_order(self, sample_raw_orderbook_entry):
         """A filled BUY LIMIT order must map to OrderState.FILLED and OrderSide.BUY."""
-        order = DhanGateway._map_raw_order_to_order(sample_raw_orderbook_entry)
+        order = DhanMapper.raw_order_to_order(sample_raw_orderbook_entry)
 
         assert order.order_id == "dhan_ord_12345"
         assert order.symbol == "RELIANCE"
@@ -1024,7 +1025,7 @@ class TestDhanGatewayOrderMapping:
             "product_type": "DELIVERY",
             "validity": "DAY",
         }
-        order = DhanGateway._map_raw_order_to_order(raw)
+        order = DhanMapper.raw_order_to_order(raw)
 
         assert order.side == OrderSide.SELL
         assert order.order_type == OrderType.MARKET
@@ -1043,7 +1044,7 @@ class TestDhanGatewayOrderMapping:
             "price": Decimal("1500"),
             "trigger_price": Decimal("1490"),
         }
-        order = DhanGateway._map_raw_order_to_order(raw)
+        order = DhanMapper.raw_order_to_order(raw)
 
         assert order.order_type == OrderType.STOP_LOSS
 
@@ -1060,7 +1061,7 @@ class TestDhanGatewayOrderMapping:
             "price": Decimal("0"),
             "trigger_price": Decimal("1490"),
         }
-        order = DhanGateway._map_raw_order_to_order(raw)
+        order = DhanMapper.raw_order_to_order(raw)
 
         assert order.order_type == OrderType.STOP_LOSS_MARKET
 
@@ -1073,8 +1074,9 @@ class TestDhanGatewayOrderMapping:
             "side": "BUY",
             "order_type": "STOP LOSS",
             "status": "OPEN",
+            "quantity": 1,
         }
-        order = DhanGateway._map_raw_order_to_order(raw)
+        order = DhanMapper.raw_order_to_order(raw)
         assert order.order_type == OrderType.STOP_LOSS
 
     def test_should_map_stop_loss_market_full_name(self):
@@ -1086,8 +1088,9 @@ class TestDhanGatewayOrderMapping:
             "side": "BUY",
             "order_type": "STOP LOSS MARKET",
             "status": "OPEN",
+            "quantity": 1,
         }
-        order = DhanGateway._map_raw_order_to_order(raw)
+        order = DhanMapper.raw_order_to_order(raw)
         assert order.order_type == OrderType.STOP_LOSS_MARKET
 
     def test_should_map_mcx_exchange(self):
@@ -1100,8 +1103,9 @@ class TestDhanGatewayOrderMapping:
             "order_type": "LIMIT",
             "status": "OPEN",
             "price": Decimal("50000"),
+            "quantity": 1,
         }
-        order = DhanGateway._map_raw_order_to_order(raw)
+        order = DhanMapper.raw_order_to_order(raw)
         assert order.exchange == Exchange.MCX
 
     def test_should_default_to_nse_exchange(self):
@@ -1114,8 +1118,9 @@ class TestDhanGatewayOrderMapping:
             "order_type": "LIMIT",
             "status": "OPEN",
             "price": Decimal("100"),
+            "quantity": 1,
         }
-        order = DhanGateway._map_raw_order_to_order(raw)
+        order = DhanMapper.raw_order_to_order(raw)
         assert order.exchange == Exchange.NSE
 
     def test_should_map_all_order_states(self):
@@ -1139,8 +1144,9 @@ class TestDhanGatewayOrderMapping:
                 "side": "BUY",
                 "order_type": "MARKET",
                 "status": status_str,
+                "quantity": 1,
             }
-            order = DhanGateway._map_raw_order_to_order(raw)
+            order = DhanMapper.raw_order_to_order(raw)
             assert order.state == expected_state, f"Failed for status: {status_str}"
 
     def test_should_default_to_pending_for_unknown_status(self):
@@ -1152,8 +1158,9 @@ class TestDhanGatewayOrderMapping:
             "side": "BUY",
             "order_type": "MARKET",
             "status": "UNKNOWN_STATUS",
+            "quantity": 1,
         }
-        order = DhanGateway._map_raw_order_to_order(raw)
+        order = DhanMapper.raw_order_to_order(raw)
         assert order.state == OrderState.PENDING
 
     def test_should_default_to_limit_for_unknown_order_type(self):
@@ -1166,20 +1173,21 @@ class TestDhanGatewayOrderMapping:
             "order_type": "UNKNOWN_TYPE",
             "status": "OPEN",
             "price": Decimal("100"),
+            "quantity": 1,
         }
-        order = DhanGateway._map_raw_order_to_order(raw)
+        order = DhanMapper.raw_order_to_order(raw)
         assert order.order_type == OrderType.LIMIT
 
     def test_should_map_reject_reason(self, sample_raw_orderbook_entry):
         """Reject reason must be mapped from raw data."""
         raw = {**sample_raw_orderbook_entry, "reject_reason": "Insufficient margin"}
-        order = DhanGateway._map_raw_order_to_order(raw)
+        order = DhanMapper.raw_order_to_order(raw)
         assert order.reject_reason == "Insufficient margin"
 
     def test_should_map_correlation_id(self, sample_raw_orderbook_entry):
         """Correlation ID must be mapped from raw data."""
         raw = {**sample_raw_orderbook_entry, "correlation_id": "corr_999"}
-        order = DhanGateway._map_raw_order_to_order(raw)
+        order = DhanMapper.raw_order_to_order(raw)
         assert order.correlation_id == "corr_999"
 
     def test_should_handle_missing_optional_fields(self):
@@ -1191,11 +1199,12 @@ class TestDhanGatewayOrderMapping:
             "side": "BUY",
             "order_type": "MARKET",
             "status": "OPEN",
+            "quantity": 1,
         }
-        order = DhanGateway._map_raw_order_to_order(raw)
+        order = DhanMapper.raw_order_to_order(raw)
 
         assert order.order_id == "ord_minimal"
-        assert order.quantity == 0
+        assert order.quantity == 1
         assert order.price == Decimal("0")
         assert order.trigger_price == Decimal("0")
         assert order.filled_quantity == 0

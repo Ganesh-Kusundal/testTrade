@@ -51,11 +51,11 @@ class TestExchangeQueryParam:
     def test_ltp_forwards_nse_fno_exchange(self, connected_gateway):
         connected_gateway.get_ltp.return_value = Decimal("24200.00")
         client = TestClient(_app(connected_gateway))
-        resp = client.get("/market/ltp/NIFTY?exchange=NSE_FNO")
+        resp = client.get("/market/ltp/NIFTY?exchange=NSE")
         assert resp.status_code == 200
         body = resp.json()
-        assert body["exchange"] == "NSE_FNO"
-        connected_gateway.get_ltp.assert_called_once_with("NIFTY", "NSE_FNO")
+        assert body["exchange"] == "NSE"
+        connected_gateway.get_ltp.assert_called_once_with("NIFTY", "NSE")
 
     def test_ltp_forwards_index_exchange(self, connected_gateway):
         connected_gateway.get_ltp.return_value = Decimal("24500.00")

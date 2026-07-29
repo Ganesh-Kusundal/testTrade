@@ -79,12 +79,18 @@ class MetricsRegistry:
         self.register_counter("strategy_ticks", "Total ticks routed to strategies")
         self.register_counter("strategy_errors", "Total strategy execution errors")
         self.register_counter("strategy_timeouts", "Total strategy timeout events")
+        self.register_counter("ws_reconnects", "WebSocket reconnect count")
+        self.register_counter("token_refreshes", "Token refresh count")
+        self.register_counter("rate_limit_exhausted", "Rate limit exhaustion events")
+        self.register_counter("market_data_gaps", "Market data gap events")
+        self.register_counter("pnl_divergences", "PnL divergence events")
 
         # Histograms
         self.register_histogram("order_routing_latency_ms", "Order routing latency")
         self.register_histogram("strategy_execution_latency_ms", "Strategy execution latency")
         self.register_histogram("tick_processing_latency_ms", "End-to-end tick processing latency")
         self.register_histogram("persistence_latency_ms", "Database persistence latency")
+        self.register_histogram("order_latency_ms", "Order submission to fill latency")
 
         # Gauges
         self.register_gauge("active_positions", "Current open positions")

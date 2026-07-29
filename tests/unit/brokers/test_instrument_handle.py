@@ -153,14 +153,14 @@ class TestInstrumentHandleHistorical:
             historical_adapter=mock_hist,
         )
         handle.historical()
-        # Should call with default 365-day range (matches Tradehull)
+        # Should call with default 90-day range and 1m interval
         call_args = mock_hist.get_ohlcv.call_args
         assert call_args[0][0] == "TCS"
         assert call_args[0][1] == "NSE"
-        assert call_args[0][2] == "1D"
+        assert call_args[0][2] == "1m"
         start_arg, end_arg = call_args[0][3], call_args[0][4]
         assert end_arg == date.today()
-        assert start_arg == date.today() - timedelta(days=365)
+        assert start_arg == date.today() - timedelta(days=90)
 
 
 class TestInstrumentHandleParamHonesty:
@@ -180,7 +180,7 @@ class TestInstrumentHandleParamHonesty:
         call = mock_hist.get_ohlcv.call_args
         start_arg, end_arg = call[0][3], call[0][4]
         assert end_arg == date(2025, 1, 10)
-        assert start_arg == date(2025, 1, 10) - timedelta(days=365)
+        assert start_arg == date(2025, 1, 10) - timedelta(days=90)
         assert start_arg < end_arg
 
     def test_depth_rejects_unsupported_levels(self):

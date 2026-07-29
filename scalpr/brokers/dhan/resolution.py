@@ -125,7 +125,6 @@ def exchange_to_wire(exchange: Exchange | str) -> str:
             Exchange.NSE: Segment.EQUITY,
             Exchange.BSE: Segment.EQUITY,
             Exchange.MCX: Segment.COMMODITY,
-            Exchange.NSE_FNO: Segment.FUTURES,
         }
         seg = _default_seg.get(exchange)
         if seg is None:
@@ -195,8 +194,6 @@ _WIRE_BY_EXCHANGE_SEGMENT: dict[tuple[Exchange, Segment], str] = {
     (Exchange.MCX, Segment.OPTIONS): "MCX_COMM",
     (Exchange.NSE, Segment.INDEX): "IDX_I",
     (Exchange.BSE, Segment.INDEX): "IDX_I",
-    (Exchange.NSE_FNO, Segment.FUTURES): "NSE_FNO",
-    (Exchange.NSE_FNO, Segment.OPTIONS): "NSE_FNO",
     (Exchange.NSE, Segment.CURRENCY): "NSE_CURRENCY",
 }
 
@@ -388,7 +385,7 @@ def wire_segment_for(exchange: Exchange, segment: Segment) -> str:
         pass
     if exchange is Exchange.MCX:
         return "MCX_COMM"
-    if exchange is Exchange.NSE_FNO or segment in (Segment.FUTURES, Segment.OPTIONS):
+    if segment in (Segment.FUTURES, Segment.OPTIONS):
         return "BSE_FNO" if exchange is Exchange.BSE else "NSE_FNO"
     return "BSE_EQ" if exchange is Exchange.BSE else "NSE_EQ"
 

@@ -21,7 +21,11 @@ from typing import Any
 from dotenv import load_dotenv
 
 from scalpr.brokers.broker_port import IBrokerGateway
-from scalpr.brokers.errors import InstrumentNotFound
+from scalpr.brokers.errors import (
+    ConfigurationError,
+    InstrumentNotFound,
+    TradingError,
+)
 from scalpr.brokers.gateway._market_data import MarketDataMixin
 from scalpr.brokers.gateway._portfolio import PortfolioMixin
 from scalpr.brokers.gateway._streaming import StreamingMixin
@@ -29,6 +33,18 @@ from scalpr.brokers.instrument_handle import InstrumentHandle
 from scalpr.brokers.registry import BrokerRegistry
 from scalpr.domain.instrument import Exchange, Segment, SimpleInstrumentId
 from scalpr.domain.values import DEFAULT_EXCHANGE, RECOVERY_TIMEOUT_S
+
+
+# Lazy import to avoid hard dependency on Dhan-specific types at module level.
+# TotpRateLimitError is a RuntimeError (not TradingError), so we must catch
+# it explicitly to prevent it being swallowed by the generic except clause.
+def _is_totp_cooldown_error(exc: BaseException) -> bool:
+    try:
+        from scalpr.brokers.dhan._totp_cooldown import TotpRateLimitError
+        return isinstance(exc, TotpRateLimitError)
+    except ImportError:
+        return False
+
 
 logger = logging.getLogger(__name__)
 
@@ -65,9 +81,22 @@ class Gateway(MarketDataMixin, PortfolioMixin, StreamingMixin):
             broker: Broker name (default: "dhan")
             config: Broker-specific config dict (auto-loaded from .env if None)
             auto_connect: Automatically connect on initialization (default: True)
+
+        Raises:
+            TradingError: If initialization fails (with correlation_id for tracing)
         """
         self._broker_name = broker
-        self._config = config or self._load_config_from_env()
+        try:
+            self._config = config or self._load_config_from_env()
+        except TradingError:
+            raise  # Already a TradingError — pass through with correlation_id
+        except Exception as exc:
+            # Wrap unexpected errors in TradingError for user-friendly output
+            raise TradingError(
+                f"Gateway initialization failed: {exc}",
+                context={"original_error": type(exc).__name__, "broker": broker},
+            ) from exc
+
         self._gateway: IBrokerGateway = BrokerRegistry.get(
             broker, self._config
         )
@@ -78,8 +107,28 @@ class Gateway(MarketDataMixin, PortfolioMixin, StreamingMixin):
         self._ws_lock = __import__("threading").Lock()
 
         if auto_connect:
-            self._gateway.connect()
-            logger.info("gateway_connected: %s", broker)
+            try:
+                self._gateway.connect()
+                logger.info("gateway_connected: %s", broker)
+            except TradingError:
+                raise  # Already a TradingError — pass through
+            except Exception as exc:
+                # TOTP cooldown is a RuntimeError, not TradingError.
+                # Surface it with actionable context instead of wrapping.
+                if _is_totp_cooldown_error(exc):
+                    raise TradingError(
+                        f"TOTP cooldown active — wait {getattr(exc, 'remaining_seconds', 0):.0f}s "
+                        f"before retrying. Original error: {exc}",
+                        context={
+                            "broker": broker,
+                            "reason": "totp_cooldown",
+                            "remaining_seconds": getattr(exc, "remaining_seconds", 0),
+                        },
+                    ) from exc
+                raise TradingError(
+                    f"Broker connection failed: {exc}",
+                    context={"broker": broker},
+                ) from exc
 
     def _load_config_from_env(self) -> dict[str, Any]:
         """Load broker configuration from environment variables.
@@ -93,13 +142,13 @@ class Gateway(MarketDataMixin, PortfolioMixin, StreamingMixin):
         if self._broker_name == "dhan":
             ensure_fresh_token = BrokerRegistry.get_adapter("dhan", "auth")
             if ensure_fresh_token is None:
-                raise ValueError(
+                raise ConfigurationError(
                     "Dhan auth adapter not available in registry"
                 )
 
             client_id = os.environ.get("DHAN_CLIENT_ID", "")
             if not client_id:
-                raise ValueError(
+                raise ConfigurationError(
                     "DHAN_CLIENT_ID must be set in .env or environment variables"
                 )
 
@@ -114,7 +163,7 @@ class Gateway(MarketDataMixin, PortfolioMixin, StreamingMixin):
                 "token_refresh_fn": lambda: ensure_fresh_token(force=True),
             }
 
-        raise ValueError(
+        raise ConfigurationError(
             f"No environment config loader for broker '{self._broker_name}'"
         )
 
@@ -184,16 +233,8 @@ class Gateway(MarketDataMixin, PortfolioMixin, StreamingMixin):
         except InstrumentNotFound as exc:
             raise InstrumentNotFound(str(exc)) from exc
 
-        # Build option chain adapter (shared connection, lazy per-call)
-        # Build option chain adapter via registry (no direct Dhan import)
-        OptionChainAdapter = BrokerRegistry.get_adapter(
-            self._broker_name, "option_chain"
-        )
-        if OptionChainAdapter is None:
-            raise NotImplementedError(
-                f"option_chain adapter not available for {self._broker_name}"
-            )
-        oc_adapter = OptionChainAdapter(conn.http_client, conn.resolver)
+        # Build option chain adapter via shared helper
+        oc_adapter = self._get_option_chain_adapter()
 
         # WS manager/loop may not be initialised yet (first subscribe
         # triggers _init_websocket_manager). Pass what we have.
@@ -236,20 +277,7 @@ class Gateway(MarketDataMixin, PortfolioMixin, StreamingMixin):
         Raises:
             InstrumentNotFound: if the underlying cannot be resolved.
         """
-        adapters = self._gateway.adapters()
-        if not adapters:
-            raise NotImplementedError(
-                "option_chain() requires a broker that provides adapters"
-            )
-        # Get OptionChainAdapter via registry (no direct Dhan import)
-        OptionChainAdapter = BrokerRegistry.get_adapter(
-            self._broker_name, "option_chain"
-        )
-        if OptionChainAdapter is None:
-            raise NotImplementedError(
-                f"option_chain adapter not available for {self._broker_name}"
-            )
-        adapter = OptionChainAdapter(adapters["http_client"], adapters["resolver"])
+        adapter = self._get_option_chain_adapter()
         try:
             chain = adapter.get_option_chain(underlying, exchange, expiry=expiry)
         except InstrumentNotFound as exc:
@@ -258,8 +286,8 @@ class Gateway(MarketDataMixin, PortfolioMixin, StreamingMixin):
         if not as_df:
             return chain
 
-        # Pivot to Tradehull-compatible DataFrame
-        return self._pivot_option_chain(chain, adapters, underlying, exchange)
+        # Pivot to Tradehull-compatible DataFrame via adapter
+        return adapter.pivot_to_dataframe(chain, underlying, exchange)
 
     def future_script(
         self,
@@ -365,82 +393,6 @@ class Gateway(MarketDataMixin, PortfolioMixin, StreamingMixin):
                 f"option_chain adapter not available for {self._broker_name}"
             )
         return OptionChainAdapter(adapters["http_client"], adapters["resolver"])
-
-    def _pivot_option_chain(
-        self,
-        chain: list[dict[str, Any]],
-        adapters: dict[str, Any],
-        underlying: str,
-        exchange: str,
-    ) -> tuple[Any, Any]:
-        """Pivot flat option chain into Tradehull-compatible DataFrame."""
-        from decimal import Decimal
-
-        import pandas as pd
-
-        if not chain:
-            return Decimal("0"), pd.DataFrame()
-
-        # Get spot price for ATM calculation
-        market_data = adapters.get("market_data")
-        resolver = adapters["resolver"]
-        spot = Decimal("0")
-        if market_data is not None:
-            try:
-                resolved = resolver.resolve(underlying, exchange)
-                spot = Decimal(str(
-                    market_data.get_ltp_by_id(
-                        resolved.security_id,
-                        resolver.wire_segment_of(underlying, exchange),
-                        symbol=underlying,
-                    )
-                ))
-            except Exception:
-                logger.debug("option_chain_spot_fetch_failed", exc_info=True)
-
-        strikes = sorted({Decimal(str(leg["strike"])) for leg in chain})
-        if spot > 0 and strikes:
-            atm_strike = min(strikes, key=lambda s: abs(s - spot))
-        else:
-            atm_strike = strikes[len(strikes) // 2] if strikes else Decimal("0")
-
-        # Default 10 strikes around ATM (matches Tradehull)
-        if strikes and atm_strike:
-            atm_idx = strikes.index(atm_strike) if atm_strike in strikes else len(strikes) // 2
-            lo = max(0, atm_idx - 10)
-            hi = min(len(strikes), atm_idx + 11)
-            selected = set(strikes[lo:hi])
-            chain = [leg for leg in chain if Decimal(str(leg["strike"])) in selected]
-
-        by_strike: dict[Any, Any] = {}
-        for leg in chain:
-            strike = Decimal(str(leg["strike"]))
-            opt_type = leg.get("option_type", "")
-            by_strike.setdefault(strike, {})[opt_type] = leg
-
-        rows = []
-        for strike in sorted(by_strike):
-            ce = by_strike[strike].get("CE", {})
-            pe = by_strike[strike].get("PE", {})
-            rows.append({
-                "CE OI": ce.get("oi"), "CE Chg in OI": (ce.get("oi", 0) or 0) - (ce.get("previous_oi", 0) or 0),
-                "CE Volume": ce.get("volume"), "CE IV": ce.get("iv"), "CE LTP": ce.get("ltp"),
-                "CE Bid Qty": ce.get("bid_qty"), "CE Bid": ce.get("bid"),
-                "CE Ask": ce.get("ask"), "CE Ask Qty": ce.get("ask_qty"),
-                "CE Delta": ce.get("delta"), "CE Theta": ce.get("theta"),
-                "CE Gamma": ce.get("gamma"), "CE Vega": ce.get("vega"),
-                "Strike Price": strike,
-                "PE Bid Qty": pe.get("bid_qty"), "PE Bid": pe.get("bid"),
-                "PE Ask": pe.get("ask"), "PE Ask Qty": pe.get("ask_qty"),
-                "PE LTP": pe.get("ltp"), "PE IV": pe.get("iv"),
-                "PE Volume": pe.get("volume"),
-                "PE Chg in OI": (pe.get("oi", 0) or 0) - (pe.get("previous_oi", 0) or 0),
-                "PE OI": pe.get("oi"),
-                "PE Delta": pe.get("delta"), "PE Theta": pe.get("theta"),
-                "PE Gamma": pe.get("gamma"), "PE Vega": pe.get("vega"),
-            })
-
-        return atm_strike, pd.DataFrame(rows)
 
     def close(self) -> None:
         """Shut down WebSocket connections and release resources."""

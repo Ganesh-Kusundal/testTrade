@@ -180,7 +180,7 @@ class TestJsonFormatter:
         assert log_entry["service"] == "scalpr"
         assert "timestamp" in log_entry
 
-    def test_format_with_trace_id(self):
+    def test_format_with_correlation_id(self):
         formatter = JsonFormatter()
         record = logging.LogRecord(
             name="test_logger",
@@ -191,12 +191,15 @@ class TestJsonFormatter:
             args=(),
             exc_info=None
         )
-        record.trace_id = "abc12345"
+        # New formatter uses correlation_id instead of trace_id
+        record.correlation_id = "abc12345"
+        record.request_id = "req-123"
 
         output = formatter.format(record)
         log_entry = json.loads(output)
 
-        assert log_entry["trace_id"] == "abc12345"
+        assert log_entry["correlation_id"] == "abc12345"
+        assert log_entry["request_id"] == "req-123"
 
 
 class TestTraceContext:

@@ -11,8 +11,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from scalpr.brokers.dhan._totp_cooldown import TotpCooldownGuard, TotpRateLimitError
 from scalpr.brokers.dhan.auth import (
     ensure_fresh_token,
+    generate_token,
+    get_broadcast,
+    is_expiring_soon,
     is_token_fresh,
     persist_token,
     token_expiry,
@@ -39,6 +43,20 @@ def env_cleanup():
             os.environ.pop(k, None)
         else:
             os.environ[k] = v
+
+
+@pytest.fixture(autouse=True)
+def _reset_cooldown_singletons():
+    TotpCooldownGuard.reset_instances()
+    # Clean up persisted cooldown state so tests don't interfere
+    import pathlib
+    cooldown_path = pathlib.Path("runtime/dhan-totp-cooldown.json")
+    if cooldown_path.exists():
+        cooldown_path.unlink()
+    yield
+    TotpCooldownGuard.reset_instances()
+    if cooldown_path.exists():
+        cooldown_path.unlink()
 
 
 class TestTokenExpiry:
@@ -86,7 +104,7 @@ class TestEnsureFreshToken:
         os.environ["DHAN_ACCESS_TOKEN"] = expired
         os.environ["DHAN_CLIENT_ID"] = "cid"
         os.environ["DHAN_PIN"] = "1234"
-        os.environ["DHAN_TOTP_SECRET"] = "JBSWY3DPEHPK3PXP"
+        os.environ["DHAN_TOTP_SECRET"] = "JBSWY3DPEHPK3PXP"  # pragma: allowlist secret
 
         mock_resp = MagicMock(status_code=200)
         mock_resp.json.return_value = {"accessToken": new_token}
@@ -119,7 +137,7 @@ class TestEnsureFreshToken:
         os.environ["DHAN_ACCESS_TOKEN"] = make_jwt(datetime.now() - timedelta(hours=1))
         os.environ["DHAN_CLIENT_ID"] = "cid"
         os.environ["DHAN_PIN"] = "1234"
-        os.environ["DHAN_TOTP_SECRET"] = "JBSWY3DPEHPK3PXP"
+        os.environ["DHAN_TOTP_SECRET"] = "JBSWY3DPEHPK3PXP"  # pragma: allowlist secret
 
         mock_resp = MagicMock(status_code=401, text="bad totp")
         with patch("scalpr.brokers.dhan.auth.requests.post", return_value=mock_resp):
@@ -134,7 +152,7 @@ class TestEnsureFreshToken:
         os.environ["DHAN_ACCESS_TOKEN"] = fresh_but_rejected
         os.environ["DHAN_CLIENT_ID"] = "cid"
         os.environ["DHAN_PIN"] = "1234"
-        os.environ["DHAN_TOTP_SECRET"] = "JBSWY3DPEHPK3PXP"
+        os.environ["DHAN_TOTP_SECRET"] = "JBSWY3DPEHPK3PXP"  # pragma: allowlist secret
 
         mock_resp = MagicMock(status_code=200)
         mock_resp.json.return_value = {"accessToken": new_token}
@@ -165,3 +183,68 @@ class TestPersistToken:
         assert env_file.read_text() == "A=1\nDHAN_ACCESS_TOKEN=new\nB=2\n"
         # atomic write leaves no temp files behind
         assert [p.name for p in tmp_path.iterdir()] == [".env"]
+
+
+class TestIsExpiringSoon:
+    def test_expiring_within_buffer(self):
+        assert is_expiring_soon(make_jwt(datetime.now() + timedelta(minutes=5)))
+
+    def test_not_expiring_far_out(self):
+        assert not is_expiring_soon(make_jwt(datetime.now() + timedelta(hours=2)))
+
+    def test_expired(self):
+        assert is_expiring_soon(make_jwt(datetime.now() - timedelta(hours=1)))
+
+    def test_unparseable(self):
+        assert is_expiring_soon("garbage")
+
+
+class TestGenerateTokenCooldown:
+    def test_cooldown_blocks_second_attempt(self, tmp_path: Path):
+        mock_resp = MagicMock(status_code=200)
+        mock_resp.json.return_value = {"accessToken": "tok"}
+        with patch("scalpr.brokers.dhan.auth.requests.post", return_value=mock_resp):
+            generate_token("cid", "pin", "JBSWY3DPEHPK3PXP")
+            with pytest.raises(TotpRateLimitError, match="cooldown active"):
+                generate_token("cid", "pin", "JBSWY3DPEHPK3PXP")
+
+    def test_rate_limit_response_raises_totp_rate_limit_error(self):
+        mock_resp = MagicMock(status_code=200)
+        mock_resp.json.return_value = {
+            "message": "You can only generate access token once every 2 minutes",
+        }
+        with patch("scalpr.brokers.dhan.auth.requests.post", return_value=mock_resp):
+            with pytest.raises(TotpRateLimitError, match="rate limit"):
+                generate_token("cid", "pin", "JBSWY3DPEHPK3PXP")
+
+
+class TestEnsureFreshTokenPropagatesCooldown:
+    """ensure_fresh_token must propagate TotpRateLimitError so callers
+    with cooldown-aware retry (e.g. _verify_connection) can sleep."""
+
+    def test_propagates_totp_rate_limit_error(self, env_cleanup, tmp_path: Path):
+        os.environ["DHAN_ACCESS_TOKEN"] = make_jwt(datetime.now() - timedelta(hours=1))
+        os.environ["DHAN_CLIENT_ID"] = "cid"
+        os.environ["DHAN_PIN"] = "1234"
+        os.environ["DHAN_TOTP_SECRET"] = "JBSWY3DPEHPK3PXP"  # pragma: allowlist secret
+
+        with patch(
+            "scalpr.brokers.dhan.auth.generate_token",
+            side_effect=TotpRateLimitError("cooldown", remaining_seconds=90.0),
+        ):
+            with pytest.raises(TotpRateLimitError, match="cooldown") as exc_info:
+                ensure_fresh_token(env_path=tmp_path / ".env", force=True)
+            assert exc_info.value.remaining_seconds == 90.0
+
+
+class TestPersistTokenBroadcast:
+    def test_persist_broadcasts_new_token(self, env_cleanup, tmp_path: Path):
+        bc = get_broadcast()
+        received: list[str] = []
+        bc.register(lambda t: received.append(t))
+        try:
+            env_file = tmp_path / ".env"
+            persist_token("broadcast_tok", env_file)
+            assert received == ["broadcast_tok"]
+        finally:
+            bc.unregister_all()

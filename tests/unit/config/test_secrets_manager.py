@@ -209,17 +209,8 @@ class TestPINLoading:
 # TEST 5: Auth Mode and Environment
 # ============================================================================
 
-class TestAuthModeAndEnvironment:
-    """Verify auth mode and environment configuration."""
-
-    def test_auth_mode_from_env(self, secrets_manager: SecretsManager, env_cleanup):
-        """Auth mode should be loaded from DHAN_AUTH_MODE env var."""
-        os.environ["DHAN_AUTH_MODE"] = "TOTP_GENERATED"
-        assert secrets_manager.get_dhan_auth_mode() == "TOTP_GENERATED"
-
-    def test_auth_mode_default_static(self, secrets_manager: SecretsManager, env_cleanup):
-        """Auth mode should default to STATIC when not set."""
-        assert secrets_manager.get_dhan_auth_mode() == "STATIC"
+class TestEnvironment:
+    """Verify environment configuration."""
 
     def test_environment_from_env(self, secrets_manager: SecretsManager, env_cleanup):
         """Environment should be loaded from DHAN_ENVIRONMENT env var."""
