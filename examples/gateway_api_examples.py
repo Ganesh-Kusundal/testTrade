@@ -10,7 +10,6 @@ from __future__ import annotations
 import os
 import sys
 from datetime import date
-from decimal import Decimal
 
 # Ensure project root is on sys.path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -133,7 +132,7 @@ def demo_option_chain(nifty):
 
     # ── N strikes around ATM ──
     around = nifty.option_chain(strikes_around=3)
-    strikes = sorted(set(leg["strike"] for leg in around))
+    strikes = sorted({leg["strike"] for leg in around})
     print(f"\n3 strikes around ATM: {len(around)} legs across {len(strikes)} strikes")
     print(f"  Strikes: {strikes}")
 
@@ -165,7 +164,7 @@ def demo_option_chain_error(tcs):
     try:
         tcs.option_chain()
     except OptionChainNotSupported as e:
-        print(f"\n✓ TCS.option_chain() correctly rejected:")
+        print("\n✓ TCS.option_chain() correctly rejected:")
         print(f"  {e}")
 
 

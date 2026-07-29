@@ -128,7 +128,7 @@ class TestHandleOptionGreeks:
             option_chain_adapter=mock_oc,
         )
         result = handle.option_greeks(
-            Decimal("24100"), date(2026, 7, 25), "CE"
+            Decimal("24100"), "CE", date(2026, 7, 25)
         )
         assert result == {"delta": Decimal("0.5")}
         mock_oc.get_option_greeks.assert_called_once_with(
@@ -144,4 +144,4 @@ class TestHandleOptionGreeks:
             option_chain_adapter=None,
         )
         with pytest.raises(OptionChainNotSupported):
-            handle.option_greeks(Decimal("24100"), date(2026, 7, 25), "CE")
+            handle.option_greeks(Decimal("24100"), "CE", date(2026, 7, 25))

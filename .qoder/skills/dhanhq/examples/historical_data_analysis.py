@@ -3,7 +3,6 @@
 from datetime import datetime, timedelta
 
 import pandas as pd
-
 from scripts.dhan_helpers import get_client
 
 dhan, _ = get_client()

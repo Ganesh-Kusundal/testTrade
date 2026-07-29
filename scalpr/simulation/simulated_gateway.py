@@ -20,14 +20,14 @@ from decimal import Decimal
 from typing import Any
 
 from scalpr.brokers.broker_port import IBrokerGateway
-from scalpr.brokers.contracts import Funds
-from scalpr.brokers.errors import RateLimitError
 from scalpr.brokers.rate_limit import (
     PAPER_RATE_LIMITS,
     MultiBucketRateLimiter,
     limiter_from_table,
 )
 from scalpr.domain.clock import IClock, WallClock
+from scalpr.domain.contracts import Funds
+from scalpr.domain.errors import RateLimitError
 from scalpr.domain.fill import Fill
 from scalpr.domain.instrument import Exchange
 from scalpr.domain.order import Order, OrderSide, OrderState, OrderType

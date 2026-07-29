@@ -24,18 +24,15 @@ Environment Variables:
 import argparse
 import os
 import sys
-from pathlib import Path
-from typing import Optional
 
 import matplotlib
+
 matplotlib.use("Agg")  # Non-interactive backend for file output
 
 import matplotlib.pyplot as plt
-import matplotlib.gridspec as gridspec
 import numpy as np
 import pandas as pd
 from scipy import stats
-
 
 # ── Configuration ───────────────────────────────────────────────────
 BACKGROUND = "#1a1a2e"
@@ -227,7 +224,7 @@ def chart_candlestick(df: pd.DataFrame, output_dir: str) -> str:
         df, type="candle", style=style, addplot=ap,
         volume=True, figsize=(14, 8),
         title="\nCandlestick — EMA(20, 50) with Volume",
-        savefig=dict(fname=save_path, dpi=FIGURE_DPI, facecolor=BACKGROUND),
+        savefig={"fname": save_path, "dpi": FIGURE_DPI, "facecolor": BACKGROUND},
     )
     return save_path
 
@@ -266,8 +263,8 @@ def chart_equity_drawdown(equity: pd.Series, output_dir: str) -> str:
     ax1.text(
         0.02, 0.95, stats_text, transform=ax1.transAxes,
         fontsize=10, fontfamily="monospace", verticalalignment="top",
-        bbox=dict(boxstyle="round,pad=0.4", facecolor="#222233",
-                  edgecolor=GRID_COLOR, alpha=0.9),
+        bbox={"boxstyle": "round,pad=0.4", "facecolor": "#222233",
+                  "edgecolor": GRID_COLOR, "alpha": 0.9},
     )
 
     # Drawdown panel
@@ -385,8 +382,8 @@ def chart_trade_markers(price: pd.Series, trades: pd.DataFrame,
     ax.text(
         0.02, 0.95, stats_text, transform=ax.transAxes,
         fontsize=10, fontfamily="monospace", verticalalignment="top",
-        bbox=dict(boxstyle="round,pad=0.4", facecolor="#222233",
-                  edgecolor=GRID_COLOR, alpha=0.9),
+        bbox={"boxstyle": "round,pad=0.4", "facecolor": "#222233",
+                  "edgecolor": GRID_COLOR, "alpha": 0.9},
     )
 
     # Legend entries for marker types

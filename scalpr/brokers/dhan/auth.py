@@ -31,6 +31,49 @@ TOKEN_URL = "https://auth.dhan.co/app/generateAccessToken"  # noqa: S105 — end
 EXPIRY_BUFFER = timedelta(minutes=15)
 
 
+def _shared_store_path() -> Path | None:
+    """Location of the cross-project shared token store, if configured.
+
+    ``DHAN_TOKEN_PATH`` is the same variable Trade_XV2 honours — pointing
+    both projects at one file makes them a single token owner: each mint
+    by either side is adopted (not re-minted) by the other, so tokens stop
+    revoking each other server-side.
+    """
+    raw = os.environ.get("DHAN_TOKEN_PATH", "").strip()
+    return Path(raw).expanduser() if raw else None
+
+
+def _shared_store_load(path: Path) -> str | None:
+    """Read the shared store token; tolerant of missing/corrupt files."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        token = str(data.get("access_token", ""))
+        return token or None
+    except (OSError, json.JSONDecodeError, AttributeError, TypeError):
+        return None
+
+
+def _shared_store_save(access_token: str, path: Path) -> None:
+    """Write-through in Trade_XV2's DhanTokenStore schema (atomic)."""
+    expiry = token_expiry(access_token)
+    expires_at = expiry.timestamp() if expiry else time.time() + 86400.0
+    payload = json.dumps({
+        "access_token": access_token,
+        "expires_at": expires_at,
+        "expires_at_ms": int(expires_at * 1000),
+        "source": "TOTP",
+    })
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp_path = tempfile.mkstemp(dir=path.parent, prefix=".token.")
+        with os.fdopen(fd, "w", encoding="utf-8") as tmp:
+            tmp.write(payload)
+        os.replace(tmp_path, path)
+    except OSError as exc:
+        # Shared store is an optimisation — never fail the mint over it.
+        logger.warning("dhan_shared_store_write_failed", extra={"error": str(exc)})
+
+
 class TokenBroadcast:
     """Registry of token receivers + broadcast.
 
@@ -218,6 +261,19 @@ def ensure_fresh_token(
     if token and is_token_fresh(token) and not force:
         return token
 
+    # Single-token-owner: before minting (which revokes the sibling
+    # project's token server-side), adopt a fresh token from the shared
+    # store if one exists and differs from the token we already hold —
+    # covers both "ours expired" and "ours broker-rejected after the
+    # sibling minted" without burning a TOTP mint.
+    shared_path = _shared_store_path()
+    if shared_path is not None:
+        shared = _shared_store_load(shared_path)
+        if shared and shared != token and is_token_fresh(shared):
+            logger.info("dhan_token_adopted_from_shared_store")
+            persist_token(shared, env_path)
+            return shared
+
     client_id = secrets.get_dhan_client_id()
     pin = secrets.get_dhan_pin()
     totp_secret = secrets.get_dhan_totp_secret()
@@ -246,4 +302,6 @@ def ensure_fresh_token(
     except Exception as exc:
         raise AuthenticationError(f"Token generation failed: {exc}") from exc
     persist_token(access_token, env_path)
+    if shared_path is not None:
+        _shared_store_save(access_token, shared_path)
     return access_token

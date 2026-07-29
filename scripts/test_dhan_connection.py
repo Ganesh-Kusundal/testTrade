@@ -299,7 +299,8 @@ class DhanEndpointTester:
         # Original test commented out until WebSocket module is created
         try:
             import asyncio
-            from scalpr.brokers.dhan.websocket import DhanWebSocketClient, ConnectionStatus
+
+            from scalpr.brokers.dhan.websocket import ConnectionStatus, DhanWebSocketClient
 
             async def test_ws():
                 ws = DhanWebSocketClient(

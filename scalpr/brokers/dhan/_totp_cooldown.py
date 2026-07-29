@@ -10,6 +10,7 @@ No sleeps/polling — callers get TotpRateLimitError with remaining seconds.
 from __future__ import annotations
 
 import json
+import os
 import threading
 import time
 from pathlib import Path
@@ -52,10 +53,22 @@ class TotpCooldownGuard:
     ) -> None:
         self._broker = broker.lower()
         self._cooldown_seconds = cooldown_seconds if cooldown_seconds is not None else DHAN_COOLDOWN_SECONDS
-        self._state_path = state_path or _REPO_ROOT / "runtime" / f"{self._broker}-totp-cooldown.json"
+        self._state_path = state_path or self._default_state_path()
         self._last_attempt_at: float | None = None
         self._last_success_at: float | None = None
         self._load_state()
+
+    def _default_state_path(self) -> Path:
+        """Env-overridable so sibling projects can share one cooldown budget.
+
+        ``DHAN_COOLDOWN_PATH`` (i.e. ``{BROKER}_COOLDOWN_PATH``) is the same
+        variable Trade_XV2 honours — the state schema is identical, so both
+        projects pointing at one file share the broker's TOTP rate limit.
+        """
+        override = os.environ.get(f"{self._broker.upper()}_COOLDOWN_PATH", "").strip()
+        if override:
+            return Path(override).expanduser()
+        return _REPO_ROOT / "runtime" / f"{self._broker}-totp-cooldown.json"
 
     @classmethod
     def for_broker(cls, broker: str, cooldown_seconds: float | None = None) -> TotpCooldownGuard:

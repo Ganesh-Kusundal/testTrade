@@ -1,7 +1,6 @@
 """Set up a live market data feed using DhanHQ WebSocket."""
 
 from dhanhq import MarketFeed
-
 from scripts.dhan_helpers import get_client
 
 _, dhan_context = get_client()

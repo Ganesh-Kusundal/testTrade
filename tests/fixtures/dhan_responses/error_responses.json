@@ -1,0 +1,172 @@
+{
+  "validation_error_400": {
+    "code": "DH-400",
+    "message": "Invalid request: securityId is required",
+    "httpStatus": 400
+  },
+  "auth_error_401": {
+    "code": "DH-401",
+    "message": "Invalid or expired access token",
+    "httpStatus": 401
+  },
+  "not_found_404": {
+    "code": "DH-404",
+    "message": "Resource not found: order ORD999999 does not exist",
+    "httpStatus": 404
+  },
+  "rate_limit_429": {
+    "code": "DH-429",
+    "message": "Rate limit exceeded. Please retry after 60 seconds",
+    "httpStatus": 429
+  },
+  "server_error_500": {
+    "code": "DH-500",
+    "message": "Internal server error. Please try again later",
+    "httpStatus": 500
+  },
+  "service_unavailable_503": {
+    "code": "DH-503",
+    "message": "Service temporarily unavailable. Downstream exchange feed disconnected",
+    "httpStatus": 503
+  },
+  "invalid_security_id": {
+    "code": "DH-1001",
+    "message": "Invalid securityId: 99999",
+    "httpStatus": 400
+  },
+  "invalid_order_type": {
+    "code": "DH-1002",
+    "message": "Unsupported order type: STOPLOSS",
+    "httpStatus": 400
+  },
+  "invalid_exchange_segment": {
+    "code": "DH-1003",
+    "message": "Unsupported exchange segment: NSE_FNO",
+    "httpStatus": 400
+  },
+  "invalid_transaction_type": {
+    "code": "DH-1004",
+    "message": "transactionType must be BUY or SELL",
+    "httpStatus": 400
+  },
+  "invalid_quantity": {
+    "code": "DH-1005",
+    "message": "Quantity must be a positive integer in lot size multiples",
+    "httpStatus": 400
+  },
+  "invalid_price": {
+    "code": "DH-1006",
+    "message": "Price must be greater than zero and within the price band",
+    "httpStatus": 400
+  },
+  "invalid_product_type": {
+    "code": "DH-1007",
+    "message": "Product type INTRADAY not allowed for CNC holdings",
+    "httpStatus": 400
+  },
+  "duplicate_correlation_id": {
+    "code": "DH-1008",
+    "message": "Duplicate correlationId: b8a9c7d6-e5f4-3210-fedc-ba9876543210",
+    "httpStatus": 409
+  },
+  "insufficient_margin": {
+    "code": "DH-2001",
+    "message": "Insufficient margin for order placement. Required: 25000.00, Available: 15000.00",
+    "httpStatus": 422
+  },
+  "position_not_found": {
+    "code": "DH-2002",
+    "message": "Position not found for securityId: 99999",
+    "httpStatus": 404
+  },
+  "duplicate_order": {
+    "code": "DH-2003",
+    "message": "Duplicate order detected with same correlationId",
+    "httpStatus": 409
+  },
+  "order_quantity_exceeds": {
+    "code": "DH-2004",
+    "message": "Order quantity exceeds available position for square-off",
+    "httpStatus": 422
+  },
+  "market_closed": {
+    "code": "DH-3001",
+    "message": "Market is closed. Orders can only be placed during market hours",
+    "httpStatus": 403
+  },
+  "trading_disabled": {
+    "code": "DH-3002",
+    "message": "Trading is currently disabled for this security by the exchange",
+    "httpStatus": 403
+  },
+  "circuit_breaker": {
+    "code": "DH-3003",
+    "message": "Circuit breaker triggered. Trading halted for 15 minutes",
+    "httpStatus": 403
+  },
+  "instrument_not_found": {
+    "code": "DH-4001",
+    "message": "Instrument not found for given securityId and exchangeSegment",
+    "httpStatus": 404
+  },
+  "instrument_inactive": {
+    "code": "DH-4002",
+    "message": "Instrument is inactive or expired",
+    "httpStatus": 400
+  },
+  "order_not_found": {
+    "code": "DH-5001",
+    "message": "Order not found: ORD999999",
+    "httpStatus": 404
+  },
+  "order_not_modifiable": {
+    "code": "DH-5002",
+    "message": "Order ORD123456 is in TRADED status and cannot be modified",
+    "httpStatus": 422
+  },
+  "order_not_cancellable": {
+    "code": "DH-5003",
+    "message": "Order ORD123456 is in REJECTED status and cannot be cancelled",
+    "httpStatus": 422
+  },
+  "rate_limit_per_second": {
+    "code": "DH-6001",
+    "message": "Too many requests per second. Maximum 50 requests per second allowed",
+    "httpStatus": 429
+  },
+  "rate_limit_per_minute": {
+    "code": "DH-6002",
+    "message": "Too many requests per minute. Maximum 200 requests per minute allowed",
+    "httpStatus": 429
+  },
+  "super_order_limit": {
+    "code": "DH-7001",
+    "message": "Maximum 10 active super orders allowed per client",
+    "httpStatus": 422
+  },
+  "forever_order_limit": {
+    "code": "DH-7002",
+    "message": "Maximum 25 forever orders allowed per client",
+    "httpStatus": 422
+  },
+  "invalid_trigger_type": {
+    "code": "DH-8001",
+    "message": "Invalid trigger type. Supported: PRICE_TRIGGER, PERCENTAGE_TRIGGER",
+    "httpStatus": 400
+  },
+  "trigger_not_found": {
+    "code": "DH-8002",
+    "message": "Conditional trigger TRIG999999 not found",
+    "httpStatus": 404
+  },
+  "kill_switch_active": {
+    "code": "DH-9001",
+    "message": "Kill switch is already ACTIVE",
+    "httpStatus": 409
+  },
+  "kill_switch_inactive": {
+    "code": "DH-9002",
+    "message": "Kill switch is already DEACTIVE. No action needed",
+    "httpStatus": 409
+  }
+}

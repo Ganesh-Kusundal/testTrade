@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 
 from scalpr.brokers.broker_port import ITradingPort
-from scalpr.brokers.errors import (
+from scalpr.domain.errors import (
     CircuitBreakerTripped,
     OrderRateLimitExceeded,
     PersistenceError,

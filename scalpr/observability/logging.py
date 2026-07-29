@@ -12,7 +12,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, ClassVar
 
-from scalpr.brokers.errors import TradingError
+from scalpr.domain.errors import TradingError
 from scalpr.observability.correlation import CorrelationIdFilter
 
 

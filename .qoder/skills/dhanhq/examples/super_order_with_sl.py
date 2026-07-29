@@ -1,6 +1,5 @@
 """Prepare a super order with target and trailing stop loss."""
 
-from dhanhq import OrderUpdate, dhanhq
 
 from scripts.dhan_helpers import get_client
 

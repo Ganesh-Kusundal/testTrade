@@ -1,0 +1,548 @@
+{
+  "underlying": "NIFTY",
+  "exchange": "NSE",
+  "expiry": "2026-07-30",
+  "strikes": [
+    {
+      "strike": 24500,
+      "ce": {
+        "security_id": "26001",
+        "ltp": 186.00,
+        "bid": 185.50,
+        "ask": 187.25,
+        "oi": 1250000,
+        "volume": 45000,
+        "iv": 14.25,
+        "delta": 0.52,
+        "theta": -0.18,
+        "gamma": 0.0032,
+        "vega": 8.45
+      },
+      "pe": {
+        "security_id": "26002",
+        "ltp": 143.00,
+        "bid": 142.00,
+        "ask": 143.75,
+        "oi": 980000,
+        "volume": 32000,
+        "iv": 15.10,
+        "delta": -0.48,
+        "theta": -0.15,
+        "gamma": 0.0035,
+        "vega": 7.90
+      }
+    },
+    {
+      "strike": 24550,
+      "ce": {
+        "security_id": "26013",
+        "ltp": 170.00,
+        "bid": 169.25,
+        "ask": 171.00,
+        "oi": 850000,
+        "volume": 28000,
+        "iv": 14.00,
+        "delta": 0.50,
+        "theta": -0.19,
+        "gamma": 0.0034,
+        "vega": 8.70
+      },
+      "pe": {
+        "security_id": "26014",
+        "ltp": 155.00,
+        "bid": 154.25,
+        "ask": 155.80,
+        "oi": 720000,
+        "volume": 22000,
+        "iv": 14.80,
+        "delta": -0.50,
+        "theta": -0.16,
+        "gamma": 0.0033,
+        "vega": 8.30
+      }
+    },
+    {
+      "strike": 24600,
+      "ce": {
+        "security_id": "26003",
+        "ltp": 155.75,
+        "bid": 155.00,
+        "ask": 156.50,
+        "oi": 1500000,
+        "volume": 52000,
+        "iv": 13.80,
+        "delta": 0.48,
+        "theta": -0.20,
+        "gamma": 0.0038,
+        "vega": 9.10
+      },
+      "pe": {
+        "security_id": "26004",
+        "ltp": 166.00,
+        "bid": 165.25,
+        "ask": 166.80,
+        "oi": 1100000,
+        "volume": 38000,
+        "iv": 14.50,
+        "delta": -0.52,
+        "theta": -0.17,
+        "gamma": 0.0030,
+        "vega": 8.75
+      }
+    },
+    {
+      "strike": 24650,
+      "ce": {
+        "security_id": "26015",
+        "ltp": 125.00,
+        "bid": 124.25,
+        "ask": 125.75,
+        "oi": 1100000,
+        "volume": 35000,
+        "iv": 13.60,
+        "delta": 0.43,
+        "theta": -0.21,
+        "gamma": 0.0040,
+        "vega": 9.50
+      },
+      "pe": {
+        "security_id": "26016",
+        "ltp": 195.00,
+        "bid": 194.00,
+        "ask": 196.00,
+        "oi": 650000,
+        "volume": 18000,
+        "iv": 15.20,
+        "delta": -0.57,
+        "theta": -0.15,
+        "gamma": 0.0028,
+        "vega": 8.10
+      }
+    },
+    {
+      "strike": 24700,
+      "ce": {
+        "security_id": "26005",
+        "ltp": 96.00,
+        "bid": 95.50,
+        "ask": 96.80,
+        "oi": 1100000,
+        "volume": 41000,
+        "iv": 13.40,
+        "delta": 0.38,
+        "theta": -0.22,
+        "gamma": 0.0042,
+        "vega": 9.80
+      },
+      "pe": {
+        "security_id": "26006",
+        "ltp": 226.00,
+        "bid": 225.00,
+        "ask": 227.50,
+        "oi": 850000,
+        "volume": 28000,
+        "iv": 15.80,
+        "delta": -0.62,
+        "theta": -0.14,
+        "gamma": 0.0025,
+        "vega": 7.40
+      }
+    },
+    {
+      "strike": 24750,
+      "ce": {
+        "security_id": "26017",
+        "ltp": 72.00,
+        "bid": 71.50,
+        "ask": 72.80,
+        "oi": 750000,
+        "volume": 25000,
+        "iv": 13.15,
+        "delta": 0.33,
+        "theta": -0.24,
+        "gamma": 0.0045,
+        "vega": 10.00
+      },
+      "pe": {
+        "security_id": "26018",
+        "ltp": 265.00,
+        "bid": 263.50,
+        "ask": 266.50,
+        "oi": 550000,
+        "volume": 15000,
+        "iv": 16.20,
+        "delta": -0.67,
+        "theta": -0.12,
+        "gamma": 0.0022,
+        "vega": 7.00
+      }
+    },
+    {
+      "strike": 24800,
+      "ce": {
+        "security_id": "26007",
+        "ltp": 52.50,
+        "bid": 52.00,
+        "ask": 53.25,
+        "oi": 800000,
+        "volume": 35000,
+        "iv": 12.90,
+        "delta": 0.28,
+        "theta": -0.25,
+        "gamma": 0.0048,
+        "vega": 10.20
+      },
+      "pe": {
+        "security_id": "26008",
+        "ltp": 316.50,
+        "bid": 315.00,
+        "ask": 318.00,
+        "oi": 650000,
+        "volume": 22000,
+        "iv": 16.50,
+        "delta": -0.72,
+        "theta": -0.11,
+        "gamma": 0.0019,
+        "vega": 6.80
+      }
+    },
+    {
+      "strike": 24850,
+      "ce": {
+        "security_id": "26019",
+        "ltp": 36.00,
+        "bid": 35.50,
+        "ask": 36.80,
+        "oi": 600000,
+        "volume": 20000,
+        "iv": 12.70,
+        "delta": 0.23,
+        "theta": -0.27,
+        "gamma": 0.0052,
+        "vega": 10.50
+      },
+      "pe": {
+        "security_id": "26020",
+        "ltp": 370.00,
+        "bid": 368.00,
+        "ask": 372.00,
+        "oi": 480000,
+        "volume": 12000,
+        "iv": 16.85,
+        "delta": -0.77,
+        "theta": -0.09,
+        "gamma": 0.0016,
+        "vega": 6.40
+      }
+    },
+    {
+      "strike": 24900,
+      "ce": {
+        "security_id": "26009",
+        "ltp": 23.00,
+        "bid": 22.50,
+        "ask": 23.75,
+        "oi": 550000,
+        "volume": 28000,
+        "iv": 12.50,
+        "delta": 0.18,
+        "theta": -0.28,
+        "gamma": 0.0055,
+        "vega": 10.80
+      },
+      "pe": {
+        "security_id": "26010",
+        "ltp": 426.50,
+        "bid": 425.00,
+        "ask": 428.00,
+        "oi": 400000,
+        "volume": 15000,
+        "iv": 17.20,
+        "delta": -0.82,
+        "theta": -0.08,
+        "gamma": 0.0014,
+        "vega": 5.90
+      }
+    },
+    {
+      "strike": 24950,
+      "ce": {
+        "security_id": "26021",
+        "ltp": 14.50,
+        "bid": 14.00,
+        "ask": 15.00,
+        "oi": 420000,
+        "volume": 15000,
+        "iv": 12.30,
+        "delta": 0.14,
+        "theta": -0.29,
+        "gamma": 0.0058,
+        "vega": 11.00
+      },
+      "pe": {
+        "security_id": "26022",
+        "ltp": 485.00,
+        "bid": 482.00,
+        "ask": 488.00,
+        "oi": 320000,
+        "volume": 9000,
+        "iv": 17.60,
+        "delta": -0.86,
+        "theta": -0.06,
+        "gamma": 0.0012,
+        "vega": 5.40
+      }
+    },
+    {
+      "strike": 25000,
+      "ce": {
+        "security_id": "26011",
+        "ltp": 9.00,
+        "bid": 8.75,
+        "ask": 9.50,
+        "oi": 350000,
+        "volume": 18000,
+        "iv": 12.10,
+        "delta": 0.10,
+        "theta": -0.30,
+        "gamma": 0.0060,
+        "vega": 11.20
+      },
+      "pe": {
+        "security_id": "26012",
+        "ltp": 548.00,
+        "bid": 545.00,
+        "ask": 550.00,
+        "oi": 250000,
+        "volume": 10000,
+        "iv": 18.00,
+        "delta": -0.90,
+        "theta": -0.05,
+        "gamma": 0.0010,
+        "vega": 4.80
+      }
+    }
+  ],
+  "raw_oc_payload": {
+    "data": {
+      "oc": {
+        "24500": {
+          "ce": {
+            "security_id": "26001",
+            "last_price": 186.00,
+            "top_bid_price": 185.50,
+            "top_bid_quantity": 150,
+            "top_ask_price": 187.25,
+            "top_ask_quantity": 200,
+            "oi": 1250000,
+            "volume": 45000,
+            "implied_volatility": 14.25,
+            "greeks": {
+              "delta": 0.52,
+              "theta": -0.18,
+              "gamma": 0.0032,
+              "vega": 8.45
+            }
+          },
+          "pe": {
+            "security_id": "26002",
+            "last_price": 143.00,
+            "top_bid_price": 142.00,
+            "top_bid_quantity": 100,
+            "top_ask_price": 143.75,
+            "top_ask_quantity": 180,
+            "oi": 980000,
+            "volume": 32000,
+            "implied_volatility": 15.10,
+            "greeks": {
+              "delta": -0.48,
+              "theta": -0.15,
+              "gamma": 0.0035,
+              "vega": 7.90
+            }
+          }
+        },
+        "24600": {
+          "ce": {
+            "security_id": "26003",
+            "last_price": 155.75,
+            "top_bid_price": 155.00,
+            "top_bid_quantity": 200,
+            "top_ask_price": 156.50,
+            "top_ask_quantity": 250,
+            "oi": 1500000,
+            "volume": 52000,
+            "implied_volatility": 13.80,
+            "greeks": {
+              "delta": 0.48,
+              "theta": -0.20,
+              "gamma": 0.0038,
+              "vega": 9.10
+            }
+          },
+          "pe": {
+            "security_id": "26004",
+            "last_price": 166.00,
+            "top_bid_price": 165.25,
+            "top_bid_quantity": 120,
+            "top_ask_price": 166.80,
+            "top_ask_quantity": 160,
+            "oi": 1100000,
+            "volume": 38000,
+            "implied_volatility": 14.50,
+            "greeks": {
+              "delta": -0.52,
+              "theta": -0.17,
+              "gamma": 0.0030,
+              "vega": 8.75
+            }
+          }
+        },
+        "24700": {
+          "ce": {
+            "security_id": "26005",
+            "last_price": 96.00,
+            "top_bid_price": 95.50,
+            "top_bid_quantity": 300,
+            "top_ask_price": 96.80,
+            "top_ask_quantity": 350,
+            "oi": 1100000,
+            "volume": 41000,
+            "implied_volatility": 13.40,
+            "greeks": {
+              "delta": 0.38,
+              "theta": -0.22,
+              "gamma": 0.0042,
+              "vega": 9.80
+            }
+          },
+          "pe": {
+            "security_id": "26006",
+            "last_price": 226.00,
+            "top_bid_price": 225.00,
+            "top_bid_quantity": 80,
+            "top_ask_price": 227.50,
+            "top_ask_quantity": 120,
+            "oi": 850000,
+            "volume": 28000,
+            "implied_volatility": 15.80,
+            "greeks": {
+              "delta": -0.62,
+              "theta": -0.14,
+              "gamma": 0.0025,
+              "vega": 7.40
+            }
+          }
+        },
+        "24800": {
+          "ce": {
+            "security_id": "26007",
+            "last_price": 52.50,
+            "top_bid_price": 52.00,
+            "top_bid_quantity": 400,
+            "top_ask_price": 53.25,
+            "top_ask_quantity": 500,
+            "oi": 800000,
+            "volume": 35000,
+            "implied_volatility": 12.90,
+            "greeks": {
+              "delta": 0.28,
+              "theta": -0.25,
+              "gamma": 0.0048,
+              "vega": 10.20
+            }
+          },
+          "pe": {
+            "security_id": "26008",
+            "last_price": 316.50,
+            "top_bid_price": 315.00,
+            "top_bid_quantity": 60,
+            "top_ask_price": 318.00,
+            "top_ask_quantity": 90,
+            "oi": 650000,
+            "volume": 22000,
+            "implied_volatility": 16.50,
+            "greeks": {
+              "delta": -0.72,
+              "theta": -0.11,
+              "gamma": 0.0019,
+              "vega": 6.80
+            }
+          }
+        },
+        "24900": {
+          "ce": {
+            "security_id": "26009",
+            "last_price": 23.00,
+            "top_bid_price": 22.50,
+            "top_bid_quantity": 600,
+            "top_ask_price": 23.75,
+            "top_ask_quantity": 700,
+            "oi": 550000,
+            "volume": 28000,
+            "implied_volatility": 12.50,
+            "greeks": {
+              "delta": 0.18,
+              "theta": -0.28,
+              "gamma": 0.0055,
+              "vega": 10.80
+            }
+          },
+          "pe": {
+            "security_id": "26010",
+            "last_price": 426.50,
+            "top_bid_price": 425.00,
+            "top_bid_quantity": 40,
+            "top_ask_price": 428.00,
+            "top_ask_quantity": 60,
+            "oi": 400000,
+            "volume": 15000,
+            "implied_volatility": 17.20,
+            "greeks": {
+              "delta": -0.82,
+              "theta": -0.08,
+              "gamma": 0.0014,
+              "vega": 5.90
+            }
+          }
+        },
+        "25000": {
+          "ce": {
+            "security_id": "26011",
+            "last_price": 9.00,
+            "top_bid_price": 8.75,
+            "top_bid_quantity": 800,
+            "top_ask_price": 9.50,
+            "top_ask_quantity": 1000,
+            "oi": 350000,
+            "volume": 18000,
+            "implied_volatility": 12.10,
+            "greeks": {
+              "delta": 0.10,
+              "theta": -0.30,
+              "gamma": 0.0060,
+              "vega": 11.20
+            }
+          },
+          "pe": {
+            "security_id": "26012",
+            "last_price": 548.00,
+            "top_bid_price": 545.00,
+            "top_bid_quantity": 25,
+            "top_ask_price": 550.00,
+            "top_ask_quantity": 40,
+            "oi": 250000,
+            "volume": 10000,
+            "implied_volatility": 18.00,
+            "greeks": {
+              "delta": -0.90,
+              "theta": -0.05,
+              "gamma": 0.0010,
+              "vega": 4.80
+            }
+          }
+        }
+      }
+    }
+  }
+}

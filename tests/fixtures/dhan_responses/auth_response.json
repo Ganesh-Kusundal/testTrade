@@ -1,0 +1,6 @@
+{
+  "accessToken": "test-access-token-client001-abc123def456ghi789jkl",
+  "tokenType": "Bearer",
+  "expiresIn": 86400,
+  "clientId": "CLIENT001"
+}

@@ -22,6 +22,7 @@ from scalpr.brokers import Gateway
 from scalpr.brokers.registry import BrokerRegistry
 from scalpr.domain.tick import Tick
 
+
 def print_header(title: str) -> None:
     """Print formatted section header."""
     print(f"\n{'='*70}")
@@ -41,10 +42,10 @@ def validate_research_workflow() -> int:
     print("  GATEWAY RESEARCH WORKFLOW VALIDATION")
     print(f"  Timestamp: {datetime.now().isoformat()}")
     print("="*70)
-    
+
     workflow_passed = True
     tick_count = 0
-    
+
     # Step 1: Discover brokers
     print_header("STEP 1: Discover Available Brokers")
     try:
@@ -57,7 +58,7 @@ def validate_research_workflow() -> int:
     except Exception as e:
         print_result("Brokers discovered", False, str(e))
         workflow_passed = False
-    
+
     # Step 2: Create Gateway and connect
     print_header("STEP 2: Create Gateway and Connect")
     try:
@@ -69,20 +70,20 @@ def validate_research_workflow() -> int:
         print_result("Gateway created", False, str(e))
         workflow_passed = False
         return 1
-    
+
     # Step 3: Get funds
     print_header("STEP 3: Get Account Funds")
     try:
         funds = g.funds()
         has_funds = funds.available > 0
-        print_result("Funds retrieved", has_funds, 
+        print_result("Funds retrieved", has_funds,
                     f"Available: ₹{funds.available:,.2f}")
         if not has_funds:
             workflow_passed = False
     except Exception as e:
         print_result("Funds retrieved", False, str(e))
         workflow_passed = False
-    
+
     # Step 4: Get LTP
     print_header("STEP 4: Look Up LTP")
     try:
@@ -94,7 +95,7 @@ def validate_research_workflow() -> int:
     except Exception as e:
         print_result("LTP retrieved", False, str(e))
         workflow_passed = False
-    
+
     # Step 5: Get quote
     print_header("STEP 5: Get Full Quote")
     try:
@@ -107,7 +108,7 @@ def validate_research_workflow() -> int:
     except Exception as e:
         print_result("Quote retrieved", False, str(e))
         workflow_passed = False
-    
+
     # Step 6: Get historical data
     print_header("STEP 6: Get Historical Data")
     try:
@@ -123,17 +124,17 @@ def validate_research_workflow() -> int:
     except Exception as e:
         print_result("History retrieved", False, str(e))
         workflow_passed = False
-    
+
     # Step 7: Check positions
     print_header("STEP 7: Check Positions")
     try:
         positions = g.positions()
-        print_result("Positions retrieved", True, 
+        print_result("Positions retrieved", True,
                     f"Active positions: {len(positions)}")
     except Exception as e:
         print_result("Positions retrieved", False, str(e))
         workflow_passed = False
-    
+
     # Step 8: Check holdings
     print_header("STEP 8: Check Holdings")
     try:
@@ -143,25 +144,25 @@ def validate_research_workflow() -> int:
     except Exception as e:
         print_result("Holdings retrieved", False, str(e))
         workflow_passed = False
-    
+
     # Step 9: Test streaming capability
     print_header("STEP 9: Test Streaming Capability")
     try:
         has_stream = hasattr(g, 'stream')
         print_result("Stream method available", has_stream)
-        
+
         if has_stream:
             # Quick stream test (2 seconds)
             ticks_received = []
-            
+
             def on_tick(tick: Tick) -> None:
                 ticks_received.append(tick)
-            
+
             print("     Subscribing to TCS for 2 seconds...")
             g.stream("TCS", callback=on_tick)
             time.sleep(2)
             g.stop_stream()
-            
+
             if len(ticks_received) > 0:
                 print_result("Streaming works", True,
                             f"Received {len(ticks_received)} ticks")
@@ -171,7 +172,7 @@ def validate_research_workflow() -> int:
     except Exception as e:
         print_result("Streaming test", False, str(e))
         workflow_passed = False
-    
+
     # Step 10: Cleanup
     print_header("STEP 10: Cleanup")
     try:
@@ -180,7 +181,7 @@ def validate_research_workflow() -> int:
     except Exception as e:
         print_result("Disconnected", False, str(e))
         workflow_passed = False
-    
+
     # Summary
     print_header("RESEARCH WORKFLOW VALIDATION SUMMARY")
     if workflow_passed:

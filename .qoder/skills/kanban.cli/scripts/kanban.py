@@ -18,13 +18,13 @@ import hashlib
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
 import tempfile
-import tomllib
 from datetime import datetime, timezone
 from pathlib import Path
+
+import tomllib
 
 # ── constants ────────────────────────────────────────────────────────────────
 
@@ -92,7 +92,7 @@ def load_state(root: Path) -> dict:
     if not state_path.exists():
         die(f"no kanban state at {root}. Run `{SCRIPT_NAME} init` first.", 2)
     try:
-        with open(state_path, "r", encoding="utf-8") as f:
+        with open(state_path, encoding="utf-8") as f:
             return json.load(f)
     except (json.JSONDecodeError, OSError) as e:
         die(f"state.json is corrupt or unreadable: {e}", 2)
@@ -242,7 +242,7 @@ def _build_board_lines(state: dict) -> list[str]:
 def git_cmd(args: list[str], cwd: Path) -> str:
     try:
         result = subprocess.run(
-            ["git"] + args,
+            ["git", *args],
             cwd=cwd,
             capture_output=True,
             text=True,
@@ -353,7 +353,7 @@ def scan_tests(root: Path) -> tuple[int, int]:
             continue
         test_files += 1
         try:
-            with open(path, "r", encoding="utf-8", errors="replace") as f:
+            with open(path, encoding="utf-8", errors="replace") as f:
                 for line in f:
                     if pattern.match(line):
                         test_functions += 1
@@ -764,7 +764,7 @@ def cmd_card_show(args, root: Path) -> None:
     if changed_files:
         print(f"  ⚠ Changed files: {', '.join(changed_files)}")
     print(f"  Detail: {card.get('detail', '') or '(none)'}")
-    print(f"  History:")
+    print("  History:")
     for h in card.get("history", []):
         print(f"    {h['at']}: {h['from']} → {h['to']}")
 
@@ -1227,14 +1227,14 @@ def cmd_sync_tracker(args, root: Path) -> None:
     risks_high = [(rid, r) for rid, r in risks.items() if r["severity"] == "high" and r["status"] == "open"]
 
     lines = [
-        f"<!-- kanban:begin -->",
-        f"## Kanban Board Summary (auto-generated)",
-        f"",
+        "<!-- kanban:begin -->",
+        "## Kanban Board Summary (auto-generated)",
+        "",
         f"**Branch:** `{g['branch']}` @ `{g['head']}` ({len(g['dirty'])} dirty)  ",
         f"**Scanned:** {scan.get('at', 'never')}  ",
         f"**src:** {scan['counts']['src_files']} files | **tests:** {scan['counts']['test_files']} files / {scan['counts']['test_functions']} fns",
-        f"",
-        f"### In Progress",
+        "",
+        "### In Progress",
     ]
     if in_progress:
         for cid, card in sorted(in_progress, key=lambda x: x[1]["priority"]):
@@ -1242,40 +1242,40 @@ def cmd_sync_tracker(args, root: Path) -> None:
     else:
         lines.append("- (none)")
 
-    lines.append(f"")
-    lines.append(f"### Blocked")
+    lines.append("")
+    lines.append("### Blocked")
     if blocked:
         for cid, card in sorted(blocked, key=lambda x: x[1]["priority"]):
             lines.append(f"- **{cid}** [{card['priority']}] {card['title']} — {card.get('blocked_by', '')}")
     else:
         lines.append("- (none)")
 
-    lines.append(f"")
-    lines.append(f"### Done This Session")
+    lines.append("")
+    lines.append("### Done This Session")
     if done:
         for cid, card in done[:10]:
             lines.append(f"- **{cid}** [{card['priority']}] {card['title']}")
     else:
         lines.append("- (none)")
 
-    lines.append(f"")
-    lines.append(f"### Open Bugs")
+    lines.append("")
+    lines.append("### Open Bugs")
     if bugs_open:
         for cid, card in sorted(bugs_open, key=lambda x: x[1]["priority"]):
             lines.append(f"- **{cid}** [{card['priority']}] {card['title']}")
     else:
         lines.append("- (none)")
 
-    lines.append(f"")
-    lines.append(f"### High Risks")
+    lines.append("")
+    lines.append("### High Risks")
     if risks_high:
         for rid, r in risks_high:
             lines.append(f"- **{rid}** {r.get('area', '')}: {r['desc']}")
     else:
         lines.append("- (none)")
 
-    lines.append(f"")
-    lines.append(f"<!-- kanban:end -->")
+    lines.append("")
+    lines.append("<!-- kanban:end -->")
     print("\n".join(lines))
 
 
@@ -1428,7 +1428,7 @@ def run_selftest() -> None:
         ns = argparse.Namespace(id="K-001", lane="blocked", note="")
         try:
             cmd_card_move(ns, tmp)
-            assert False, "should have raised"
+            raise AssertionError("should have raised")
         except SystemExit:
             asserts += 1
 

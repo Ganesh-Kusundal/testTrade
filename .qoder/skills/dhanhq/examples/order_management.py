@@ -8,11 +8,10 @@ Demonstrates:
 - Viewing the order book and trade book
 """
 
-import time
 import os
+import time
 
 from dhanhq import dhanhq
-
 from scripts.dhan_helpers import get_client, preview_order
 
 dhan, _ = get_client()

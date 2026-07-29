@@ -1,7 +1,6 @@
 """Prepare a Nifty option order using current option-chain data."""
 
 from dhanhq import dhanhq
-
 from scripts.dhan_helpers import (
     check_margin,
     fetch_chain_df,

@@ -88,6 +88,37 @@ class OptionChainAdapter:
         )
         return chain
 
+    def get_expiry_dates(
+        self,
+        underlying_symbol: str,
+        exchange: str,
+    ) -> list[date]:
+        """List available option expiry dates for an underlying.
+
+        Public counterpart of the internal expiry cache — lets callers
+        pick an expiry, then fetch chain/greeks, without private access.
+
+        Args:
+            underlying_symbol: Symbol of the underlying (e.g. "NIFTY", "CRUDEOIL").
+            exchange: Exchange code (e.g. "NSE", "MCX").
+
+        Returns:
+            Sorted list of expiry dates (cached per underlying for the
+            adapter's lifetime).
+
+        Raises:
+            OptionChainNotSupported: If the instrument is not optionable.
+        """
+        security_id, segment = self._resolve_underlying(underlying_symbol, exchange)
+
+        if segment not in OPTIONABLE_SEGMENTS:
+            raise OptionChainNotSupported(
+                f"Expiry list not supported for {underlying_symbol} ({exchange}) "
+                f"— only available for indices and F&O instruments"
+            )
+
+        return list(self._expiries(security_id, segment))
+
     def get_future_symbol(
         self,
         underlying_symbol: str,
@@ -185,7 +216,7 @@ class OptionChainAdapter:
         underlying_symbol: str,
         exchange: str,
         strike: Decimal,
-        expiry: date,
+        expiry: date | None,
         option_type: str,
     ) -> dict[str, Any] | None:
         """Get greeks for a specific option leg from the option chain.
@@ -197,7 +228,8 @@ class OptionChainAdapter:
             underlying_symbol: Underlying symbol (e.g. "NIFTY").
             exchange: Exchange code.
             strike: Strike price.
-            expiry: Expiry date.
+            expiry: Expiry date. If *None*, the next available expiry
+                    is resolved automatically.
             option_type: "CE" or "PE".
 
         Returns:
@@ -205,6 +237,12 @@ class OptionChainAdapter:
             delta, theta, gamma, vega, iv, ltp, oi, volume, bid, ask.
             None if the specific leg is not found.
         """
+        if expiry is None:
+            security_id, segment = self._resolve_underlying(
+                underlying_symbol, exchange
+            )
+            expiry = self._resolve_next_expiry(security_id, segment)
+
         chain = self.get_option_chain(underlying_symbol, exchange, expiry=expiry)
         strike_dec = Decimal(str(strike))
         ot = option_type.upper()
@@ -273,11 +311,9 @@ class OptionChainAdapter:
         """
         return self._resolver.resolve_underlying_for_options(symbol, exchange)
 
-    def _resolve_next_expiry(self, security_id: int, segment: str) -> date:
-        """Fetch expiry list and return the earliest future expiry."""
+    def _expiries(self, security_id: int, segment: str) -> list[date]:
+        """Fetch (or serve from cache) the sorted expiry list."""
         cache_key = f"{security_id}:{segment}"
-        today = date.today()
-
         expiries = self._expiry_cache.get(cache_key)
         if expiries is None:
             raw = self._client.post(
@@ -287,6 +323,12 @@ class OptionChainAdapter:
             raw_list = raw.get("data", [])
             expiries = sorted({date.fromisoformat(e) for e in raw_list})
             self._expiry_cache[cache_key] = expiries
+        return expiries
+
+    def _resolve_next_expiry(self, security_id: int, segment: str) -> date:
+        """Fetch expiry list and return the earliest future expiry."""
+        today = date.today()
+        expiries = self._expiries(security_id, segment)
 
         # Pick the first expiry that is >= today
         for exp in expiries:

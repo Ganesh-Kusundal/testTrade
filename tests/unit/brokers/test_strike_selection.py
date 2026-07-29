@@ -162,8 +162,7 @@ class TestHandleStrikeSelection:
         resolved = _make_resolved()
         mock_oc = MagicMock()
         mock_oc.select_strikes.return_value = [Decimal("24000")]
-        mock_oc._expiry_cache = {"13:IDX_I": [date(2026, 7, 25)]}
-        mock_oc._resolve_next_expiry = MagicMock()
+        mock_oc.get_expiry_dates.return_value = [date(2026, 7, 25)]
 
         mock_market = MagicMock()
         mock_market.get_ltp_by_id.return_value = Decimal("24050")

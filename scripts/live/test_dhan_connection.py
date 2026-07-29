@@ -1,6 +1,8 @@
 import os
+
 import requests
 from dotenv import load_dotenv
+
 from config.endpoints import Dhan
 
 load_dotenv(".env")
@@ -35,4 +37,3 @@ try:
     print(json.dumps(res, indent=2))
 except Exception as e:
     print(f"Connection Failed: {e}")
-

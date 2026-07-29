@@ -23,17 +23,15 @@ Environment Variables:
 
 import argparse
 import os
-import sys
-from typing import Optional
 
 import matplotlib
+
 matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from scipy import stats
-
 
 # ── Configuration ───────────────────────────────────────────────────
 BACKGROUND = "#1a1a2e"
@@ -127,10 +125,7 @@ def generate_trade_list(n_trades: int = 80, seed: int = SEED) -> pd.DataFrame:
 
         # 55% win rate with positive skew
         is_win = rng.random() < 0.55
-        if is_win:
-            ret = float(rng.exponential(0.04))
-        else:
-            ret = -float(rng.exponential(0.035))
+        ret = float(rng.exponential(0.04)) if is_win else -float(rng.exponential(0.035))
 
         size_usd = float(rng.uniform(200, 2000))
         side = "long" if rng.random() > 0.25 else "short"
@@ -255,8 +250,8 @@ def page_equity(equity: pd.Series, metrics: dict,
     ax1.text(
         0.02, 0.95, stats_text, transform=ax1.transAxes,
         fontsize=10, fontfamily="monospace", verticalalignment="top",
-        bbox=dict(boxstyle="round,pad=0.4", facecolor="#222233",
-                  edgecolor=GRID_COLOR, alpha=0.9),
+        bbox={"boxstyle": "round,pad=0.4", "facecolor": "#222233",
+                  "edgecolor": GRID_COLOR, "alpha": 0.9},
     )
 
     ax2.fill_between(equity.index, dd, 0, color=RED, alpha=0.5)
@@ -401,11 +396,11 @@ def page_trades(trades: pd.DataFrame, output_dir: str) -> str:
         avg_ret = float(subset.mean()) if len(subset) > 0 else 0
         colors_hold.append(GREEN if avg_ret >= 0 else RED)
 
-    counts, _, patches = ax2.hist(
+    _counts, _, patches = ax2.hist(
         trades["hold_hours"], bins=hold_bins, alpha=0.7,
         color=BLUE, edgecolor="#222222"
     )
-    for patch, c in zip(patches, colors_hold):
+    for patch, c in zip(patches, colors_hold, strict=False):
         patch.set_facecolor(c)
         patch.set_alpha(0.7)
 

@@ -7,8 +7,8 @@ Usage:
     from trade_logger import log_order, get_today_orders, get_trade_history
 """
 
-import os
 import json
+import os
 from datetime import datetime, timedelta
 
 

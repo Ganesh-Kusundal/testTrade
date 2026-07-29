@@ -89,17 +89,9 @@ class InstrumentHandle:
                 f"Expiry list not available for {self.symbol} "
                 f"— only available for indices and F&O instruments"
             )
-        # Access the adapter's cached expiry list
-        cache_key = f"{self._resolved.security_id}:{self._resolved.wire_segment}"
-        cached = self._option_chain._expiry_cache.get(cache_key)
-        if cached:
-            return list(cached)
-        # Force a fetch by resolving next expiry (populates cache)
-        self._option_chain._resolve_next_expiry(
-            int(self._resolved.security_id),
-            self._resolved.wire_segment,
+        return self._option_chain.get_expiry_dates(  # type: ignore[no-any-return]
+            self.symbol, self.exchange
         )
-        return list(self._option_chain._expiry_cache.get(cache_key, []))
 
     def future_script(self, expiry_idx: int = 0) -> str:
         """Get the future trading symbol for this underlying instrument.
@@ -146,13 +138,8 @@ class InstrumentHandle:
             )
         # Get spot price from market data
         spot = self._get_spot_for_chain()
-        # Resolve expiry from the adapter's expiry cache
-        wire_seg = self._resolved.wire_segment
-        cache_key = f"{self._resolved.security_id}:{wire_seg}"
-        self._option_chain._resolve_next_expiry(
-            int(self._resolved.security_id), wire_seg
-        )
-        expiries = self._option_chain._expiry_cache.get(cache_key, [])
+        # Resolve expiry via the adapter's public expiry API
+        expiries = self._option_chain.get_expiry_dates(self.symbol, self.exchange)
         if expiry_idx >= len(expiries):
             raise ValueError(
                 f"expiry_idx {expiry_idx} out of range "
@@ -167,15 +154,16 @@ class InstrumentHandle:
     def option_greeks(
         self,
         strike: Decimal,
-        expiry: date,
         option_type: str,
+        expiry: date | None = None,
     ) -> dict[str, Any] | None:
         """Get greeks for a specific option on this underlying.
 
         Args:
             strike: Strike price.
-            expiry: Expiry date.
             option_type: "CE" or "PE".
+            expiry: Expiry date. If *None*, the next available expiry is
+                    resolved automatically.
 
         Returns:
             Dict with greeks (delta, theta, gamma, vega, iv) and market

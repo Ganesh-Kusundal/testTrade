@@ -1,0 +1,144 @@
+{
+  "data": {
+    "NSE": [
+      {
+        "securityId": "11536",
+        "tradingSymbol": "RELIANCE",
+        "lastTradedPrice": 2850.75,
+        "bidPrice": [2850.00, 2849.95, 2849.90, 2849.85, 2849.80],
+        "bidQuantity": [750, 500, 300, 150, 100],
+        "askPrice": [2850.80, 2850.85, 2850.90, 2850.95, 2851.00],
+        "askQuantity": [400, 250, 200, 100, 50],
+        "totalTradedVolume": 3892500,
+        "oi": 45231000,
+        "lastTradedTime": "2026-07-29T10:30:00"
+      },
+      {
+        "securityId": "11537",
+        "tradingSymbol": "TCS",
+        "lastTradedPrice": 4198.30,
+        "bidPrice": [4198.00, 4197.85, 4197.70, 4197.55, 4197.40],
+        "bidQuantity": [200, 150, 100, 50, 25],
+        "askPrice": [4198.50, 4198.65, 4198.80, 4198.95, 4199.10],
+        "askQuantity": [300, 200, 100, 75, 50],
+        "totalTradedVolume": 1578000,
+        "oi": 18340000,
+        "lastTradedTime": "2026-07-29T10:29:58"
+      },
+      {
+        "securityId": "11538",
+        "tradingSymbol": "INFY",
+        "lastTradedPrice": 1825.40,
+        "bidPrice": [1825.20, 1825.10, 1825.00, 1824.90, 1824.80],
+        "bidQuantity": [500, 350, 200, 100, 50],
+        "askPrice": [1825.55, 1825.70, 1825.85, 1826.00, 1826.15],
+        "askQuantity": [250, 150, 100, 50, 25],
+        "totalTradedVolume": 4120000,
+        "oi": 29850000,
+        "lastTradedTime": "2026-07-29T10:30:02"
+      },
+      {
+        "securityId": "26000",
+        "tradingSymbol": "NIFTY",
+        "lastTradedPrice": 24650.00,
+        "bidPrice": [24649.95, 24649.90, 24649.85, 24649.80, 24649.75],
+        "bidQuantity": [25, 20, 15, 10, 5],
+        "askPrice": [24650.05, 24650.10, 24650.15, 24650.20, 24650.25],
+        "askQuantity": [25, 20, 15, 10, 5],
+        "totalTradedVolume": 892000,
+        "oi": 0,
+        "lastTradedTime": "2026-07-29T10:30:01"
+      }
+    ],
+    "BSE": [
+      {
+        "securityId": "500325",
+        "tradingSymbol": "RELIANCE",
+        "lastTradedPrice": 2851.20,
+        "bidPrice": [2851.00, 2850.90, 2850.80, 2850.70, 2850.60],
+        "bidQuantity": [100, 75, 50, 25, 10],
+        "askPrice": [2851.40, 2851.50, 2851.60, 2851.70, 2851.80],
+        "askQuantity": [150, 100, 50, 25, 10],
+        "totalTradedVolume": 425000,
+        "oi": 0,
+        "lastTradedTime": "2026-07-29T10:29:55"
+      },
+      {
+        "securityId": "500209",
+        "tradingSymbol": "SENSEX",
+        "lastTradedPrice": 81975.50,
+        "bidPrice": [81975.00, 81974.50, 81974.00, 81973.50, 81973.00],
+        "bidQuantity": [50, 30, 20, 10, 5],
+        "askPrice": [81976.00, 81976.50, 81977.00, 81977.50, 81978.00],
+        "askQuantity": [80, 50, 30, 15, 10],
+        "totalTradedVolume": 189000,
+        "oi": 0,
+        "lastTradedTime": "2026-07-29T10:29:50"
+      }
+    ],
+    "MCX": [
+      {
+        "securityId": "10001",
+        "tradingSymbol": "CRUDEOIL29AUG2026FUT",
+        "lastTradedPrice": 6152.00,
+        "bidPrice": [6151.00, 6150.00, 6149.00, 6148.00, 6147.00],
+        "bidQuantity": [10, 8, 6, 4, 2],
+        "askPrice": [6153.00, 6154.00, 6155.00, 6156.00, 6157.00],
+        "askQuantity": [10, 8, 6, 4, 2],
+        "totalTradedVolume": 15200,
+        "oi": 187500,
+        "lastTradedTime": "2026-07-29T10:30:00"
+      },
+      {
+        "securityId": "10002",
+        "tradingSymbol": "GOLD",
+        "lastTradedPrice": 71250.00,
+        "bidPrice": [71240.00, 71230.00, 71220.00, 71210.00, 71200.00],
+        "bidQuantity": [15, 12, 10, 5, 3],
+        "askPrice": [71260.00, 71270.00, 71280.00, 71290.00, 71300.00],
+        "askQuantity": [12, 10, 8, 5, 3],
+        "totalTradedVolume": 8900,
+        "oi": 42500,
+        "lastTradedTime": "2026-07-29T10:29:58"
+      },
+      {
+        "securityId": "10003",
+        "tradingSymbol": "SILVER",
+        "lastTradedPrice": 89250.00,
+        "bidPrice": [89240.00, 89230.00, 89220.00, 89210.00, 89200.00],
+        "bidQuantity": [8, 6, 4, 2, 1],
+        "askPrice": [89260.00, 89270.00, 89280.00, 89290.00, 89300.00],
+        "askQuantity": [8, 6, 4, 2, 1],
+        "totalTradedVolume": 5200,
+        "oi": 18200,
+        "lastTradedTime": "2026-07-29T10:29:55"
+      }
+    ],
+    "NSE_FNO": [
+      {
+        "securityId": "26013",
+        "tradingSymbol": "BANKNIFTY",
+        "lastTradedPrice": 51250.00,
+        "bidPrice": [51249.90, 51249.80, 51249.70, 51249.60, 51249.50],
+        "bidQuantity": [15, 12, 10, 8, 5],
+        "askPrice": [51250.10, 51250.20, 51250.30, 51250.40, 51250.50],
+        "askQuantity": [15, 12, 10, 8, 5],
+        "totalTradedVolume": 425000,
+        "oi": 0,
+        "lastTradedTime": "2026-07-29T10:30:03"
+      },
+      {
+        "securityId": "26014",
+        "tradingSymbol": "NIFTY28AUG2026FUT",
+        "lastTradedPrice": 24750.00,
+        "bidPrice": [24749.85, 24749.70, 24749.55, 24749.40, 24749.25],
+        "bidQuantity": [100, 75, 50, 25, 10],
+        "askPrice": [24750.15, 24750.30, 24750.45, 24750.60, 24750.75],
+        "askQuantity": [120, 80, 60, 30, 15],
+        "totalTradedVolume": 675000,
+        "oi": 1250000,
+        "lastTradedTime": "2026-07-29T10:30:02"
+      }
+    ]
+  }
+}

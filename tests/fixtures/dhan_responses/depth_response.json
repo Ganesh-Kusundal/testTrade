@@ -1,0 +1,127 @@
+{
+  "nse_equity_reliance": {
+    "securityId": "11536",
+    "tradingSymbol": "RELIANCE",
+    "exchangeSegment": "NSE_EQ",
+    "depth": {
+      "bid": [
+        {"price": 2850.00, "quantity": 750, "orders": 5},
+        {"price": 2849.95, "quantity": 500, "orders": 3},
+        {"price": 2849.90, "quantity": 300, "orders": 2},
+        {"price": 2849.85, "quantity": 150, "orders": 1},
+        {"price": 2849.80, "quantity": 100, "orders": 1}
+      ],
+      "ask": [
+        {"price": 2850.80, "quantity": 400, "orders": 3},
+        {"price": 2850.85, "quantity": 250, "orders": 2},
+        {"price": 2850.90, "quantity": 200, "orders": 2},
+        {"price": 2850.95, "quantity": 100, "orders": 1},
+        {"price": 2851.00, "quantity": 50, "orders": 1}
+      ]
+    },
+    "lastTradedPrice": 2850.75,
+    "lastTradedTime": "2026-07-29T10:30:00",
+    "totalTradedVolume": 3892500,
+    "oi": 45231000
+  },
+  "nse_fno_nifty_fut": {
+    "securityId": "26014",
+    "tradingSymbol": "NIFTY28AUG2026FUT",
+    "exchangeSegment": "NSE_FNO",
+    "depth": {
+      "bid": [
+        {"price": 24749.85, "quantity": 100, "orders": 4},
+        {"price": 24749.70, "quantity": 75, "orders": 3},
+        {"price": 24749.55, "quantity": 50, "orders": 2},
+        {"price": 24749.40, "quantity": 25, "orders": 1},
+        {"price": 24749.25, "quantity": 10, "orders": 1}
+      ],
+      "ask": [
+        {"price": 24750.15, "quantity": 120, "orders": 5},
+        {"price": 24750.30, "quantity": 80, "orders": 3},
+        {"price": 24750.45, "quantity": 60, "orders": 2},
+        {"price": 24750.60, "quantity": 30, "orders": 1},
+        {"price": 24750.75, "quantity": 15, "orders": 1}
+      ]
+    },
+    "lastTradedPrice": 24750.00,
+    "lastTradedTime": "2026-07-29T10:30:02",
+    "totalTradedVolume": 675000,
+    "oi": 1250000
+  },
+  "nse_fno_nifty_ce": {
+    "securityId": "26003",
+    "tradingSymbol": "NIFTY30JUL24600CE",
+    "exchangeSegment": "NSE_FNO",
+    "depth": {
+      "bid": [
+        {"price": 155.00, "quantity": 200, "orders": 3},
+        {"price": 154.80, "quantity": 150, "orders": 2},
+        {"price": 154.60, "quantity": 100, "orders": 2},
+        {"price": 154.40, "quantity": 75, "orders": 1},
+        {"price": 154.20, "quantity": 50, "orders": 1}
+      ],
+      "ask": [
+        {"price": 156.50, "quantity": 250, "orders": 4},
+        {"price": 156.70, "quantity": 180, "orders": 3},
+        {"price": 156.90, "quantity": 120, "orders": 2},
+        {"price": 157.10, "quantity": 80, "orders": 1},
+        {"price": 157.30, "quantity": 40, "orders": 1}
+      ]
+    },
+    "lastTradedPrice": 155.75,
+    "lastTradedTime": "2026-07-29T10:29:58",
+    "totalTradedVolume": 52000,
+    "oi": 1500000
+  },
+  "nse_fno_nifty_pe": {
+    "securityId": "26004",
+    "tradingSymbol": "NIFTY30JUL24600PE",
+    "exchangeSegment": "NSE_FNO",
+    "depth": {
+      "bid": [
+        {"price": 165.25, "quantity": 120, "orders": 2},
+        {"price": 165.00, "quantity": 90, "orders": 2},
+        {"price": 164.75, "quantity": 60, "orders": 1},
+        {"price": 164.50, "quantity": 40, "orders": 1},
+        {"price": 164.25, "quantity": 20, "orders": 1}
+      ],
+      "ask": [
+        {"price": 166.80, "quantity": 160, "orders": 3},
+        {"price": 167.00, "quantity": 120, "orders": 2},
+        {"price": 167.25, "quantity": 80, "orders": 2},
+        {"price": 167.50, "quantity": 50, "orders": 1},
+        {"price": 167.75, "quantity": 25, "orders": 1}
+      ]
+    },
+    "lastTradedPrice": 166.00,
+    "lastTradedTime": "2026-07-29T10:29:55",
+    "totalTradedVolume": 38000,
+    "oi": 1100000
+  },
+  "mcx_crudeoil": {
+    "securityId": "10001",
+    "tradingSymbol": "CRUDEOIL29AUG2026FUT",
+    "exchangeSegment": "MCX_COMM",
+    "depth": {
+      "bid": [
+        {"price": 6151.00, "quantity": 10, "orders": 2},
+        {"price": 6150.00, "quantity": 8, "orders": 1},
+        {"price": 6149.00, "quantity": 6, "orders": 1},
+        {"price": 6148.00, "quantity": 4, "orders": 1},
+        {"price": 6147.00, "quantity": 2, "orders": 1}
+      ],
+      "ask": [
+        {"price": 6153.00, "quantity": 10, "orders": 2},
+        {"price": 6154.00, "quantity": 8, "orders": 1},
+        {"price": 6155.00, "quantity": 6, "orders": 1},
+        {"price": 6156.00, "quantity": 4, "orders": 1},
+        {"price": 6157.00, "quantity": 2, "orders": 1}
+      ]
+    },
+    "lastTradedPrice": 6152.00,
+    "lastTradedTime": "2026-07-29T10:30:00",
+    "totalTradedVolume": 15200,
+    "oi": 187500
+  }
+}

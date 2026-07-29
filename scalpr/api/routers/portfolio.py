@@ -15,19 +15,21 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/portfolio", tags=["portfolio"])
 
 
-def _require_gateway(request: Request) -> Any:
+def _require_preferred(request: Request) -> tuple[Any, str]:
+    event_system = getattr(request.app.state, "event_system", None)
+    if event_system:
+        return event_system["client"], "event_system"
     gateway = request.app.state.gateway
-    if not gateway or not gateway.is_connected():
-        raise HTTPException(status_code=503, detail="broker unavailable")
-    return gateway
+    if gateway and gateway.is_connected():
+        return gateway, "gateway"
+    raise HTTPException(status_code=503, detail="broker unavailable")
 
 
-@router.get("/positions")  # type: ignore[untyped-decorator]
+@router.get("/positions")
 async def get_positions(request: Request) -> Any:
-    """Get current positions from broker."""
-    gateway = _require_gateway(request)
+    client, _source = _require_preferred(request)
     try:
-        positions = gateway.get_positions()
+        positions = client.get_positions()
     except Exception as exc:
         logger.error("positions_fetch_failed: %s", exc)
         raise HTTPException(status_code=502, detail=f"broker error: {exc}") from exc
@@ -43,21 +45,35 @@ async def get_positions(request: Request) -> Any:
     ]
 
 
-@router.get("/margins")  # type: ignore[untyped-decorator]
+@router.get("/margins")
 async def get_margins(request: Request) -> Any:
-    """Get available margins."""
-    gateway = _require_gateway(request)
+    client, source = _require_preferred(request)
     try:
-        return gateway.get_margins()
+        if source == "event_system":
+            return client.get_funds()
+        return client.get_margins()
     except Exception as exc:
         logger.error("margins_fetch_failed: %s", exc)
         raise HTTPException(status_code=502, detail=f"broker error: {exc}") from exc
 
 
-@router.post("/square-off")  # type: ignore[untyped-decorator]
+@router.get("/holdings")
+async def get_holdings(request: Request) -> Any:
+    client, source = _require_preferred(request)
+    if source != "event_system":
+        raise HTTPException(status_code=501, detail="holdings only available via event system")
+    try:
+        return client.get_holdings()
+    except Exception as exc:
+        logger.error("holdings_fetch_failed: %s", exc)
+        raise HTTPException(status_code=502, detail=f"broker error: {exc}") from exc
+
+
+@router.post("/square-off")
 async def square_off(request: Request) -> Any:
-    """Square off all positions."""
-    gateway = _require_gateway(request)
+    gateway = getattr(request.app.state, "gateway", None)
+    if not gateway or not gateway.is_connected():
+        raise HTTPException(status_code=503, detail="broker unavailable")
     try:
         fills = gateway.square_off_all()
     except Exception as exc:

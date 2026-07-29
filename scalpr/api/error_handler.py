@@ -12,7 +12,7 @@ from typing import Any
 from fastapi import Request
 from fastapi.responses import JSONResponse
 
-from scalpr.brokers.errors import (
+from scalpr.domain.errors import (
     AuthenticationError,
     CircuitBreakerTripped,
     ConfigurationError,

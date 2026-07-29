@@ -1,0 +1,216 @@
+{
+  "super_order_placed": {
+    "orderIds": ["SUPERORD001", "SUPERORD002", "SUPERORD003"],
+    "status": "SUCCESS",
+    "message": "Super order placed successfully"
+  },
+  "super_order_detail": {
+    "orderId": "SUPERORD001",
+    "dhanClientId": "CLIENT001",
+    "exchangeSegment": "NSE_EQ",
+    "securityId": "11536",
+    "tradingSymbol": "RELIANCE",
+    "transactionType": "BUY",
+    "productType": "INTRADAY",
+    "orderType": "LIMIT",
+    "quantity": 100,
+    "price": 2840.00,
+    "targetPrice": 2880.00,
+    "stopLossPrice": 2820.00,
+    "trailingJump": 5.00,
+    "status": "ACTIVE",
+    "createdAt": "2026-07-29T10:15:00",
+    "legs": [
+      {
+        "legName": "ENTRY_LEG",
+        "status": "TRIGGERED",
+        "orderId": "ORD123470",
+        "filledQuantity": 100,
+        "tradedPrice": 2840.50
+      },
+      {
+        "legName": "TARGET_LEG",
+        "status": "PENDING",
+        "orderId": "ORD123471",
+        "filledQuantity": 0,
+        "tradedPrice": null
+      },
+      {
+        "legName": "STOP_LOSS_LEG",
+        "status": "PENDING",
+        "orderId": "ORD123472",
+        "filledQuantity": 0,
+        "tradedPrice": null
+      }
+    ]
+  },
+  "super_order_list": [
+    {
+      "orderId": "SUPERORD001",
+      "tradingSymbol": "RELIANCE",
+      "exchangeSegment": "NSE_EQ",
+      "transactionType": "BUY",
+      "productType": "INTRADAY",
+      "orderType": "LIMIT",
+      "quantity": 100,
+      "price": 2840.00,
+      "targetPrice": 2880.00,
+      "stopLossPrice": 2820.00,
+      "trailingJump": 5.00,
+      "status": "ACTIVE",
+      "createdAt": "2026-07-29T10:15:00"
+    },
+    {
+      "orderId": "SUPERORD002",
+      "tradingSymbol": "TCS",
+      "exchangeSegment": "NSE_EQ",
+      "transactionType": "SELL",
+      "productType": "INTRADAY",
+      "orderType": "LIMIT",
+      "quantity": 50,
+      "price": 4200.00,
+      "targetPrice": 4150.00,
+      "stopLossPrice": 4230.00,
+      "trailingJump": 10.00,
+      "status": "TRIGGERED",
+      "createdAt": "2026-07-29T09:45:00"
+    }
+  ],
+  "forever_order_placed": {
+    "orderId": "FRVROrd001",
+    "status": "SUCCESS",
+    "message": "Forever order placed successfully"
+  },
+  "forever_order_detail": {
+    "orderId": "FRVROrd001",
+    "dhanClientId": "CLIENT001",
+    "exchangeSegment": "NSE_EQ",
+    "securityId": "11536",
+    "tradingSymbol": "RELIANCE",
+    "transactionType": "BUY",
+    "productType": "CNC",
+    "orderType": "LIMIT",
+    "quantity": 50,
+    "disclosedQuantity": 10,
+    "price": 2800.00,
+    "triggerPrice": 0,
+    "orderFlag": "SINGLE",
+    "validity": "GTD",
+    "validityDate": "2026-08-29",
+    "status": "ACTIVE",
+    "createdAt": "2026-07-28T15:30:00"
+  },
+  "forever_order_list": [
+    {
+      "orderId": "FRVROrd001",
+      "tradingSymbol": "RELIANCE",
+      "exchangeSegment": "NSE_EQ",
+      "transactionType": "BUY",
+      "productType": "CNC",
+      "orderType": "LIMIT",
+      "quantity": 50,
+      "disclosedQuantity": 10,
+      "price": 2800.00,
+      "triggerPrice": 0,
+      "orderFlag": "SINGLE",
+      "validity": "GTD",
+      "validityDate": "2026-08-29",
+      "status": "ACTIVE",
+      "createdAt": "2026-07-28T15:30:00"
+    },
+    {
+      "orderId": "FRVROrd002",
+      "tradingSymbol": "INFY",
+      "exchangeSegment": "NSE_EQ",
+      "transactionType": "BUY",
+      "productType": "CNC",
+      "orderType": "LIMIT",
+      "quantity": 100,
+      "disclosedQuantity": 20,
+      "price": 1800.00,
+      "triggerPrice": 0,
+      "orderFlag": "SINGLE",
+      "validity": "GTD",
+      "validityDate": "2026-08-15",
+      "status": "ACTIVE",
+      "createdAt": "2026-07-27T14:00:00"
+    }
+  ],
+  "conditional_trigger_placed": {
+    "triggerId": "TRIG001",
+    "status": "SUCCESS",
+    "message": "Conditional trigger created successfully"
+  },
+  "conditional_trigger_detail": {
+    "triggerId": "TRIG001",
+    "dhanClientId": "CLIENT001",
+    "exchangeSegment": "NSE_EQ",
+    "securityId": "11536",
+    "tradingSymbol": "RELIANCE",
+    "triggerType": "PRICE_TRIGGER",
+    "transactionType": "BUY",
+    "productType": "INTRADAY",
+    "orderType": "LIMIT",
+    "quantity": 100,
+    "disclosedQuantity": 20,
+    "price": 2830.00,
+    "triggerPrice": 2820.00,
+    "validity": "DAY",
+    "status": "ACTIVE",
+    "createdAt": "2026-07-29T09:00:00"
+  },
+  "conditional_trigger_list": [
+    {
+      "triggerId": "TRIG001",
+      "tradingSymbol": "RELIANCE",
+      "exchangeSegment": "NSE_EQ",
+      "triggerType": "PRICE_TRIGGER",
+      "transactionType": "BUY",
+      "productType": "INTRADAY",
+      "orderType": "LIMIT",
+      "quantity": 100,
+      "disclosedQuantity": 20,
+      "price": 2830.00,
+      "triggerPrice": 2820.00,
+      "validity": "DAY",
+      "status": "ACTIVE",
+      "createdAt": "2026-07-29T09:00:00"
+    },
+    {
+      "triggerId": "TRIG002",
+      "tradingSymbol": "TCS",
+      "exchangeSegment": "NSE_EQ",
+      "triggerType": "PRICE_TRIGGER",
+      "transactionType": "SELL",
+      "productType": "INTRADAY",
+      "orderType": "LIMIT",
+      "quantity": 25,
+      "disclosedQuantity": 5,
+      "price": 4150.00,
+      "triggerPrice": 4160.00,
+      "validity": "DAY",
+      "status": "ACTIVE",
+      "createdAt": "2026-07-29T10:30:00"
+    }
+  ],
+  "super_order_modified": {
+    "status": "SUCCESS",
+    "message": "Super order modified successfully"
+  },
+  "forever_order_modified": {
+    "status": "SUCCESS",
+    "message": "Forever order modified successfully"
+  },
+  "super_order_cancelled": {
+    "status": "SUCCESS",
+    "message": "Super order cancelled successfully"
+  },
+  "forever_order_cancelled": {
+    "status": "SUCCESS",
+    "message": "Forever order cancelled successfully"
+  },
+  "conditional_trigger_deleted": {
+    "status": "SUCCESS",
+    "message": "Conditional trigger deleted successfully"
+  }
+}

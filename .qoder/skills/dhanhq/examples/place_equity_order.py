@@ -1,7 +1,6 @@
 """Prepare a simple equity delivery order on NSE via DhanHQ."""
 
 from dhanhq import dhanhq
-
 from scripts.dhan_helpers import get_client, preview_order
 
 dhan, _ = get_client()

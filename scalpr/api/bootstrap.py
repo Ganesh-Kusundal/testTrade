@@ -49,6 +49,49 @@ def _create_gateway() -> tuple[Any, str | None]:
         return None, str(e)
 
 
+def _create_event_system() -> dict | None:
+    """Create the new event-driven system: MessageBus + ExecutionEngine + DhanClient.
+
+    Works alongside the old Gateway port — routers still use the old port
+    while new features consume bus events. Returns None if Dhan credentials
+    are missing (API still boots, no broker-dependent features).
+    """
+    from config.secrets_manager import SecretsManager
+
+    sm = SecretsManager()
+    client_id = sm.get_dhan_client_id()
+    access_token = sm.get_dhan_access_token()
+    totp_secret = sm.get_dhan_totp_secret()
+
+    if not client_id or not access_token:
+        logger.info("Dhan credentials missing — event system disabled")
+        return None
+
+    from scalpr.adapters.dhan.client import DhanClient
+    from scalpr.engine.clock import LiveClock
+    from scalpr.engine.execution_engine import ExecutionEngine
+    from scalpr.engine.message_bus import MessageBus
+
+    clock = LiveClock()
+    bus = MessageBus()
+    engine = ExecutionEngine(bus=bus, clock=clock)
+    engine.start()
+
+    dhan_pin = sm.get_dhan_pin() or "1111"
+    client = DhanClient(bus, clock, {
+        "client_id": client_id,
+        "access_token": access_token,
+        "totp_secret": totp_secret or "",
+        "pin": dhan_pin,
+        "csv_path": "instrument.csv",
+    })
+    client.start()
+
+    logger.info("event_system_ready: bus=%s engine=%s client=%s",
+                id(bus), id(engine), id(client))
+    return {"clock": clock, "bus": bus, "engine": engine, "client": client}
+
+
 @dataclass
 class AppContext:
     """The wired trading object graph."""
@@ -142,19 +185,48 @@ def _watchlist_from_env() -> list[str]:
 
 
 async def _start_trading(app: FastAPI) -> None:
-    """Wire strategies and start the live tick feed (lifespan startup)."""
-    from scalpr.brokers.dhan.ws_manager import DhanWebSocketManager
+    """Wire strategies and start the live tick feed (lifespan startup).
+
+    Uses the new event-driven system (DhanClient WS) when available,
+    falls back to the old DhanWebSocketManager for backward compat.
+    """
+    from scalpr.brokers.dhan.auth import get_broadcast
 
     watchlist = _watchlist_from_env()
     gateway = app.state.gateway
-    if not watchlist or gateway is None:
-        logger.error("trading_enabled_but_unwirable: watchlist=%s gateway=%s",
-                     watchlist, gateway is not None)
+    event_system = app.state.event_system
+
+    if not watchlist:
+        logger.error("trading_enabled_but_no_watchlist")
+        return
+    if gateway is None and event_system is None:
+        logger.error("trading_enabled_but_no_broker")
         return
 
-    ctx = wire(gateway, watchlist)
+    # Preferred path: new event-driven system with DhanClient WS
+    if event_system is not None:
+        client = event_system["client"]
+        for symbol in watchlist:
+            from scalpr.domain.instrument import SimpleInstrumentId
+            client.subscribe_quotes(SimpleInstrumentId.parse(f"{symbol}:NSE"))
 
-    from scalpr.brokers.dhan.auth import get_broadcast
+        # Bridge WS ticks to strategy executor
+        if gateway is not None:
+            ctx = wire(gateway, watchlist)
+            loop = asyncio.get_running_loop()
+            event_system["bus"].subscribe(
+                "market.quote.dhan",
+                lambda t: asyncio.run_coroutine_threadsafe(ctx.executor.on_tick(t), loop),
+            )
+            app.state.executor = ctx.executor
+            app.state.order_router = ctx.order_router
+        logger.info("trading_wired_event_system: %s", watchlist)
+        return
+
+    # Fallback: old DhanWebSocketManager path
+    from scalpr.brokers.dhan.ws_manager import DhanWebSocketManager
+
+    ctx = wire(gateway, watchlist)
 
     sm = SecretsManager()
     feed = DhanWebSocketManager(
@@ -163,22 +235,19 @@ async def _start_trading(app: FastAPI) -> None:
         resolver=gateway.connection.resolver,
     )
 
-    # Register WS as a broadcast receiver — when the token changes,
-    # the WS closes its existing connection and reconnects with the fresh token
     get_broadcast().register(feed._handle_token_change)
     await feed.start()
     await feed.subscribe_pairs([(s, "NSE") for s in watchlist])
 
-    # Ticks arrive on the SDK thread — bridge them onto the app loop
     loop = asyncio.get_running_loop()
     feed.add_subscriber(
-        lambda t: asyncio.run_coroutine_threadsafe(ctx.executor.on_tick(t), loop)  # type: ignore[arg-type,attr-defined]
+        lambda t: asyncio.run_coroutine_threadsafe(ctx.executor.on_tick(t), loop)
     )
 
     app.state.feed = feed
     app.state.executor = ctx.executor
     app.state.order_router = ctx.order_router
-    logger.info("trading_wired: %s", watchlist)
+    logger.info("trading_wired_legacy: %s", watchlist)
 
 
 def _create_candle_provider(gateway: Any) -> Any:
@@ -244,6 +313,16 @@ async def _lifespan(app: FastAPI) -> Any:
     yield
 
     logger.info("SCALPR API shutting down...")
+
+    # New event-driven system
+    if getattr(app.state, "event_system", None):
+        es = app.state.event_system
+        with suppress(Exception):
+            es["client"].stop()
+        with suppress(Exception):
+            es["engine"].stop()
+
+    # Legacy system
     if getattr(app.state, "feed", None):
         with suppress(Exception):
             await app.state.feed.stop()
@@ -296,6 +375,7 @@ def create_app() -> FastAPI:
     gateway, broker_error = _create_gateway()
     app.state.gateway = gateway
     app.state.broker_error = broker_error
+    app.state.event_system = _create_event_system()
     app.state.feed = None
     app.state.executor = None
     app.state.order_router = None

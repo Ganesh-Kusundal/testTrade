@@ -344,18 +344,19 @@ class Gateway(MarketDataMixin, PortfolioMixin, StreamingMixin):
         self,
         underlying: str,
         strike: Decimal,
-        expiry: date,
         option_type: str,
         exchange: str = DEFAULT_EXCHANGE,
+        expiry: date | None = None,
     ) -> dict[str, Any] | None:
         """Get greeks for a specific option.
 
         Args:
             underlying: Underlying symbol (e.g. "NIFTY").
             strike: Strike price.
-            expiry: Expiry date.
             option_type: "CE" or "PE".
             exchange: Exchange code (default: "NSE").
+            expiry: Expiry date. If *None*, the next available expiry is
+                    resolved automatically (consistent with option_chain).
 
         Returns:
             Dict with greeks or None.
@@ -363,6 +364,28 @@ class Gateway(MarketDataMixin, PortfolioMixin, StreamingMixin):
         adapter = self._get_option_chain_adapter()
         return adapter.get_option_greeks(  # type: ignore[no-any-return]
             underlying, exchange, strike, expiry, option_type
+        )
+
+    def option_expiries(
+        self,
+        underlying: str,
+        exchange: str = DEFAULT_EXCHANGE,
+    ) -> list[date]:
+        """List available option expiry dates for an underlying.
+
+        Closes the pick-expiry → fetch-chain → fetch-greeks loop without
+        reaching into adapter internals.
+
+        Args:
+            underlying: Underlying symbol (e.g. "NIFTY", "CRUDEOIL").
+            exchange: Exchange code (default: "NSE").
+
+        Returns:
+            Sorted list of expiry dates.
+        """
+        adapter = self._get_option_chain_adapter()
+        return adapter.get_expiry_dates(  # type: ignore[no-any-return]
+            underlying, exchange
         )
 
     def _get_option_chain_adapter(self) -> Any:

@@ -1,10 +1,11 @@
 """Test live WebSocket with NIFTY 50 (should be very liquid)."""
 
 import os
-import time
 import sys
-from dotenv import load_dotenv
+import time
 from datetime import datetime
+
+from dotenv import load_dotenv
 
 load_dotenv(".env")
 

@@ -5,7 +5,7 @@ import threading
 import time
 from dataclasses import dataclass
 
-from scalpr.brokers.errors import OrderRateLimitExceeded  # noqa: F401 — re-export
+from scalpr.domain.errors import OrderRateLimitExceeded  # noqa: F401 — re-export
 
 
 @dataclass

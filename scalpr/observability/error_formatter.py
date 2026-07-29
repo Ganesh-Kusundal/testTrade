@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from scalpr.brokers.errors import TradingError
+from scalpr.domain.errors import TradingError
 
 
 class ErrorFormatter:

@@ -6,7 +6,6 @@ Demonstrates:
 - Listing and cancelling forever orders
 """
 
-from dhanhq import dhanhq
 
 from scripts.dhan_helpers import get_client
 

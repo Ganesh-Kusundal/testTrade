@@ -1,7 +1,6 @@
 """Check margin requirements before placing an order via DhanHQ."""
 
 from dhanhq import dhanhq
-
 from scripts.dhan_helpers import check_margin, fetch_chain_df, find_atm_row, get_client
 
 dhan, _ = get_client()

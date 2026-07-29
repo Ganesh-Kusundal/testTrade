@@ -29,7 +29,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-
 # ── Shared host-independent constants ────────────────────────────────────────
 _UPSTOX_ASSET_INSTRUMENTS_JSON = (
     "https://assets.upstox.com/market-quote/instruments/exchange/complete.json.gz"

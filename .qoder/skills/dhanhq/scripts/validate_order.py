@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from datetime import datetime
 
-
 # These are fallback heuristics only. Prefer security-master-derived values.
 LOT_SIZES = {
     "NIFTY": 75,
