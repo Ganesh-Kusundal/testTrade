@@ -25,7 +25,7 @@ load_dotenv()
 
 def demo_gateway_construction():
     """Show the three ways to create a Gateway."""
-    from scalpr.brokers.gateway import Gateway
+    from scalpr.gateway import Gateway
 
     # Default — uses .env credentials
     gw = Gateway()
@@ -43,24 +43,24 @@ def demo_instrument_resolution(gw):
 
     # Convention 1: Qualified string
     tcs = gw.instrument("TCS:NSE")
-    print(f"1. Qualified string:  {tcs.symbol} @ {tcs.exchange} (sid={tcs.security_id})")
+    print(f"1. Qualified string:  {tcs.resolved.trading_symbol} @ {tcs.resolved.exchange}")
 
     # Convention 2: Separate args (enum or string)
     reliance = gw.instrument("RELIANCE", Exchange.NSE)
-    print(f"2. Separate args:     {reliance.symbol} @ {reliance.exchange}")
+    print(f"2. Separate args:     {reliance.resolved.trading_symbol} @ {reliance.resolved.exchange}")
 
     # Convention 3: SimpleInstrumentId domain object
     sid = SimpleInstrumentId(symbol="INFY", exchange=Exchange.NSE)
     infy = gw.instrument(sid)
-    print(f"3. Domain object:     {infy.symbol} @ {infy.exchange}")
+    print(f"3. Domain object:     {infy.resolved.trading_symbol} @ {infy.resolved.exchange}")
 
     # Index with segment
     nifty = gw.instrument("NIFTY", Exchange.NSE, Segment.INDEX)
-    print(f"4. Index:             {nifty.symbol} @ {nifty.exchange} (id={nifty.id})")
+    print(f"4. Index:             {nifty.resolved.trading_symbol} @ {nifty.resolved.exchange}")
 
     # MCX commodity
     gold = gw.instrument("GOLD", "MCX")
-    print(f"5. Commodity:         {gold.symbol} @ {gold.exchange}")
+    print(f"5. Commodity:         {gold.resolved.trading_symbol} @ {gold.resolved.exchange}")
 
     return tcs, nifty
 
@@ -72,28 +72,21 @@ def demo_instrument_resolution(gw):
 def demo_market_data(tcs):
     """InstrumentHandle market data methods."""
 
-    # Last traded price
-    price = tcs.ltp()
-    print(f"LTP:  ₹{price}")
-
-    # Full quote (all fields)
+    # Full quote (domain object)
     q = tcs.quote()
-    print(f"Quote: open={q.get('open')} high={q.get('high')} "
-          f"low={q.get('low')} close={q.get('close')} vol={q.get('volume')}")
+    print(f"Quote: open={q.open} high={q.high} low={q.low} close={q.close} vol={q.volume}")
 
-    # OHLC snapshot (convenience — extracts OHLC from quote)
+    # OHLC snapshot (domain object)
     ohlc = tcs.ohlc()
-    print(f"OHLC: O={ohlc['open']} H={ohlc['high']} L={ohlc['low']} C={ohlc['close']}")
+    print(f"OHLC: O={ohlc.open} H={ohlc.high} L={ohlc.low} C={ohlc.close}")
 
-    # Market depth (REST = 5 levels; use WS FULL for 20-level)
+    # Market depth (domain object)
     depth = tcs.depth()
-    print(f"Depth: best bid={depth.get('bids', [{}])[0].get('price', 'N/A')}, "
-          f"best ask={depth.get('asks', [{}])[0].get('price', 'N/A')}")
+    print(f"Depth: {len(depth.bid_levels)} bids, {len(depth.ask_levels)} asks")
 
-    # Historical candles (default: 90 days daily)
+    # Historical candles (domain objects)
     candles = tcs.historical(interval="1D", start="2025-01-01", end="2025-06-30")
-    print(f"Historical: {len(candles)} candles from {candles[0]['timestamp']} "
-          f"to {candles[-1]['timestamp']}")
+    print(f"Historical: {len(candles)} candles")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -103,54 +96,9 @@ def demo_market_data(tcs):
 def demo_option_chain(nifty):
     """Option chain with ATM/ITM/OTM filtering."""
 
-    # ── Raw chain (all strikes, both CE and PE) ──
+    # Raw chain (all strikes, both CE and PE)
     all_legs = nifty.option_chain()
     print(f"\nRaw chain: {len(all_legs)} legs")
-    print(f"  Sample: strike={all_legs[0]['strike']} "
-          f"type={all_legs[0]['option_type']} "
-          f"bid={all_legs[0]['bid']} ask={all_legs[0]['ask']}")
-
-    # ── ATM only (strikes within 0.5% of spot) ──
-    atm = nifty.option_chain(moneyness="ATM")
-    print(f"\nATM legs: {len(atm)}")
-    for leg in atm:
-        print(f"  {leg['option_type']:2s} strike={leg['strike']:>10} "
-              f"bid={leg['bid']:>8} ask={leg['ask']:>8} "
-              f"oi={leg['oi']:>10} delta={leg.get('delta')}")
-
-    # ── ITM only ──
-    itm = nifty.option_chain(moneyness="ITM")
-    print(f"\nITM legs: {len(itm)}")
-
-    # ── OTM only ──
-    otm = nifty.option_chain(moneyness="OTM")
-    print(f"\nOTM legs: {len(otm)}")
-
-    # ── Combination: ATM + ITM ──
-    atm_itm = nifty.option_chain(moneyness="ATM,ITM")
-    print(f"\nATM+ITM legs: {len(atm_itm)}")
-
-    # ── N strikes around ATM ──
-    around = nifty.option_chain(strikes_around=3)
-    strikes = sorted({leg["strike"] for leg in around})
-    print(f"\n3 strikes around ATM: {len(around)} legs across {len(strikes)} strikes")
-    print(f"  Strikes: {strikes}")
-
-    # ── Filter by option type ──
-    ce_only = nifty.option_chain(option_type="CE")
-    pe_only = nifty.option_chain(option_type="PE")
-    print(f"\nCE legs: {len(ce_only)}, PE legs: {len(pe_only)}")
-
-    # ── Combined: ATM calls, 2 strikes around ──
-    atm_ce = nifty.option_chain(moneyness="ATM", strikes_around=2, option_type="CE")
-    print(f"\nATM CE (2 around): {len(atm_ce)} legs")
-    for leg in atm_ce:
-        print(f"  {leg['option_type']} strike={leg['strike']} "
-              f"moneyness={leg['moneyness']} spot={leg['spot_price']}")
-
-    # ── Specific expiry ──
-    chain_expiry = nifty.option_chain(expiry=date(2026, 8, 28), moneyness="ATM")
-    print(f"\nATM for 2026-08-28 expiry: {len(chain_expiry)} legs")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -159,7 +107,7 @@ def demo_option_chain(nifty):
 
 def demo_option_chain_error(tcs):
     """Equities don't support option chain — clear error."""
-    from scalpr.domain.errors import OptionChainNotSupported
+    from scalpr.gateway.instrument import OptionChainNotSupported
 
     try:
         tcs.option_chain()
@@ -180,16 +128,16 @@ def demo_live_feed(gw):
         print(f"  tick: {event}")
 
     # Subscribe multiple instruments
-    gw.subscribe_feed(
+    sub = gw.subscribe_feed(
         MarketFeed.QUOTE,
         ["TCS:NSE", "RELIANCE:NSE", "NIFTY:NSE"],
         on_event=handle_tick,
     )
-    print("Subscribed to QUOTE feed for TCS, RELIANCE, NIFTY")
+    print(f"Subscribed to QUOTE feed: {sub.id}")
 
     # Unsubscribe
-    gw.unsubscribe(["RELIANCE:NSE"])
-    print("Unsubscribed RELIANCE")
+    gw.unsubscribe(sub)
+    print("Unsubscribed")
 
     # Clean shutdown
     gw.close()
@@ -207,18 +155,51 @@ def demo_instrument_subscribe(nifty):
     def on_tick(event):
         print(f"  NIFTY tick: {event}")
 
-    nifty.subscribe(MarketFeed.FULL, on_tick)
-    print("Subscribed to NIFTY FULL feed via handle")
+    sub = nifty.subscribe(MarketFeed.FULL, on_tick)
+    print(f"Subscribed to NIFTY FULL feed via handle: {sub.id}")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 8. Gateway-level option chain (legacy path)
+# 8. Order management
 # ──────────────────────────────────────────────────────────────────────────────
 
-def demo_gateway_option_chain(gw):
-    """Gateway.option_chain() — works but prefer handle.option_chain()."""
-    chain = gw.option_chain("NIFTY", "NSE")
-    print(f"Gateway option_chain: {len(chain)} legs")
+def demo_order_management(gw):
+    """Place, modify, and cancel orders."""
+    from scalpr.domain.order import OrderRequest, Side, ProductType, OrderType, Validity
+    from decimal import Decimal
+
+    # Place order
+    req = OrderRequest(
+        instrument="TCS:NSE",
+        side=Side.BUY,
+        quantity=10,
+        order_type=OrderType.LIMIT,
+        product=ProductType.INTRADAY,
+        validity=Validity.DAY,
+        price=Decimal("2500.00"),
+    )
+    order = gw.orders.place(req)
+    print(f"Placed order: {order.order_id}")
+
+    # Cancel order
+    gw.orders.cancel(order.order_id)
+    print(f"Cancelled order: {order.order_id}")
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 9. Portfolio and account
+# ──────────────────────────────────────────────────────────────────────────────
+
+def demo_portfolio_and_account(gw):
+    """Portfolio and account queries."""
+    holdings = gw.portfolio.holdings()
+    print(f"Holdings: {len(holdings)}")
+
+    positions = gw.portfolio.positions()
+    print(f"Positions: {len(positions)}")
+
+    funds = gw.account.fund_limits()
+    print(f"Available margin: {funds.available_margin}")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
