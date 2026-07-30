@@ -24,6 +24,7 @@ from scalpr.adapters.dhan._http import (
     RateLimitTimeout,
     TokenBucket,
 )
+from scalpr.adapters.dhan._types import DhanError
 
 # ============================================================================
 # TokenBucket
@@ -419,7 +420,7 @@ class TestDhanHttpClient:
         assert issubclass(DhanServerError, DhanHttpError)
 
     def test_dhan_auth_error_is_dhan_http_error(self) -> None:
-        assert issubclass(DhanAuthError, DhanHttpError)
+        assert issubclass(DhanAuthError, DhanError)  # REF-01: auth errors now inherit from DhanError, not DhanHttpError
 
 
 # ============================================================================

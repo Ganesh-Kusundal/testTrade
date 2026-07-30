@@ -21,10 +21,10 @@ from scalpr.adapters.dhan._option_chain import OptionChainAdapter
 from scalpr.adapters.dhan._resolver import (
     COMMODITY_STEP_SIZES,
     INDEX_STEP_SIZES,
+    DhanInstrumentNotFoundError,
     SymbolResolver,
     map_row,
 )
-from scalpr.adapters.dhan._resolver import DhanInstrumentNotFoundError
 from scalpr.domain.instrument import (
     Exchange,
     Instrument,

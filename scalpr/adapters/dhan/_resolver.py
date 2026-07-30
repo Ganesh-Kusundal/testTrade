@@ -25,6 +25,7 @@ from typing import Any, NamedTuple
 
 from scalpr.domain.errors import InstrumentNotFound
 
+
 class DhanInstrumentNotFoundError(InstrumentNotFound, Exception):
     """Instrument not found in the Dhan instrument master."""
 
@@ -95,7 +96,8 @@ _COMPACT_SEGMENT_MAP: dict[tuple[str, str], str] = {
     ("BSE", "C"): "BSE_CURRENCY",
 }
 
-# Binary protocol numeric codes (Dhan v2 websocket)
+# Binary protocol numeric codes (Dhan v2 websocket).
+# Must stay aligned with dhanhq.marketfeed.MarketFeed.get_exchange_segment and HTTP exchangeSegment.
 NUMERIC_TO_SEGMENT: dict[int, str] = {
     0: "IDX_I",
     1: "NSE_EQ",
@@ -108,6 +110,83 @@ NUMERIC_TO_SEGMENT: dict[int, str] = {
 }
 
 SEGMENT_TO_NUMERIC: dict[str, int] = {v: k for k, v in NUMERIC_TO_SEGMENT.items()}
+
+# FullDepth WebSocket (dhanhq) — NSE cash + F&O only; IDX_I shares NSE_EQ code 1.
+FULL_DEPTH_WIRE_TO_NUMERIC: dict[str, int] = {
+    "NSE_EQ": 1,
+    "IDX_I": 1,
+    "NSE_FNO": 2,
+}
+FULL_DEPTH_NUMERIC_TO_WIRE: dict[int, str] = {1: "NSE_EQ", 2: "NSE_FNO"}
+
+
+def wire_segment_to_market_feed_numeric(wire_segment: str) -> int:
+    """Map Dhan HTTP/WS wire segment to MarketFeed v2 numeric exchange code."""
+    key = wire_segment.strip().upper()
+    try:
+        return SEGMENT_TO_NUMERIC[key]
+    except KeyError as exc:
+        raise ValueError(
+            f"Unknown wire segment for MarketFeed: {wire_segment!r} "
+            f"(known: {sorted(SEGMENT_TO_NUMERIC)})"
+        ) from exc
+
+
+def wire_segment_to_full_depth_numeric(wire_segment: str) -> int:
+    """Map wire segment to FullDepth numeric code (NSE_EQ/IDX_I/NSE_FNO only)."""
+    key = wire_segment.strip().upper()
+    try:
+        return FULL_DEPTH_WIRE_TO_NUMERIC[key]
+    except KeyError as exc:
+        raise ValueError(
+            f"FullDepth feed does not support wire segment {wire_segment!r} "
+            f"(only NSE_EQ/IDX_I/NSE_FNO are supported)"
+        ) from exc
+
+
+def full_depth_numeric_to_wire_segment(code: int) -> str:
+    """Decode FullDepth exchange_segment byte from inbound depth packets."""
+    return FULL_DEPTH_NUMERIC_TO_WIRE.get(code, str(code))
+
+
+def market_feed_sdk_tuples(
+    security_ids: list[tuple[str, str]],
+    mode_int: int,
+) -> list[tuple[int, str, int]]:
+    """Build dhanhq MarketFeed ``subscribe_symbols`` tuples from resolved ids.
+
+    Args:
+        security_ids: ``(security_id, wire_segment)`` from :meth:`SymbolResolver.resolve_full`.
+        mode_int: SDK packet mode (Ticker=15, Quote=17, Full=21).
+    """
+    return [
+        (wire_segment_to_market_feed_numeric(seg), sid, mode_int)
+        for sid, seg in security_ids
+    ]
+
+
+def full_depth_sdk_pairs(
+    security_ids: list[tuple[str, str]],
+) -> list[tuple[int, str]]:
+    """Build dhanhq FullDepth ``subscribe_symbols`` pairs from resolved ids."""
+    seen: set[tuple[int, str]] = set()
+    result: list[tuple[int, str]] = []
+    for sec_id, segment in security_ids:
+        key = (wire_segment_to_full_depth_numeric(segment), sec_id)
+        if key not in seen:
+            seen.add(key)
+            result.append(key)
+    return result
+
+
+def market_feed_mode_int(mode: str) -> int:
+    """Map scalpr feed mode string to dhanhq MarketFeed packet mode int."""
+    from dhanhq import MarketFeed
+
+    ticker = getattr(MarketFeed, "Ticker", 15)
+    quote = getattr(MarketFeed, "Quote", 17)
+    full = getattr(MarketFeed, "Full", 21)
+    return {"ltp": ticker, "quote": quote, "depth": quote, "full": full}.get(mode, quote)
 
 
 def exchange_to_wire(exchange: Exchange | str) -> str:

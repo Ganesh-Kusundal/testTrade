@@ -40,6 +40,7 @@ def mock_sdk():
     def _make_feed(
         dhan_context=None,
         instruments=None,
+        version="v2",
         on_connect=None,
         on_message=None,
         on_close=None,
@@ -53,7 +54,7 @@ def mock_sdk():
         feed.on_message = on_message
         feed.on_close = on_close
         feed.on_error = on_error
-        feed.run.side_effect = lambda: feed_exit.wait(timeout=10)
+        feed.run.side_effect = lambda: feed_exit.wait(timeout=3)
         feed.close_connection.side_effect = lambda: feed_exit.set()
         feed._exit_event = feed_exit
         feeds.append(feed)
@@ -115,8 +116,12 @@ class TestFSMHandshake:
 
     def test_handshake_replays_subscriptions(self, ws: DhanWebSocket, mock_sdk) -> None:
         feeds = mock_sdk
-        ws.subscribe([("RELIANCE", "NSE")])
+        ws.subscribe([("RELIANCE", "NSE_EQ")])
         ws.connect()
+        deadline = _time.monotonic() + 3.0
+        while _time.monotonic() < deadline and not feeds:
+            _time.sleep(0.005)
+        assert feeds, "MarketFeed mock was not created"
         feeds[0].on_connect(feeds[0])
         _await_state(ws, WSState.CONNECTED)
         feeds[0].subscribe_symbols.assert_called_once()
@@ -196,17 +201,17 @@ class TestFSMDisconnect:
 
 class TestSubscriptionSet:
     def test_subscribe_adds_to_internal_set(self, ws: DhanWebSocket) -> None:
-        ws.subscribe([("RELIANCE", "NSE")])
-        assert ("RELIANCE", "NSE") in ws._subscriptions
+        ws.subscribe([("RELIANCE", "NSE_EQ")])
+        assert ("RELIANCE", "NSE_EQ") in ws._subscriptions
 
     def test_unsubscribe_removes_from_set(self, ws: DhanWebSocket) -> None:
-        ws.subscribe([("RELIANCE", "NSE"), ("TCS", "NSE")])
-        ws.unsubscribe([("RELIANCE", "NSE")])
-        assert ("RELIANCE", "NSE") not in ws._subscriptions
-        assert ("TCS", "NSE") in ws._subscriptions
+        ws.subscribe([("RELIANCE", "NSE_EQ"), ("TCS", "NSE_EQ")])
+        ws.unsubscribe([("RELIANCE", "NSE_EQ")])
+        assert ("RELIANCE", "NSE_EQ") not in ws._subscriptions
+        assert ("TCS", "NSE_EQ") in ws._subscriptions
 
     def test_subscribe_multiple_adds_all(self, ws: DhanWebSocket) -> None:
-        ids = [("A", "NSE"), ("B", "NSE"), ("C", "NSE")]
+        ids = [("A", "NSE_EQ"), ("B", "NSE_EQ"), ("C", "NSE_EQ")]
         ws.subscribe(ids)
         assert ws._subscriptions == set(ids)
 
@@ -215,16 +220,16 @@ class TestSubscriptionSet:
         assert ws._subscriptions == set()
 
     def test_unsubscribe_nonexistent_noop(self, ws: DhanWebSocket) -> None:
-        ws.subscribe([("RELIANCE", "NSE")])
-        ws.unsubscribe([("TCS", "NSE")])
-        assert ws._subscriptions == {("RELIANCE", "NSE")}
+        ws.subscribe([("RELIANCE", "NSE_EQ")])
+        ws.unsubscribe([("TCS", "NSE_EQ")])
+        assert ws._subscriptions == {("RELIANCE", "NSE_EQ")}
 
     def test_subscribe_sends_frame_when_connected(self, ws: DhanWebSocket, mock_sdk) -> None:
         feeds = mock_sdk
         ws.connect()
         feeds[0].on_connect(feeds[0])
         _await_state(ws, WSState.CONNECTED)
-        ws.subscribe([("RELIANCE", "NSE")])
+        ws.subscribe([("RELIANCE", "NSE_EQ")])
         feeds[0].subscribe_symbols.assert_called_once()
 
     def test_subscribe_does_not_send_when_disconnected(self, ws: DhanWebSocket, mock_sdk) -> None:
@@ -234,7 +239,7 @@ class TestSubscriptionSet:
         _await_state(ws, WSState.CONNECTED)
         feeds[0].subscribe_symbols.reset_mock()
         ws.disconnect()
-        ws.subscribe([("RELIANCE", "NSE")])
+        ws.subscribe([("RELIANCE", "NSE_EQ")])
         feeds[0].subscribe_symbols.assert_not_called()
 
     def test_unsubscribe_sends_frame_when_connected(self, ws: DhanWebSocket, mock_sdk) -> None:
@@ -242,9 +247,9 @@ class TestSubscriptionSet:
         ws.connect()
         feeds[0].on_connect(feeds[0])
         _await_state(ws, WSState.CONNECTED)
-        ws.subscribe([("RELIANCE", "NSE")])
+        ws.subscribe([("RELIANCE", "NSE_EQ")])
         feeds[0].subscribe_symbols.reset_mock()
-        ws.unsubscribe([("RELIANCE", "NSE")])
+        ws.unsubscribe([("RELIANCE", "NSE_EQ")])
         feeds[0].unsubscribe_symbols.assert_called_once()
 
 
@@ -401,14 +406,14 @@ class TestThreadSafety:
         def sub_loop():
             try:
                 for i in range(100):
-                    ws.subscribe([(f"S{i}", "NSE")])
+                    ws.subscribe([(f"S{i}", "NSE_EQ")])
             except Exception as e:
                 errors.append(e)
 
         def unsub_loop():
             try:
                 for i in range(100):
-                    ws.unsubscribe([(f"S{i}", "NSE")])
+                    ws.unsubscribe([(f"S{i}", "NSE_EQ")])
             except Exception as e:
                 errors.append(e)
 
@@ -492,8 +497,8 @@ class TestEdgeCases:
 @pytest.mark.parametrize("method,args", [
     ("connect", []),
     ("disconnect", []),
-    ("subscribe", [[("S", "NSE")]]),
-    ("unsubscribe", [[("S", "NSE")]]),
+    ("subscribe", [[("S", "NSE_EQ")]]),
+    ("unsubscribe", [[("S", "NSE_EQ")]]),
 ])
 def test_public_methods_return_none(ws: DhanWebSocket, method: str, args: list) -> None:
     result = getattr(ws, method)(*args)

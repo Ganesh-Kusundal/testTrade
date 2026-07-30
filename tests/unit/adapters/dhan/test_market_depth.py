@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import threading
-import time as _time
 from datetime import datetime, timezone
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -39,6 +38,7 @@ def mock_sdk():
     def _make_feed(
         dhan_context=None,
         instruments=None,
+        version="v2",
         on_connect=None,
         on_message=None,
         on_close=None,
@@ -100,8 +100,9 @@ def mock_depth_sdk():
         feeds.append(feed)
         return feed
 
-    with patch("dhanhq.fulldepth.FullDepth") as mock_cls:
-        mock_cls.side_effect = _make_feed
+    mock_cls = MagicMock()
+    mock_cls.side_effect = _make_feed
+    with patch("scalpr.adapters.dhan._ws._full_depth_class", return_value=mock_cls):
         yield feeds
 
 
@@ -119,7 +120,7 @@ class TestDepthSubscriptionSet:
         assert ("RELIANCE", "NSE_EQ") in ws._depth_subscriptions[20]
 
     def test_subscribe_depth_multiple_adds_all(self, ws: DhanWebSocket) -> None:
-        ids = [("A", "NSE_EQ"), ("B", "NSE_FNO"), ("C", "BSE_EQ")]
+        ids = [("A", "NSE_EQ"), ("B", "NSE_FNO"), ("C", "IDX_I")]
         ws.subscribe_depth(ids)
         assert ws._depth_subscriptions[20] == set(ids)
 
@@ -238,9 +239,9 @@ class TestDepthFeedLifecycle:
 
 
 class TestDepthSDKConversion:
-    def test_to_depth_sdk_defaults_to_exchange_1(self) -> None:
-        result = DhanWebSocket._to_depth_sdk_instruments([("100", "UNKNOWN")])
-        assert result == [(1, "100")]
+    def test_to_depth_sdk_rejects_unknown_segment(self) -> None:
+        with pytest.raises(ValueError, match="does not support wire segment"):
+            DhanWebSocket._to_depth_sdk_instruments([("100", "UNKNOWN")])
 
     def test_to_depth_sdk_maps_nse_eq(self) -> None:
         result = DhanWebSocket._to_depth_sdk_instruments([("100", "NSE_EQ")])
@@ -250,9 +251,9 @@ class TestDepthSDKConversion:
         result = DhanWebSocket._to_depth_sdk_instruments([("100", "NSE_FNO")])
         assert result == [(2, "100")]
 
-    def test_to_depth_sdk_maps_bse_eq(self) -> None:
-        result = DhanWebSocket._to_depth_sdk_instruments([("100", "BSE_EQ")])
-        assert result == [(3, "100")]
+    def test_to_depth_sdk_rejects_bse_eq(self) -> None:
+        with pytest.raises(ValueError, match="does not support wire segment"):
+            DhanWebSocket._to_depth_sdk_instruments([("100", "BSE_EQ")])
 
     def test_to_depth_sdk_deduplicates(self) -> None:
         result = DhanWebSocket._to_depth_sdk_instruments([("100", "NSE_EQ"), ("100", "NSE_EQ")])
@@ -506,13 +507,13 @@ class TestDepthThreadSafety:
 class TestDepthCommandQueue:
     def test_process_depth_commands_subscribe(self, ws: DhanWebSocket) -> None:
         feed = MagicMock()
-        ws._depth_cmd_queues[20].put({"action": "subscribe", "ids": [(1, "100")]})
+        ws._depth_cmd_queues[20].put({"action": "subscribe", "ids": [("100", "NSE_EQ")]})
         ws._process_depth_commands_sync(feed)
         feed.subscribe_symbols.assert_called_once_with([(1, "100")])
 
     def test_process_depth_commands_unsubscribe(self, ws: DhanWebSocket) -> None:
         feed = MagicMock()
-        ws._depth_cmd_queues[20].put({"action": "unsubscribe", "ids": [(1, "100")]})
+        ws._depth_cmd_queues[20].put({"action": "unsubscribe", "ids": [("100", "NSE_EQ")]})
         ws._process_depth_commands_sync(feed)
         feed.unsubscribe_symbols.assert_called_once_with([(1, "100")])
 
@@ -525,28 +526,30 @@ class TestDepthCommandQueue:
 
     def test_process_depth_commands_multiple(self, ws: DhanWebSocket) -> None:
         feed = MagicMock()
-        ws._depth_cmd_queues[20].put({"action": "subscribe", "ids": [(1, "100")]})
-        ws._depth_cmd_queues[20].put({"action": "subscribe", "ids": [(2, "200")]})
+        ws._depth_cmd_queues[20].put({"action": "subscribe", "ids": [("100", "NSE_EQ")]})
+        ws._depth_cmd_queues[20].put({"action": "subscribe", "ids": [("200", "NSE_FNO")]})
         ws._process_depth_commands_sync(feed)
         assert feed.subscribe_symbols.call_count == 2
+        feed.subscribe_symbols.assert_any_call([(1, "100")])
+        feed.subscribe_symbols.assert_any_call([(2, "200")])
 
     def test_subscribe_depth_queues_when_feed_running(self, ws: DhanWebSocket) -> None:
         feed = MagicMock()
         ws._depth_feeds[20] = feed
-        ws.subscribe_depth([("A", "NSE_EQ")])
+        ws.subscribe_depth([("100", "NSE_EQ")])
         assert ws._depth_cmd_queues[20].qsize() >= 1
-        cmd = ws._depth_cmd_queues[20].get_nowait()
-        assert cmd["action"] == "subscribe"
+        ws._process_depth_commands_sync(feed)
+        feed.subscribe_symbols.assert_called_once_with([(1, "100")])
 
     def test_unsubscribe_depth_queues_when_feed_running(self, ws: DhanWebSocket) -> None:
         feed = MagicMock()
         ws._depth_feeds[20] = feed
-        ws.subscribe_depth([("A", "NSE_EQ")])
+        ws.subscribe_depth([("100", "NSE_EQ")])
         ws._depth_cmd_queues[20].queue.clear()
-        ws.unsubscribe_depth([("A", "NSE_EQ")])
+        ws.unsubscribe_depth([("100", "NSE_EQ")])
         assert ws._depth_cmd_queues[20].qsize() >= 1
-        cmd = ws._depth_cmd_queues[20].get_nowait()
-        assert cmd["action"] == "unsubscribe"
+        ws._process_depth_commands_sync(feed)
+        feed.unsubscribe_symbols.assert_called_once_with([(1, "100")])
 
 
 # ── Public method contracts ─────────────────────────────────────────
@@ -560,6 +563,26 @@ class TestDepthCommandQueue:
 def test_depth_public_methods_return_none(ws: DhanWebSocket, method: str, args: list) -> None:
     result = getattr(ws, method)(*args)
     assert result is None
+
+
+class TestMarketDepthDf:
+    def test_market_depth_df_keeps_unpaired_levels(self) -> None:
+        pytest.importorskip("pytz")
+        from scalpr.adapters.dhan._market_data_client import MarketDataClient
+
+        raw = {
+            "depth": {
+                "bid": [
+                    {"price": "100", "quantity": 10, "orders": 1},
+                    {"price": "99", "quantity": 20, "orders": 2},
+                ],
+                "ask": [{"price": "101", "quantity": 5, "orders": 1}],
+            },
+        }
+        rows = MarketDataClient._market_depth_df(raw)
+        assert len(rows) == 2
+        assert rows[1]["bid_price"] == 99.0
+        assert rows[1]["ask_price"] is None
 
 
 # ── _types DTO construction ─────────────────────────────────────────

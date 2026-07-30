@@ -1,17 +1,23 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
+from decimal import Decimal
 from typing import Any
 
 import pandas as pd
-import pytz
 
+from scalpr.adapters.dhan._protocols import HttpProvider, ResolveFn, TokenProvider, WsProvider
+from scalpr.domain.contracts import DepthLevel, MarketDepth
 from scalpr.domain.instrument import (
     DerivativeInstrumentId,
     InstrumentId,
     SimpleInstrumentId,
 )
 from scalpr.domain.tick import Tick as QuoteTick
+from scalpr.market_data.charting import heikin_ashi as _heikin_ashi
+from scalpr.market_data.charting import renko_bricks as _renko_bricks
+from scalpr.market_data.charting import resample_timeframe as _resample_timeframe
 
 logger = logging.getLogger(__name__)
 
@@ -23,14 +29,14 @@ def _list_to_df(data: list[dict]) -> pd.DataFrame:
 class MarketDataClient:
     def __init__(
         self,
-        http_provider,
-        token_provider,
-        ws_provider,
-        historical_provider,
-        option_chain_provider,
-        greeks_provider,
+        http_provider: Callable[[], HttpProvider],
+        token_provider: Callable[[], TokenProvider],
+        ws_provider: Callable[[], WsProvider],
+        historical_provider: Any,
+        option_chain_provider: Any,
+        greeks_provider: Any,
         bus: Any,
-        resolve_fn,
+        resolve_fn: ResolveFn,
     ) -> None:
         self._http_provider = http_provider
         self._token_provider = token_provider
@@ -72,7 +78,10 @@ class MarketDataClient:
         if isinstance(instrument_id, SimpleInstrumentId):
             return instrument_id.symbol, instrument_id.exchange.value
         if isinstance(instrument_id, DerivativeInstrumentId):
-            return instrument_id.underlying, instrument_id.exchange.value
+            # Prefer the specific contract's trading symbol (e.g. "BANKNIFTY24JULFUT")
+            # over the underlying, so we subscribe to the right instrument.
+            symbol = instrument_id.trading_symbol or instrument_id.underlying
+            return symbol, instrument_id.exchange.value
         raise TypeError(f"Unsupported InstrumentId type: {type(instrument_id).__name__}")
 
     # ── Market data ────────────────────────────────────────────────────
@@ -109,10 +118,74 @@ class MarketDataClient:
         security_id, segment = self._resolve(symbol, exchange)
         self._ws.subscribe_depth([(security_id, segment)], level=level)
 
+    # ── High-level subscribe API ─────────────────────────────────────────
+
+    def subscribe(self, symbol: str, exchange: str = "NSE", type: str = "quote", level: int | None = None) -> None:
+        from scalpr.domain.instrument import Exchange, SimpleInstrumentId
+        instrument_id = SimpleInstrumentId(symbol=symbol, exchange=Exchange(exchange))
+        if type == "quote":
+            self.subscribe_quotes(instrument_id)
+        elif type == "depth":
+            self.subscribe_market_depth(instrument_id, level or 20)
+        else:
+            raise ValueError(f"unknown subscription type: {type}")
+
+    def subscribe_batch(self, specs: list[tuple[str, str, str, int | None]]) -> None:
+        for symbol, exchange, type_, level in specs:
+            self.subscribe(symbol, exchange, type_, level)
+
+    def subscription_status(self) -> dict:
+        ws = self._ws
+        return {
+            "quote_subscriptions": ws.subscription_count,
+            "depth_subscriptions": ws.depth_subscription_count,
+            "depth_20_remaining": ws.depth_capacity_remaining_20,
+            "depth_200_remaining": ws.depth_capacity_remaining_200,
+            "total_capacity": ws.MAX_SUBSCRIBERS,
+            "remaining": ws.subscription_capacity_remaining,
+        }
+
     def unsubscribe_market_depth(self, instrument_id: InstrumentId, level: int = 20) -> None:
         symbol, exchange = self._instrument_id_to_symbol_exchange(instrument_id)
         security_id, segment = self._resolve(symbol, exchange)
         self._ws.unsubscribe_depth([(security_id, segment)], level=level)
+
+    def _depth_to_domain(
+        self,
+        snapshot: dict,
+        *,
+        symbol: str = "",
+        exchange: str = "",
+    ) -> MarketDepth:
+        """Convert raw SDK depth response to canonical MarketDepth domain model."""
+        depth = snapshot.get("depth") or {}
+        bids_raw = depth.get("bid") or []
+        asks_raw = depth.get("ask") or []
+
+        bid_levels = [
+            DepthLevel(
+                price=Decimal(str(b.get("price", "0"))),
+                quantity=int(b.get("quantity", 0)),
+                orders=int(b.get("orders", 1)),
+            )
+            for b in bids_raw
+        ]
+        ask_levels = [
+            DepthLevel(
+                price=Decimal(str(a.get("price", "0"))),
+                quantity=int(a.get("quantity", 0)),
+                orders=int(a.get("orders", 1)),
+            )
+            for a in asks_raw
+        ]
+
+        return MarketDepth(
+            symbol=symbol or str(snapshot.get("security_id", "")),
+            exchange=exchange or str(snapshot.get("exchange", "")),
+            bid_levels=bid_levels,
+            ask_levels=ask_levels,
+            timestamp=None,
+        )
 
     def get_market_depth_snapshot(self, instrument_id: InstrumentId) -> dict:
         symbol, exchange = self._instrument_id_to_symbol_exchange(instrument_id)
@@ -125,7 +198,16 @@ class MarketDataClient:
         return data
 
     def get_market_depth_df(self, instrument_id: InstrumentId, as_df: bool = False) -> list[dict] | pd.DataFrame:
-        raw = self.get_market_depth_snapshot(instrument_id)
+        return self._market_depth_df(self.get_market_depth_snapshot(instrument_id), as_df=as_df)
+
+    def get_market_depth(self, instrument_id: InstrumentId) -> MarketDepth:
+        """Return canonical MarketDepth domain model for the instrument."""
+        symbol, exchange = self._instrument_id_to_symbol_exchange(instrument_id)
+        snapshot = self.get_market_depth_snapshot(instrument_id)
+        return self._depth_to_domain(snapshot, symbol=symbol, exchange=exchange)
+
+    @staticmethod
+    def _market_depth_df(raw: dict, as_df: bool = False) -> list[dict] | pd.DataFrame:
         depth = raw.get("depth") or {}
         bids = depth.get("bid") or []
         asks = depth.get("ask") or []
@@ -134,18 +216,18 @@ class MarketDataClient:
         ask_sorted = sorted(asks, key=lambda x: float(x.get("price", 0)))
 
         out: list[dict] = []
-        min_len = min(len(bid_sorted), len(ask_sorted))
-        for i in range(min_len):
-            b = bid_sorted[i]
-            a = ask_sorted[i]
+        max_len = max(len(bid_sorted), len(ask_sorted))
+        for i in range(max_len):
+            b = bid_sorted[i] if i < len(bid_sorted) else None
+            a = ask_sorted[i] if i < len(ask_sorted) else None
             out.append({
                 "level": i + 1,
-                "bid_price": float(b.get("price", 0)),
-                "bid_qty": int(b.get("quantity", 0)),
-                "bid_orders": int(b.get("orders", 0)),
-                "ask_price": float(a.get("price", 0)),
-                "ask_qty": int(a.get("quantity", 0)),
-                "ask_orders": int(a.get("orders", 0)),
+                "bid_price": float(b.get("price", 0)) if b else None,
+                "bid_qty": int(b.get("quantity", 0)) if b else None,
+                "bid_orders": int(b.get("orders", 0)) if b else None,
+                "ask_price": float(a.get("price", 0)) if a else None,
+                "ask_qty": int(a.get("quantity", 0)) if a else None,
+                "ask_orders": int(a.get("orders", 0)) if a else None,
             })
         if as_df:
             return _list_to_df(out)
@@ -256,134 +338,17 @@ class MarketDataClient:
 
     @staticmethod
     def resample_timeframe(data: list[dict] | pd.DataFrame, timeframe: str = "5T") -> pd.DataFrame:
-        if isinstance(data, list):
-            df = pd.DataFrame(data)
-        else:
-            df = data.copy()
-
-        if df.empty:
-            return pd.DataFrame(columns=["timestamp", "open", "high", "low", "close", "volume"])
-
-        df["timestamp"] = pd.to_datetime(df["timestamp"])
-        df.set_index("timestamp", inplace=True)
-
-        tz = pytz.timezone("Asia/Kolkata")
-        df.index = df.index.tz_localize(tz, ambiguous="infer")
-
-        market_start = pd.to_datetime("09:15:00").time()
-        market_end = pd.to_datetime("15:30:00").time()
-
-        freq = timeframe.replace("T", "min").replace("H", "h")
-
-        resampled = []
-        for date, group in df.groupby(df.index.date):
-            origin = tz.localize(pd.Timestamp(f"{date} 09:15:00"))
-            daily = group.between_time(market_start, market_end)
-            if not daily.empty:
-                r = daily.resample(freq, origin=origin).agg({
-                    "open": "first",
-                    "high": "max",
-                    "low": "min",
-                    "close": "last",
-                    "volume": "sum",
-                }).dropna(how="all")
-                resampled.append(r)
-
-        if resampled:
-            result = pd.concat(resampled)
-        else:
-            result = pd.DataFrame(columns=["timestamp", "open", "high", "low", "close", "volume"])
-
-        result.reset_index(inplace=True)
-        return result
+        """Delegates to scalpr.market_data.charting.resample_timeframe."""
+        return _resample_timeframe(data, timeframe)
 
     # ── Chart transforms ───────────────────────────────────────────────
 
     @staticmethod
     def renko_bricks(data: list[dict] | pd.DataFrame, box_size: int = 7) -> pd.DataFrame:
-        if isinstance(data, list):
-            df = pd.DataFrame(data)
-        else:
-            df = data.copy()
-
-        if df.empty:
-            return pd.DataFrame(columns=["date", "direction", "high", "low"])
-
-        if "timestamp" in df.columns:
-            df = df.rename(columns={"timestamp": "date"})
-
-        df = df.sort_values("date").reset_index(drop=True)
-
-        closes = df["close"].to_numpy(dtype=float)
-        dates = df["date"].to_numpy()
-
-        bricks: list[dict] = []
-        brick_edge = closes[0]
-
-        for i in range(1, len(closes)):
-            close = closes[i]
-            ts = dates[i]
-
-            while close >= brick_edge + box_size:
-                bricks.append({
-                    "date": ts,
-                    "direction": 1,
-                    "high": brick_edge + box_size,
-                    "low": brick_edge,
-                })
-                brick_edge += box_size
-
-            while close <= brick_edge - box_size:
-                bricks.append({
-                    "date": ts,
-                    "direction": -1,
-                    "high": brick_edge,
-                    "low": brick_edge - box_size,
-                })
-                brick_edge -= box_size
-
-        return pd.DataFrame(bricks)
+        """Delegates to scalpr.market_data.charting.renko_bricks."""
+        return _renko_bricks(data, box_size)
 
     @staticmethod
     def heikin_ashi(data: list[dict] | pd.DataFrame) -> pd.DataFrame:
-        if isinstance(data, list):
-            df = pd.DataFrame(data)
-        else:
-            df = data.copy()
-
-        if df.empty:
-            return pd.DataFrame(columns=["timestamp", "open", "high", "low", "close"])
-
-        if "date" in df.columns:
-            df = df.rename(columns={"date": "timestamp"})
-
-        df = df.sort_values("timestamp").reset_index(drop=True)
-
-        ha = df[["timestamp"]].copy().astype({"timestamp": "object"})
-        ha["open"] = 0.0
-        ha["high"] = 0.0
-        ha["low"] = 0.0
-        ha["close"] = 0.0
-
-        for i in range(len(df)):
-            o = float(df.loc[i, "open"])
-            h = float(df.loc[i, "high"])
-            l = float(df.loc[i, "low"])
-            c = float(df.loc[i, "close"])
-
-            ha_close = (o + h + l + c) / 4.0
-
-            if i == 0:
-                ha_open = o
-            else:
-                ha_open = (ha.loc[i - 1, "open"] + ha.loc[i - 1, "close"]) / 2.0
-
-            ha_high = max(h, ha_open, ha_close)
-            ha_low = min(l, ha_open, ha_close)
-
-            ha.loc[i, "open"] = ha_open
-            ha.loc[i, "high"] = ha_high
-            ha.loc[i, "low"] = ha_low
-            ha.loc[i, "close"] = ha_close
-
-        return ha
+        """Delegates to scalpr.market_data.charting.heikin_ashi."""
+        return _heikin_ashi(data)

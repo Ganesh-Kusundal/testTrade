@@ -429,7 +429,7 @@ class TestDhanClientPlaceOrder:
             patch("scalpr.adapters.dhan.client.RateLimiter"),
             patch("scalpr.adapters.dhan.client.DhanWebSocket"),
             patch("scalpr.adapters.dhan.client.SymbolResolver"),
-            patch("scalpr.adapters.dhan.client.order_to_dhan_request_v2") as mock_v2,
+            patch("scalpr.adapters.dhan._mapper_orders.order_to_dhan_request_v2") as mock_v2,
         ):
             from scalpr.adapters.dhan.client import DhanClient
             from scalpr.engine.clock import StaticClock
@@ -614,7 +614,7 @@ class TestDhanClientKillSwitch:
             patch("scalpr.adapters.dhan.client.RateLimiter"),
             patch("scalpr.adapters.dhan.client.DhanWebSocket"),
             patch("scalpr.adapters.dhan.client.SymbolResolver"),
-            patch("scalpr.adapters.dhan.client.kill_switch_to_dhan") as mock_ks,
+            patch("scalpr.adapters.dhan._mapper_advanced_orders.kill_switch_to_dhan") as mock_ks,
         ):
             from scalpr.adapters.dhan.client import DhanClient
             from scalpr.engine.clock import StaticClock

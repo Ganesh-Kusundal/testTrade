@@ -134,13 +134,28 @@ class HistoricalDataAdapter:
         return float(data.get("ltp") or data.get("last_price") or 0.0)
 
     @staticmethod
+    def _normalize_timestamp(value: Any) -> Any:
+        """Normalize Dhan epoch seconds/ms or ISO strings for pandas."""
+        if isinstance(value, (int, float)):
+            ts = float(value)
+            if ts > 1e12:
+                ts /= 1000.0
+            return ts
+        return value
+
+    @staticmethod
     def _to_df(data: list[dict[str, Any]]) -> pd.DataFrame:
         if not data:
             return pd.DataFrame()
         df = pd.DataFrame(data)
         if "start" in df.columns:
             df.rename(columns={"start": "timestamp"}, inplace=True)
-        df["timestamp"] = pd.to_datetime(df["timestamp"])
+        if "timestamp" in df.columns:
+            col = df["timestamp"].map(HistoricalDataAdapter._normalize_timestamp)
+            if pd.api.types.is_numeric_dtype(col):
+                df["timestamp"] = pd.to_datetime(col, unit="s")
+            else:
+                df["timestamp"] = pd.to_datetime(col)
         return df
 
     def _resolve_security(self, symbol: str, exchange: str) -> tuple[str, str, str, int]:
@@ -157,7 +172,7 @@ class HistoricalDataAdapter:
         candles: list[dict[str, Any]] = []
         for i, ts in enumerate(timestamps):
             candle: dict[str, Any] = {
-                "timestamp": ts,
+                "timestamp": self._normalize_timestamp(ts),
                 "open": float(response.get("open", [])[i]),
                 "high": float(response.get("high", [])[i]),
                 "low": float(response.get("low", [])[i]),

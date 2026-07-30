@@ -10,7 +10,7 @@ from scalpr.adapters.dhan._mapper import (
     InvalidValueError,
     MissingFieldError,
     order_status_from_dhan,
-    order_to_dhan_request,
+    order_to_dhan_request_v2,
     order_type_from_domain,
     raw_order_to_order,
     raw_trade_to_fill,
@@ -26,7 +26,7 @@ from scalpr.domain.position import PositionSide, PositionState
 from scalpr.domain.values import ZERO
 
 # =========================================================================
-# order_to_dhan_request
+# order_to_dhan_request_v2
 # =========================================================================
 
 class TestOrderToDhanRequest:
@@ -36,7 +36,7 @@ class TestOrderToDhanRequest:
             side=OrderSide.BUY, order_type=OrderType.MARKET,
             quantity=10, price=ZERO,
         )
-        result = order_to_dhan_request(order, "11536", "NSE_EQ", "client1")
+        result = order_to_dhan_request_v2(order, "11536", "NSE_EQ", "client1")
         assert result["dhanClientId"] == "client1"
         assert result["securityId"] == "11536"
         assert result["exchangeSegment"] == "NSE_EQ"
@@ -50,7 +50,7 @@ class TestOrderToDhanRequest:
             side=OrderSide.SELL, order_type=OrderType.MARKET,
             quantity=5, price=ZERO,
         )
-        result = order_to_dhan_request(order, "11536", "NSE_EQ", "client1")
+        result = order_to_dhan_request_v2(order, "11536", "NSE_EQ", "client1")
         assert result["transactionType"] == "SELL"
 
     def test_limit_order_buy(self):
@@ -59,7 +59,7 @@ class TestOrderToDhanRequest:
             side=OrderSide.BUY, order_type=OrderType.LIMIT,
             quantity=10, price=Decimal("2500.50"),
         )
-        result = order_to_dhan_request(order, "11536", "NSE_EQ", "client1")
+        result = order_to_dhan_request_v2(order, "11536", "NSE_EQ", "client1")
         assert result["orderType"] == "LIMIT"
         assert result["price"] == "2500.50"
 
@@ -69,7 +69,7 @@ class TestOrderToDhanRequest:
             side=OrderSide.BUY, order_type=OrderType.LIMIT,
             quantity=1, price=Decimal("100"), correlation_id="corr-123",
         )
-        result = order_to_dhan_request(order, "11536", "NSE_EQ", "client1")
+        result = order_to_dhan_request_v2(order, "11536", "NSE_EQ", "client1")
         assert result["correlationId"] == "corr-123"
 
     def test_sl_order(self):
@@ -78,7 +78,7 @@ class TestOrderToDhanRequest:
             side=OrderSide.BUY, order_type=OrderType.STOP_LOSS,
             quantity=10, price=Decimal("2500"), trigger_price=Decimal("2480"),
         )
-        result = order_to_dhan_request(order, "11536", "NSE_EQ", "client1")
+        result = order_to_dhan_request_v2(order, "11536", "NSE_EQ", "client1")
         assert result["orderType"] == "SL"
         assert result["triggerPrice"] == "2480"
 
@@ -88,7 +88,7 @@ class TestOrderToDhanRequest:
             side=OrderSide.SELL, order_type=OrderType.STOP_LOSS_MARKET,
             quantity=10, price=ZERO, trigger_price=Decimal("2400"),
         )
-        result = order_to_dhan_request(order, "11536", "NSE_EQ", "client1")
+        result = order_to_dhan_request_v2(order, "11536", "NSE_EQ", "client1")
         assert result["orderType"] == "SL-M"
 
     def test_with_nse_fno_segment(self):
@@ -97,7 +97,7 @@ class TestOrderToDhanRequest:
             side=OrderSide.BUY, order_type=OrderType.LIMIT,
             quantity=50, price=Decimal("150.00"),
         )
-        result = order_to_dhan_request(order, "sec456", "NSE_FNO", "client1")
+        result = order_to_dhan_request_v2(order, "sec456", "NSE_FNO", "client1")
         assert result["exchangeSegment"] == "NSE_FNO"
 
     def test_with_bse_fno_segment(self):
@@ -106,7 +106,7 @@ class TestOrderToDhanRequest:
             side=OrderSide.BUY, order_type=OrderType.LIMIT,
             quantity=20, price=Decimal("120.00"),
         )
-        result = order_to_dhan_request(order, "sec999", "BSE_FNO", "client1")
+        result = order_to_dhan_request_v2(order, "sec999", "BSE_FNO", "client1")
         assert result["exchangeSegment"] == "BSE_FNO"
 
     def test_with_mcx_segment(self):
@@ -115,7 +115,7 @@ class TestOrderToDhanRequest:
             side=OrderSide.BUY, order_type=OrderType.LIMIT,
             quantity=1, price=Decimal("50000"),
         )
-        result = order_to_dhan_request(order, "sec101", "MCX_COMM", "client1")
+        result = order_to_dhan_request_v2(order, "sec101", "MCX_COMM", "client1")
         assert result["exchangeSegment"] == "MCX_COMM"
 
     def test_with_idx_i_segment(self):
@@ -124,7 +124,7 @@ class TestOrderToDhanRequest:
             side=OrderSide.BUY, order_type=OrderType.MARKET,
             quantity=75, price=ZERO,
         )
-        result = order_to_dhan_request(order, "13", "IDX_I", "client1")
+        result = order_to_dhan_request_v2(order, "13", "IDX_I", "client1")
         assert result["exchangeSegment"] == "IDX_I"
 
     def test_raises_on_invalid_order_type(self):
@@ -136,7 +136,7 @@ class TestOrderToDhanRequest:
             quantity=1, price=Decimal("100"),
         )
         with pytest.raises(InvalidValueError):
-            order_to_dhan_request(order, "s", "NSE_EQ", "c")
+            order_to_dhan_request_v2(order, "s", "NSE_EQ", "c")
 
     def test_raises_on_invalid_side(self):
         order = Order(
@@ -145,7 +145,7 @@ class TestOrderToDhanRequest:
             quantity=1, price=ZERO,
         )
         with pytest.raises(InvalidValueError):
-            order_to_dhan_request(order, "s", "NSE_EQ", "c")
+            order_to_dhan_request_v2(order, "s", "NSE_EQ", "c")
 
     def test_empty_correlation_id(self):
         order = Order(
@@ -153,7 +153,7 @@ class TestOrderToDhanRequest:
             side=OrderSide.BUY, order_type=OrderType.MARKET,
             quantity=1, price=ZERO, correlation_id=None,
         )
-        result = order_to_dhan_request(order, "s", "NSE_EQ", "c")
+        result = order_to_dhan_request_v2(order, "s", "NSE_EQ", "c")
         assert result["correlationId"] == ""
 
     def test_zero_quantity_order(self):
@@ -162,7 +162,7 @@ class TestOrderToDhanRequest:
             side=OrderSide.BUY, order_type=OrderType.MARKET,
             quantity=1, price=ZERO,
         )
-        result = order_to_dhan_request(order, "s", "NSE_EQ", "c")
+        result = order_to_dhan_request_v2(order, "s", "NSE_EQ", "c")
         assert result["quantity"] == 1
 
     def test_round_lot_quantity(self):
@@ -171,7 +171,7 @@ class TestOrderToDhanRequest:
             side=OrderSide.BUY, order_type=OrderType.MARKET,
             quantity=75, price=ZERO,
         )
-        result = order_to_dhan_request(order, "s", "NSE_EQ", "c")
+        result = order_to_dhan_request_v2(order, "s", "NSE_EQ", "c")
         assert result["quantity"] == 75
 
     def test_client_id_in_request(self):
@@ -180,7 +180,7 @@ class TestOrderToDhanRequest:
             side=OrderSide.BUY, order_type=OrderType.MARKET,
             quantity=1, price=ZERO,
         )
-        result = order_to_dhan_request(order, "s", "NSE_EQ", "my-client-007")
+        result = order_to_dhan_request_v2(order, "s", "NSE_EQ", "my-client-007")
         assert result["dhanClientId"] == "my-client-007"
 
     def test_price_as_string_in_dict(self):
@@ -189,7 +189,7 @@ class TestOrderToDhanRequest:
             side=OrderSide.BUY, order_type=OrderType.LIMIT,
             quantity=10, price=Decimal("1234.56"),
         )
-        result = order_to_dhan_request(order, "s", "NSE_EQ", "c")
+        result = order_to_dhan_request_v2(order, "s", "NSE_EQ", "c")
         assert isinstance(result["price"], str)
         assert result["price"] == "1234.56"
 
@@ -199,7 +199,7 @@ class TestOrderToDhanRequest:
             side=OrderSide.BUY, order_type=OrderType.STOP_LOSS,
             quantity=10, price=Decimal("100"), trigger_price=Decimal("95.50"),
         )
-        result = order_to_dhan_request(order, "s", "NSE_EQ", "c")
+        result = order_to_dhan_request_v2(order, "s", "NSE_EQ", "c")
         assert isinstance(result["triggerPrice"], str)
         assert result["triggerPrice"] == "95.50"
 
@@ -209,7 +209,7 @@ class TestOrderToDhanRequest:
             side=OrderSide.BUY, order_type=OrderType.MARKET,
             quantity=1, price=ZERO,
         )
-        result = order_to_dhan_request(order, "s", "NSE_EQ", "c")
+        result = order_to_dhan_request_v2(order, "s", "NSE_EQ", "c")
         assert result["validity"] == "DAY"
 
     def test_product_type(self):
@@ -218,7 +218,7 @@ class TestOrderToDhanRequest:
             side=OrderSide.BUY, order_type=OrderType.MARKET,
             quantity=1, price=ZERO, product_type="CNC",
         )
-        result = order_to_dhan_request(order, "s", "NSE_EQ", "c")
+        result = order_to_dhan_request_v2(order, "s", "NSE_EQ", "c", product_type="CNC")
         assert result["productType"] == "CNC"
 
 

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from typing import Any
 
 import pandas as pd
 
+from scalpr.adapters.dhan._protocols import HttpProvider, ResolveFn, TokenProvider
 from scalpr.domain.order import Order
 
 logger = logging.getLogger(__name__)
@@ -17,10 +19,10 @@ def _list_to_df(data: list[dict]) -> pd.DataFrame:
 class OrderClient:
     def __init__(
         self,
-        http_provider,
-        token_provider,
+        http_provider: Callable[[], HttpProvider],
+        token_provider: Callable[[], TokenProvider],
         client_id: str,
-        resolve_fn,
+        resolve_fn: ResolveFn,
     ) -> None:
         self._http_provider = http_provider
         self._token_provider = token_provider
@@ -48,7 +50,7 @@ class OrderClient:
         tag: str | None = None,
         should_slice: bool = False,
     ) -> str:
-        from scalpr.adapters.dhan.client import order_to_dhan_request_v2
+        from scalpr.adapters.dhan._mapper_orders import order_to_dhan_request_v2
 
         self._token_manager.get_token()
         security_id, segment = self._resolve(order.symbol, order.exchange.value)
@@ -147,12 +149,16 @@ class OrderClient:
         return result
 
     def kill_switch(self, action: str) -> str:
-        from scalpr.adapters.dhan.client import kill_switch_to_dhan
+        from scalpr.adapters.dhan._mapper_advanced_orders import kill_switch_to_dhan
 
         req = kill_switch_to_dhan(action)
         resp = self._http.post("/killswitch", data=req)
         status: str = resp.get("killSwitchStatus", "")
         return status
+
+    def status_kill_switch(self) -> str:
+        resp = self._http.get("/killswitch", bucket="orders")
+        return str(resp.get("killSwitchStatus", resp.get("status", "")))
 
     # ── Super orders ──────────────────────────────────────────────────
 
@@ -170,7 +176,7 @@ class OrderClient:
         trailing_jump: float = 0.0,
         tag: str | None = None,
     ) -> list[str]:
-        from scalpr.adapters.dhan.client import super_order_to_dhan_request
+        from scalpr.adapters.dhan._mapper_advanced_orders import super_order_to_dhan_request
 
         self._token_manager.get_token()
         req = super_order_to_dhan_request(
@@ -248,7 +254,7 @@ class OrderClient:
         tag: str | None = None,
         symbol: str = "",
     ) -> str:
-        from scalpr.adapters.dhan.client import forever_order_to_dhan_request
+        from scalpr.adapters.dhan._mapper_advanced_orders import forever_order_to_dhan_request
 
         self._token_manager.get_token()
         req = forever_order_to_dhan_request(

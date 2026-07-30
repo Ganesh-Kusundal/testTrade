@@ -10,39 +10,24 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
 
+from scalpr.adapters.dhan._resolver import (
+    full_depth_numeric_to_wire_segment,
+    full_depth_sdk_pairs,
+    market_feed_mode_int,
+    market_feed_sdk_tuples,
+    wire_segment_to_full_depth_numeric,
+)
 from scalpr.domain.tick import Tick
 from scalpr.domain.values import ZERO
 from scalpr.engine.clock import Clock, LiveClock
 
 logger = logging.getLogger(__name__)
 
-WS_URL = "wss://ws.dhan.co/marketfeed"
-
 DEPTH_20_LIMIT = 100
 DEPTH_200_LIMIT = 50
 DEPTH_WARN_THRESHOLD = 0.8
 _DEPTH_20_URL = "wss://depth-api-feed.dhan.co/twentydepth"
 _DEPTH_200_URL = "wss://full-depth-api.dhan.co/"
-
-_WIRE_SEGMENT_TO_EXCH_CODE: dict[str, int] = {
-    "NSE_EQ": 1,
-    "NSE_FNO": 2,
-    "BSE_EQ": 3,
-    "BSE_FNO": 4,
-    "MCX_EQ": 5,
-    "MCX_COMM": 5,
-    "IDX_I": 1,
-    "NSE": 1,
-    "BSE": 3,
-}
-
-_EXCH_CODE_TO_SEGMENT: dict[int, str] = {
-    1: "NSE_EQ",
-    2: "NSE_FNO",
-    3: "BSE_EQ",
-    4: "BSE_FNO",
-    5: "MCX",
-}
 
 
 class WSState(enum.Enum):
@@ -57,40 +42,29 @@ class WSState(enum.Enum):
 
 
 def _sdk_market_feed_class() -> type:
-    try:
-        from dhanhq.marketfeed import MarketFeed
-        return MarketFeed
-    except ImportError:
-        from dhanhq.marketfeed import DhanFeed
-        return DhanFeed
+    """Return the dhanhq MarketFeed class (v2.2+ only).
+
+    dhanhq < 2.2 is unsupported — the legacy DhanFeed subpackage fallback is
+    removed; pin dhanhq>=2.2,<2.3 in pyproject.toml.
+    """
+    from dhanhq import MarketFeed
+    return MarketFeed
 
 
 def _sdk_mode_int(mode: str) -> int:
-    TICKER, QUOTE, FULL = 15, 17, 21
-    try:
-        fcls = _sdk_market_feed_class()
-        TICKER, QUOTE, FULL = fcls.Ticker, fcls.Quote, fcls.Full
-    except (ImportError, AttributeError):
-        pass
-    return {"ltp": TICKER, "quote": QUOTE, "depth": QUOTE, "full": FULL}.get(mode, QUOTE)
+    return market_feed_mode_int(mode)
 
 
-class _DhanContextShim:
-    def __init__(self, client_id: str, access_token: str) -> None:
-        self._client_id = client_id
-        self._access_token = access_token
+def _full_depth_class() -> type:
+    """Return the dhanhq FullDepth class (v2.2+ top-level only)."""
+    from dhanhq import FullDepth
+    return FullDepth
 
-    def get_client_id(self) -> str:
-        return self._client_id
 
-    def get_access_token(self) -> str:
-        return self._access_token
-
-    def get_dhan_http(self) -> None:
-        return None
-
-    def update_token(self, token: str) -> None:
-        self._access_token = token
+def _get_dhan_context(client_id: str, access_token: str) -> Any:
+    """Return a DhanContext instance (dhanhq >= 2.2 required)."""
+    from dhanhq import DhanContext
+    return DhanContext(client_id, access_token)
 
 
 # ── DhanWebSocket ────────────────────────────────────────────────────
@@ -100,9 +74,9 @@ class DhanWebSocket:
     """WebSocket client for Dhan market data with FSM-based reconnection.
 
     Manages three independent WebSocket feeds:
-        - Quote/tick feed via ``dhanhq.marketfeed.MarketFeed``
-        - 20-level depth feed via ``dhanhq.fulldepth.FullDepth``
-        - 200-level depth feed via ``dhanhq.fulldepth.FullDepth``
+        - Quote/tick feed via ``dhanhq.MarketFeed``
+        - 20-level depth feed via ``dhanhq.FullDepth``
+        - 200-level depth feed via ``dhanhq.FullDepth``
 
     FSM transitions (quote feed):
         DISCONNECTED -> connect() -> CONNECTING
@@ -168,6 +142,14 @@ class DhanWebSocket:
     @property
     def depth_subscription_count(self) -> int:
         return sum(len(v) for v in self._depth_subscriptions.values())
+
+    @property
+    def depth_subscription_count_20(self) -> int:
+        return len(self._depth_subscriptions.get(20, set()))
+
+    @property
+    def depth_subscription_count_200(self) -> int:
+        return len(self._depth_subscriptions.get(200, set()))
 
     @property
     def depth_capacity_remaining_20(self) -> int:
@@ -241,6 +223,10 @@ class DhanWebSocket:
         if level not in (20, 200):
             raise ValueError(f"Depth level must be 20 or 200, got {level}")
 
+        # Validate segments up-front: FullDepth is NSE equity/F&O only.
+        for _sid, seg in security_ids:
+            wire_segment_to_full_depth_numeric(seg)
+
         current = len(self._depth_subscriptions[level])
         limit = DEPTH_20_LIMIT if level == 20 else DEPTH_200_LIMIT
         new_count = current + len(security_ids)
@@ -299,13 +285,14 @@ class DhanWebSocket:
 
     def _run_feed(self) -> None:
         MarketFeed = _sdk_market_feed_class()
-        context = _DhanContextShim(self._client_id, self._access_token)
+        context = _get_dhan_context(self._client_id, self._access_token)
         with self._lock:
             instruments = self._all_sdk_instruments()
 
         feed = MarketFeed(
             dhan_context=context,
             instruments=instruments,
+            version="v2",
             on_connect=self._on_connect,
             on_message=self._on_message,
             on_close=self._on_close,
@@ -381,14 +368,15 @@ class DhanWebSocket:
             logger.warning("resubscribe_failed: %s", exc)
 
     def _all_sdk_instruments(self) -> list[tuple[int, str, int]]:
-        return [(1, s, 17) for s, _ in self._subscriptions]
+        return market_feed_sdk_tuples(
+            list(self._subscriptions), _sdk_mode_int("quote"),
+        )
 
     @staticmethod
     def _to_sdk_instruments(
         security_ids: list[tuple[str, str]], mode: str = "quote",
     ) -> list[tuple[int, str, int]]:
-        mi = _sdk_mode_int(mode)
-        return [(1, sid, mi) for sid, _ in security_ids]
+        return market_feed_sdk_tuples(security_ids, _sdk_mode_int(mode))
 
     # ── Tick parsing ────────────────────────────────────────────────
 
@@ -465,14 +453,14 @@ class DhanWebSocket:
                 thread.join(timeout=3)
 
     def _run_depth_feed(self, level: int = 20) -> None:
-        from dhanhq.fulldepth import FullDepth
+        FullDepth = _full_depth_class()
         try:
             with self._lock:
                 instruments = list(self._depth_subscriptions.get(level, set()))
             if not instruments:
                 return
             sdk_instruments = self._to_depth_sdk_instruments(instruments)
-            context = _DhanContextShim(self._client_id, self._access_token)
+            context = _get_dhan_context(self._client_id, self._access_token)
             feed = FullDepth(
                 dhan_context=context, instruments=sdk_instruments, depth_level=level,
             )
@@ -515,7 +503,7 @@ class DhanWebSocket:
     def _accumulate_depth_update(self, buffer: dict, update: dict) -> None:
         sec_id = str(update["security_id"])
         ex_code = update.get("exchange_segment", 1)
-        ex_seg = _EXCH_CODE_TO_SEGMENT.get(int(ex_code), str(ex_code))
+        ex_seg = full_depth_numeric_to_wire_segment(int(ex_code))
         depth_type = update["type"]
         levels = update["depth"]
 
@@ -541,10 +529,12 @@ class DhanWebSocket:
         while not queue.empty():
             try:
                 cmd = queue.get_nowait()
+                ids = cmd["ids"]
+                sdk_ids = full_depth_sdk_pairs(ids)
                 if cmd["action"] == "subscribe":
-                    feed.subscribe_symbols(cmd["ids"])
+                    feed.subscribe_symbols(sdk_ids)
                 elif cmd["action"] == "unsubscribe":
-                    feed.unsubscribe_symbols(cmd["ids"])
+                    feed.unsubscribe_symbols(sdk_ids)
             except queue.Empty:
                 break
 
@@ -554,15 +544,7 @@ class DhanWebSocket:
     def _to_depth_sdk_instruments(
         security_ids: list[tuple[str, str]],
     ) -> list[tuple[int, str]]:
-        seen: set[tuple[int, str]] = set()
-        result: list[tuple[int, str]] = []
-        for sec_id, segment in security_ids:
-            ex_code = _WIRE_SEGMENT_TO_EXCH_CODE.get(segment, 1)
-            key = (ex_code, sec_id)
-            if key not in seen:
-                seen.add(key)
-                result.append(key)
-        return result
+        return full_depth_sdk_pairs(security_ids)
 
     def _combine_depth_snapshot(
         self, security_id: str, exchange: str,
@@ -580,9 +562,9 @@ class DhanWebSocket:
             b = bid_sorted[i]
             a = ask_sorted[i]
             levels.append(MarketDepthLevel(
-                bid_price=float(b["price"]),
+                bid_price=Decimal(str(b["price"])),
                 bid_qty=int(b["quantity"]),
-                ask_price=float(a["price"]),
+                ask_price=Decimal(str(a["price"])),
                 ask_qty=int(a["quantity"]),
                 bid_orders=int(b["orders"]),
                 ask_orders=int(a["orders"]),

@@ -13,6 +13,14 @@ from typing import Any
 
 import requests
 
+from scalpr.adapters.dhan._types import (
+    DhanAuthError,
+    DhanHttpError,
+    DhanRequestError,
+    DhanServerError,
+    RateLimitTimeout,
+)
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_BASE_URL = "https://api.dhan.co/v2"
@@ -32,34 +40,7 @@ PAPER_BUCKETS: dict[str, dict[str, float | int]] = {
 }
 
 
-class DhanHttpError(Exception):
-    """Base for all Dhan HTTP transport errors."""
-
-
-class RateLimitTimeout(DhanHttpError):
-    """Rate limiter could not acquire a token within the timeout."""
-
-
-class DhanAuthError(DhanHttpError):
-    """401 response from the API (after retry, token manager handles refresh)."""
-
-
-class DhanRequestError(DhanHttpError):
-    """4xx response from the API (excluding 401 and 429)."""
-
-    def __init__(self, status: int, body: str, *args: Any) -> None:
-        self.status = status
-        self.body = body
-        super().__init__(f"HTTP {status}: {body[:200]}", *args)
-
-
-class DhanServerError(DhanHttpError):
-    """5xx response after exhausting retries."""
-
-    def __init__(self, status: int, body: str, *args: Any) -> None:
-        self.status = status
-        self.body = body
-        super().__init__(f"HTTP {status}: {body[:200]}", *args)
+# Error classes imported from _types.py
 
 
 @dataclass

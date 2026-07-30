@@ -11,7 +11,11 @@ from typing import TYPE_CHECKING
 import pyotp
 import requests
 
-from scalpr.adapters.dhan._types import DhanAuthResponse
+from scalpr.adapters.dhan._types import (
+    DhanAuthError,
+    DhanAuthResponse,
+    DhanTokenRefreshThrottled,
+)
 
 if TYPE_CHECKING:
     from scalpr.engine.clock import Clock
@@ -29,20 +33,7 @@ REFRESH_THRESHOLD = 0.8
 _TOKEN_CACHE_DIR = Path("runtime-dev") / "tokens"
 
 
-class DhanAuthError(Exception):
-    """Raised when Dhan authentication fails."""
-
-
-class DhanTokenExpired(DhanAuthError):
-    """Raised when the token has expired and refresh was requested."""
-
-
-class DhanTokenRefreshThrottled(DhanAuthError):
-    """Raised when TOTP generation is blocked by cooldown."""
-
-    def __init__(self, message: str, *, remaining_seconds: float = 0.0) -> None:
-        super().__init__(message)
-        self.remaining_seconds = remaining_seconds
+# Error classes imported from _types.py
 
 
 def _decode_jwt_exp(token: str) -> datetime | None:

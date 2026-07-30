@@ -7,7 +7,6 @@ from typing import Any
 from scalpr.domain.fill import Fill
 from scalpr.domain.instrument import Exchange
 from scalpr.domain.order import Order, OrderSide, OrderState, OrderType
-from scalpr.domain.values import ZERO
 
 
 class MappingError(Exception):
@@ -53,33 +52,7 @@ _DHAN_STATUS_TO_STATE: dict[str, OrderState] = {
 }
 
 
-def order_to_dhan_request(
-    order: Order,
-    security_id: str,
-    segment: str,
-    client_id: str,
-) -> dict[str, Any]:
-    try:
-        dhan_order_type = _ORDER_TYPE_TO_DHAN[order.order_type]
-    except KeyError:
-        raise InvalidValueError(f"Unknown order type: {order.order_type}")
-
-    if order.side not in (OrderSide.BUY, OrderSide.SELL):
-        raise InvalidValueError(f"Unknown order side: {order.side}")
-
-    return {
-        "dhanClientId": client_id,
-        "correlationId": order.correlation_id or "",
-        "transactionType": order.side.value,
-        "exchangeSegment": segment,
-        "productType": order.product_type,
-        "orderType": dhan_order_type,
-        "quantity": order.quantity,
-        "price": str(order.price),
-        "triggerPrice": str(order.trigger_price),
-        "securityId": security_id,
-        "validity": order.validity,
-    }
+# order_to_dhan_request v1 removed (REF-05 — dead code, superseded by v2)
 
 
 def response_to_fill(response: dict, order: Order) -> Fill:

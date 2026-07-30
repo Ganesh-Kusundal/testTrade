@@ -13,7 +13,7 @@ from typing import Any
 import pandas as pd
 
 from scalpr.adapters.dhan._http import DhanHttpClient
-from scalpr.adapters.dhan._resolver import SymbolResolver
+from scalpr.adapters.dhan._resolver import INDEX_STEP_SIZES, SymbolResolver
 
 logger = logging.getLogger(__name__)
 
@@ -26,14 +26,7 @@ class StrikeNotFoundError(OptionChainError):
     """Raised when a strike cannot be found in the option chain."""
 
 
-_INDEX_STEPS: dict[str, float] = {
-    "NIFTY": 50.0,
-    "BANKNIFTY": 100.0,
-    "FINNIFTY": 50.0,
-    "MIDCPNIFTY": 25.0,
-    "SENSEX": 100.0,
-    "BANKEX": 100.0,
-}
+# Step sizes now centralized in _resolver.py (INDEX_STEP_SIZES)
 
 
 class OptionChainAdapter:
@@ -316,11 +309,11 @@ class OptionChainAdapter:
     def _step_size_for(self, symbol: str) -> float:
         """Get the strike interval step size for a symbol.
 
-        Known index values are hardcoded; others are resolved from the
-        instrument master tick size.
+        Uses centralized INDEX_STEP_SIZES from _resolver.py.
+        Falls back to resolver's tick_size for unknown symbols.
         """
         sym_upper = symbol.upper().strip()
-        known = _INDEX_STEPS.get(sym_upper)
+        known = INDEX_STEP_SIZES.get(sym_upper)
         if known is not None:
             return known
 

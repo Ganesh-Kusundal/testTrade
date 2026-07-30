@@ -542,7 +542,7 @@ class TestDhanClientPortfolio(unittest.TestCase):
             patch("scalpr.adapters.dhan.client.RateLimiter"),
             patch("scalpr.adapters.dhan.client.DhanWebSocket"),
             patch("scalpr.adapters.dhan.client.SymbolResolver"),
-            patch("scalpr.adapters.dhan.client.to_position"),
+            patch("scalpr.adapters.dhan._mapper_portfolio.to_position"),
         ]
         self.mocks = [p.start() for p in self._patchers]
         self.addCleanup(lambda: [p.stop() for p in self._patchers])

@@ -575,3 +575,14 @@ class TestAsDfIntegration:
         df = adapter.get_intraday("RELIANCE", "NSE", as_df=True)
         assert "oi" in df.columns
         assert df["oi"].iloc[0] == 50000
+
+
+class TestTimestampNormalization:
+    def test_normalize_millisecond_epoch_to_seconds(self) -> None:
+        ms = 1_700_000_000_000
+        assert HistoricalDataAdapter._normalize_timestamp(ms) == ms / 1000.0
+
+    def test_to_df_accepts_millisecond_timestamps(self) -> None:
+        ms = 1_700_000_000_000
+        df = HistoricalDataAdapter._to_df([{"timestamp": ms, "open": 1.0}])
+        assert pd.api.types.is_datetime64_any_dtype(df["timestamp"])

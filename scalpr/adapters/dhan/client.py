@@ -26,18 +26,15 @@ from scalpr.adapters.dhan._market_data_client import MarketDataClient
 from scalpr.adapters.dhan._option_chain import OptionChainAdapter
 from scalpr.adapters.dhan._order_client import OrderClient
 from scalpr.adapters.dhan._portfolio import PortfolioAdapter
-from scalpr.adapters.dhan._portfolio_client import PortfolioClient
-from scalpr.adapters.dhan._resolver import SymbolResolver
 from scalpr.adapters.dhan._resolver import DhanInstrumentNotFoundError as InstrumentNotFoundError
+from scalpr.adapters.dhan._resolver import SymbolResolver
 from scalpr.adapters.dhan._ws import DhanWebSocket
+from scalpr.domain.contracts import MarketDepth
 from scalpr.domain.instrument import (
-    DerivativeInstrumentId,
     InstrumentId,
     SimpleInstrumentId,
 )
-from scalpr.domain.order import Order
 from scalpr.domain.position import Position
-from scalpr.domain.tick import Tick as QuoteTick
 from scalpr.engine.clock import Clock
 from scalpr.engine.execution_engine import (
     CancelOrder,
@@ -106,11 +103,6 @@ class DhanClient:
             greeks_provider=lambda: self._greeks,
             bus=self._bus,
             resolve_fn=self._resolve,
-        )
-        self._portfolio_client = PortfolioClient(
-            http_provider=hp,
-            token_provider=tp,
-            portfolio=self._portfolio,
         )
 
     # ── Lifecycle ──────────────────────────────────────────────────────
@@ -220,6 +212,42 @@ class DhanClient:
         except Exception as exc:
             logger.error("modify_failed: order_id=%s error=%s", msg.order_id, exc)
 
+    # ── High-level subscribe/unsubscribe API ────────────────────────────
+
+    def subscribe(self, symbol: str, exchange: str = "NSE", type: str = "quote", level: int = 20) -> None:
+        from scalpr.domain.instrument import Exchange
+        exch = getattr(Exchange, exchange.upper(), Exchange.NSE)
+        inst = SimpleInstrumentId(symbol, exch)
+        if type == "quote":
+            self.subscribe_quotes(inst)
+        elif type == "depth":
+            self.subscribe_market_depth(inst, level=level)
+        else:
+            raise ValueError(f"Unknown subscription type: {type!r}")
+
+    def unsubscribe(self, symbol: str, exchange: str = "NSE", type: str = "quote") -> None:
+        from scalpr.domain.instrument import Exchange
+        exch = getattr(Exchange, exchange.upper(), Exchange.NSE)
+        inst = SimpleInstrumentId(symbol, exch)
+        if type == "quote":
+            self.unsubscribe_quotes(inst)
+        elif type == "depth":
+            self.unsubscribe_market_depth(inst)
+        else:
+            raise ValueError(f"Unknown subscription type: {type!r}")
+
+    def subscribe_batch(self, specs: list[tuple[str, str, str, int | None]]) -> None:
+        for symbol, exchange, feed_type, *rest in specs:
+            level = rest[0] if rest and rest[0] is not None else 20
+            self.subscribe(symbol, exchange, type=feed_type, level=level)
+
+    def subscription_status(self) -> dict:
+        return {
+            "quote": {"count": self._ws.subscription_count, "capacity": self._ws.subscription_capacity_remaining},
+            "depth_20": {"count": self._ws.depth_subscription_count_20, "capacity": self._ws.depth_capacity_remaining_20},
+            "depth_200": {"count": self._ws.depth_subscription_count_200, "capacity": self._ws.depth_capacity_remaining_200},
+        }
+
     # ── Delegated: OrderClient ─────────────────────────────────────────
 
     def place_order(self, *args, **kwargs) -> str:
@@ -254,6 +282,9 @@ class DhanClient:
 
     def kill_switch(self, *args, **kwargs) -> str:
         return self._order_client.kill_switch(*args, **kwargs)
+
+    def status_kill_switch(self, *args, **kwargs) -> str:
+        return self._order_client.status_kill_switch(*args, **kwargs)
 
     def place_super_order(self, *args, **kwargs) -> list[str]:
         return self._order_client.place_super_order(*args, **kwargs)
@@ -323,31 +354,13 @@ class DhanClient:
         return self._market_data_client.get_market_depth_snapshot(*args, **kwargs)
 
     def get_market_depth_df(self, instrument_id: InstrumentId, as_df: bool = False) -> list[dict] | pd.DataFrame:
-        raw = self.get_market_depth_snapshot(instrument_id)
-        depth = raw.get("depth") or {}
-        bids = depth.get("bid") or []
-        asks = depth.get("ask") or []
+        return self._market_data_client._market_depth_df(
+            self.get_market_depth_snapshot(instrument_id), as_df=as_df
+        )
 
-        bid_sorted = sorted(bids, key=lambda x: float(x.get("price", 0)), reverse=True)
-        ask_sorted = sorted(asks, key=lambda x: float(x.get("price", 0)))
-
-        out: list[dict] = []
-        min_len = min(len(bid_sorted), len(ask_sorted))
-        for i in range(min_len):
-            b = bid_sorted[i]
-            a = ask_sorted[i]
-            out.append({
-                "level": i + 1,
-                "bid_price": float(b.get("price", 0)),
-                "bid_qty": int(b.get("quantity", 0)),
-                "bid_orders": int(b.get("orders", 0)),
-                "ask_price": float(a.get("price", 0)),
-                "ask_qty": int(a.get("quantity", 0)),
-                "ask_orders": int(a.get("orders", 0)),
-            })
-        if as_df:
-            return pd.DataFrame(out)
-        return out
+    def get_market_depth(self, instrument_id: InstrumentId) -> MarketDepth:
+        """Return canonical MarketDepth domain model."""
+        return self._market_data_client.get_market_depth(instrument_id)
 
     def get_historical_batch(self, *args, **kwargs) -> dict[str, pd.DataFrame | list[dict] | Exception]:
         return self._market_data_client.get_historical_batch(*args, **kwargs)
@@ -391,28 +404,94 @@ class DhanClient:
     def heikin_ashi(*args, **kwargs) -> pd.DataFrame:
         return MarketDataClient.heikin_ashi(*args, **kwargs)
 
-    # ── Delegated: PortfolioClient ─────────────────────────────────────
+    # ── Portfolio (inlined from _portfolio_client, REF-08) ─────────────
 
-    def get_positions(self, *args, **kwargs) -> list[Position] | pd.DataFrame:
-        return self._portfolio_client.get_positions(*args, **kwargs)
+    def get_positions(self, as_df: bool = False, debug: bool = False) -> list[Position] | pd.DataFrame:
+        from scalpr.adapters.dhan._mapper_portfolio import to_position
 
-    def get_holdings(self, *args, **kwargs) -> dict[str, Any] | pd.DataFrame:
-        return self._portfolio_client.get_holdings(*args, **kwargs)
+        if debug:
+            logger.info("get_positions")
+        data = self._http_client.get("/positions", bucket="portfolio")
+        if isinstance(data, list):
+            positions = [to_position(item) for item in data]
+        else:
+            positions = [to_position(data)]
+        return self._portfolio._positions_to_df(positions) if as_df else positions
 
-    def get_funds(self, *args, **kwargs) -> dict[str, Any] | pd.DataFrame:
-        return self._portfolio_client.get_funds(*args, **kwargs)
+    def get_holdings(self, as_df: bool = False, debug: bool = False) -> dict[str, Any] | pd.DataFrame:
+        if debug:
+            logger.info("get_holdings")
+        data = self._http_client.get("/holdings", bucket="portfolio")
+        if as_df:
+            if isinstance(data, list):
+                return pd.DataFrame(data)
+            if isinstance(data, dict):
+                return pd.DataFrame([data])
+        return data
 
-    def margin_calculator(self, *args, **kwargs) -> dict[str, Any]:
-        return self._portfolio_client.margin_calculator(*args, **kwargs)
+    def get_funds(self, as_df: bool = False, debug: bool = False) -> dict[str, Any] | pd.DataFrame:
+        if debug:
+            logger.info("get_funds")
+        data = self._http_client.get("/fundlimit", bucket="portfolio")
+        return pd.DataFrame([data]) if as_df else data
 
-    def get_expired_option_data(self, *args, **kwargs) -> dict[str, Any]:
-        return self._portfolio_client.get_expired_option_data(*args, **kwargs)
+    def margin_calculator(
+        self,
+        security_id: str,
+        exchange_segment: str,
+        transaction_type: str,
+        quantity: int,
+        product_type: str,
+        price: float,
+        trigger_price: float = 0,
+    ) -> dict[str, Any]:
+        from scalpr.adapters.dhan._mapper_portfolio import margin_calc_to_dhan_request
 
-    def get_live_pnl(self, *args, **kwargs) -> float:
-        return self._portfolio_client.get_live_pnl(*args, **kwargs)
+        req = margin_calc_to_dhan_request(
+            security_id, exchange_segment, transaction_type,
+            quantity, product_type, price, trigger_price,
+        )
+        return self._http_client.post("/margincalculator", data=req, bucket="portfolio")
 
-    def get_positions_summary(self, *args, **kwargs) -> dict[str, Any]:
-        return self._portfolio_client.get_positions_summary(*args, **kwargs)
+    def get_expired_option_data(
+        self,
+        security_id: str,
+        exchange_segment: str,
+        instrument_type: str,
+        expiry_flag: str,
+        expiry_code: int,
+        strike: str,
+        drv_option_type: str,
+        required_data: list[str],
+        from_date: str,
+        to_date: str,
+        interval: int = 1,
+    ) -> dict[str, Any]:
+        payload = {
+            "securityId": security_id,
+            "exchangeSegment": exchange_segment,
+            "instrument": instrument_type,
+            "expiryFlag": expiry_flag,
+            "expiryCode": expiry_code,
+            "strike": strike,
+            "drvOptionType": drv_option_type,
+            "requiredData": required_data,
+            "fromDate": from_date,
+            "toDate": to_date,
+            "interval": interval,
+        }
+        return self._http_client.post("/charts/rollingoption", data=payload, bucket="history")
 
-    def get_exchange_time(self, *args, **kwargs) -> str:
-        return self._portfolio_client.get_exchange_time(*args, **kwargs)
+    def get_live_pnl(self) -> float:
+        return self._portfolio.get_live_pnl()
+
+    def get_positions_summary(self) -> dict[str, Any]:
+        return self._portfolio.get_positions_summary()
+
+    def get_exchange_time(self) -> str:
+        data = self._http_client.get("/exchange/time", bucket="portfolio")
+        if isinstance(data, str):
+            return data
+        if isinstance(data, dict):
+            return data.get("exchangeTime", data.get("time", data.get("dateTime", "")))
+        return str(data)

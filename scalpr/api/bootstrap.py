@@ -229,12 +229,13 @@ async def _start_trading(app: FastAPI) -> None:
         logger.error("trading_enabled_but_no_broker")
         return
 
-    # Preferred path: new event-driven system with DhanClient WS
     if event_system is not None:
         client = event_system["client"]
-        for symbol in watchlist:
-            from scalpr.domain.instrument import SimpleInstrumentId
-            client.subscribe_quotes(SimpleInstrumentId.parse(f"{symbol}:NSE"))
+
+        # Subscribe all watchlist symbols via the high-level API
+        specs = [(s, "NSE", "quote", None) for s in watchlist]
+        specs += [(s, "NSE", "depth", 20) for s in watchlist[:5]]
+        client.subscribe_batch(specs)
 
         # Bridge WS ticks to strategy executor
         if gateway is not None:
@@ -246,16 +247,24 @@ async def _start_trading(app: FastAPI) -> None:
             )
             app.state.executor = ctx.executor
             app.state.order_router = ctx.order_router
-        logger.info("trading_wired_event_system: %s", watchlist)
+
+        # Log subscription status
+        status = client.subscription_status()
+        logger.info("subscription_status: %s", status)
+        logger.info("trading_wired_event_system: %s watchlist=%s", watchlist)
         return
 
-    # Fallback: use DhanClient directly
+    # Fallback path (no event system)
     if gateway is not None:
+        client = gateway
         for symbol in watchlist:
-            from scalpr.domain.instrument import SimpleInstrumentId
-            gateway.subscribe_quotes(SimpleInstrumentId.parse(f"{symbol}:NSE"))
+            client.subscribe(symbol, "NSE", type="quote")
+        if hasattr(client, 'subscribe_batch'):
+            specs = [(s, "NSE", "depth", 20) for s in watchlist[:5]]
+            client.subscribe_batch(specs)
+        ctx = wire(gateway, watchlist)
         loop = asyncio.get_running_loop()
-        gateway._bus.subscribe(
+        client._bus.subscribe(
             "market.quote.dhan",
             lambda t: asyncio.run_coroutine_threadsafe(ctx.executor.on_tick(t), loop),
         )

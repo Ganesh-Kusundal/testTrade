@@ -4,7 +4,6 @@ from decimal import Decimal
 from unittest.mock import MagicMock
 
 import pandas as pd
-import pytest
 
 from scalpr.adapters.dhan._portfolio import (
     PnLCalculationError,
