@@ -12,6 +12,7 @@ from decimal import Decimal
 from typing import Any, Protocol, runtime_checkable
 
 from scalpr.domain.order import OrderSide
+from scalpr.domain.tick import DepthLevel, OHLC
 from scalpr.domain.values import ZERO
 
 # ── Protocols for broker-specific adapters ─────────────────────────────
@@ -121,15 +122,6 @@ class Quote:
     oi: int = 0
     oi_day_high: Decimal = ZERO
     oi_day_low: Decimal = ZERO
-
-
-@dataclass(frozen=True)
-class DepthLevel:
-    """Single price level in market depth."""
-
-    price: Decimal
-    quantity: int
-    orders: int = 1
 
 
 @dataclass(frozen=True)

@@ -14,11 +14,29 @@ class OrderSide(str, Enum):
     SELL = "SELL"
 
 
+# Alias for spec compatibility — Side and OrderSide are the same concept
+Side = OrderSide
+
+
 class OrderType(str, Enum):
     LIMIT = "LIMIT"
     MARKET = "MARKET"
     STOP_LOSS = "STOP_LOSS"
     STOP_LOSS_MARKET = "STOP_LOSS_MARKET"
+
+
+class ProductType(str, Enum):
+    INTRADAY = "INTRADAY"
+    DELIVERY = "DELIVERY"
+    MARGIN = "MARGIN"
+    COVER_ORDER = "COVER_ORDER"
+
+
+class Validity(str, Enum):
+    DAY = "DAY"
+    IOC = "IOC"
+    GTD = "GTD"
+    GTC = "GTC"
 
 
 class OrderState(str, Enum):
@@ -140,3 +158,26 @@ class Order:
         if self.quantity == 0:
             return ZERO
         return Decimal(self.filled_quantity) / Decimal(self.quantity)
+
+
+@dataclass(frozen=True)
+class OrderRequest:
+    """Immutable order placement request."""
+    instrument: str  # symbol or InstrumentId
+    side: Side
+    quantity: int
+    order_type: OrderType = OrderType.LIMIT
+    product: ProductType = ProductType.INTRADAY
+    validity: Validity = Validity.DAY
+    price: Decimal | None = None
+    trigger_price: Decimal | None = None
+    correlation_id: str | None = None
+
+
+@dataclass(frozen=True)
+class ModifyOrderRequest:
+    """Immutable order modification request."""
+    quantity: int | None = None
+    price: Decimal | None = None
+    trigger_price: Decimal | None = None
+    validity: Validity | None = None

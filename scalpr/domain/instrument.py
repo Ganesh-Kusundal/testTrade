@@ -29,7 +29,7 @@ class OptionType(str, Enum):
 
 
 class MarketFeed(str, Enum):
-    LTP = "ltp"
+    TICKER = "ticker"
     QUOTE = "quote"
     FULL = "full"
 
@@ -90,6 +90,7 @@ class DerivativeInstrumentId:
     expiry: date
     strike: Decimal | None = None
     option_type: OptionType | None = None
+    trading_symbol: str | None = None  # Dhan trading symbol (e.g. "BANKNIFTY24JULFUT") if known
 
     def __post_init__(self) -> None:
         if self.segment == Segment.OPTIONS:

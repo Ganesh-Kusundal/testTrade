@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
 
+from scalpr.domain.instrument import Exchange, ResolvedInstrument
+
 
 @dataclass(slots=True, frozen=True)
 class Tick:
@@ -73,3 +75,51 @@ class Candle:
     close: Decimal
     volume: int | None = None
     open_interest: int | None = None
+
+
+@dataclass(frozen=True)
+class OHLC:
+    """OHLC snapshot for a single instrument."""
+    open: Decimal
+    high: Decimal
+    low: Decimal
+    close: Decimal
+    timestamp: datetime | None = None
+
+
+@dataclass(frozen=True)
+class DepthLevel:
+    """Single price level in market depth."""
+    price: Decimal
+    quantity: int
+    orders: int = 1
+
+
+@dataclass(frozen=True)
+class TickerEvent:
+    """Normalized ticker event (LTP only)."""
+    instrument: ResolvedInstrument
+    ltp: Decimal
+    last_trade_time: datetime
+
+
+@dataclass(frozen=True)
+class QuoteEvent:
+    """Normalized quote event with OHLC and volume."""
+    instrument: ResolvedInstrument
+    ltp: Decimal
+    last_trade_quantity: int
+    volume: int
+    average_trade_price: Decimal
+    open_interest: int | None
+    day_open: Decimal
+    day_high: Decimal
+    day_low: Decimal
+    previous_close: Decimal
+
+
+@dataclass(frozen=True)
+class FullEvent(QuoteEvent):
+    """Full market event with depth levels."""
+    bid: list[DepthLevel]
+    ask: list[DepthLevel]
