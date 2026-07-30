@@ -4,8 +4,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from scalpr.adapters.dhan._mapper import (
-    InvalidValueError,
+from scalpr.adapters.dhan._mapper_orders import InvalidValueError
+from scalpr.adapters.dhan._mapper_advanced_orders import (
     conditional_trigger_to_dhan_request,
     forever_order_to_dhan_request,
     super_order_to_dhan_request,

@@ -5,7 +5,7 @@ from datetime import datetime
 from unittest.mock import MagicMock, patch
 
 from scalpr.adapters.dhan._http import DhanRequestError
-from scalpr.adapters.dhan._mapper import order_report_to_dict, trade_to_domain
+from scalpr.adapters.dhan._mapper_portfolio import order_report_to_dict, trade_to_domain
 from scalpr.adapters.dhan.client import DhanClient
 from scalpr.engine.clock import StaticClock
 from scalpr.engine.message_bus import RecordingBus

@@ -4,7 +4,8 @@ from unittest.mock import patch
 
 import pytest
 
-from scalpr.adapters.dhan._mapper import InvalidValueError, margin_calc_to_dhan_request
+from scalpr.adapters.dhan._mapper_orders import InvalidValueError
+from scalpr.adapters.dhan._mapper_portfolio import margin_calc_to_dhan_request
 
 # ============================================================================
 # margin_calc_to_dhan_request (mapper)
@@ -183,7 +184,7 @@ class TestClientExpiredOptionData:
             p.stop()
 
     def test_acquires_history_bucket(self, client):
-        c, http, limiter = client
+        c, http, _limiter = client
         http.post.return_value = {}
         c.get_expired_option_data(
             "12345", "NSE_FNO", "OPTIDX", "WEEK", 0,

@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from scalpr.adapters.dhan._mapper import (
+from scalpr.adapters.dhan._mapper_orders import (
     InvalidValueError,
     MissingFieldError,
     order_status_from_dhan,
@@ -15,11 +15,10 @@ from scalpr.adapters.dhan._mapper import (
     raw_order_to_order,
     raw_trade_to_fill,
     response_to_fill,
-    to_option_chain,
-    to_position,
-    to_quote,
-    transaction_type_from_side,
 )
+from scalpr.adapters.dhan._mapper_portfolio import to_option_chain, to_position
+from scalpr.adapters.dhan._mapper_market import to_quote
+from scalpr.adapters.dhan._mapper_orders import transaction_type_from_side
 from scalpr.domain.instrument import Exchange, SimpleInstrumentId
 from scalpr.domain.order import Order, OrderSide, OrderState, OrderType
 from scalpr.domain.position import PositionSide, PositionState
