@@ -55,6 +55,8 @@ logger = logging.getLogger(__name__)
 
 
 class DhanClient:
+    broker = "dhan"
+
     def __init__(self, bus: MessageBus, clock: Clock, config: dict) -> None:
         self._bus = bus
         self._clock = clock
