@@ -16,7 +16,9 @@ from scalpr.engine.execution_engine import (
     ExecutionEngine,
     ModifyOrder,
     OrderAccepted,
+    OrderCancelled,
     OrderFilled,
+    OrderRejected,
     SubmitOrder,
 )
 from scalpr.engine.message_bus import MessageBus
@@ -61,27 +63,92 @@ def make_fill(
 
 
 class TestExecutionEngineStart:
-    def test_start_subscribes_to_correct_topics(self):
+    def test_start_subscribes_to_broker_specific_topics(self):
+        """Engine must subscribe to broker-specific event topics, not generic ones."""
         bus = MessageBus()
         clock = StaticClock()
         engine = ExecutionEngine(bus, clock)
         engine.start()
-        received = []
 
-        bus.subscribe("exec.command.submit", lambda e: received.append("submit"))
-        bus.subscribe("exec.command.cancel", lambda e: received.append("cancel"))
-        bus.subscribe("exec.command.modify", lambda e: received.append("modify"))
-        bus.subscribe("exec.event.fill", lambda e: received.append("fill"))
+        # Verify engine subscribed to broker-specific topics
+        assert "exec.event.accepted.dhan" in bus._subscribers
+        assert "exec.event.filled.dhan" in bus._subscribers
+        assert "exec.event.rejected.dhan" in bus._subscribers
+        assert "exec.event.cancelled.dhan" in bus._subscribers
 
-        bus.publish("exec.command.submit", SubmitOrder(order=make_order(), broker="fake"))
-        bus.publish("exec.command.cancel", CancelOrder(order_id="x", broker="fake"))
-        bus.publish("exec.command.modify", ModifyOrder(order_id="x", updates={}, broker="fake"))
-        bus.publish("exec.event.fill", make_fill())
+    def test_start_subscribes_and_routes_submit(self):
+        bus = MessageBus()
+        clock = StaticClock()
+        engine = ExecutionEngine(bus, clock)
+        engine.start()
+        routed = []
 
-        assert "submit" in received
-        assert "cancel" in received
-        assert "modify" in received
-        assert "fill" in received
+        bus.subscribe("exec.command.submit.fake", lambda e: routed.append(e))
+        order = make_order()
+        cmd = SubmitOrder(order=order, broker="fake")
+        bus.publish("exec.command.submit", cmd)
+
+        assert len(routed) == 1
+        assert routed[0].order.order_id == "o1"
+
+    def test_start_subscribes_and_routes_cancel(self):
+        bus = MessageBus()
+        clock = StaticClock()
+        engine = ExecutionEngine(bus, clock)
+        engine.start()
+        routed = []
+
+        order = make_order(order_id="o1")
+        engine.cache.update(order)
+        bus.subscribe("exec.command.cancel.fake", lambda e: routed.append(e))
+        cmd = CancelOrder(order_id="o1", broker="fake")
+        bus.publish("exec.command.cancel", cmd)
+
+        assert len(routed) == 1
+        assert routed[0].order_id == "o1"
+
+    def test_start_subscribes_and_routes_modify(self):
+        bus = MessageBus()
+        clock = StaticClock()
+        engine = ExecutionEngine(bus, clock)
+        engine.start()
+        routed = []
+
+        order = make_order(order_id="o1")
+        engine.cache.update(order)
+        bus.subscribe("exec.command.modify.fake", lambda e: routed.append(e))
+        cmd = ModifyOrder(order_id="o1", updates={"price": Decimal("160.0")}, broker="fake")
+        bus.publish("exec.command.modify", cmd)
+
+        assert len(routed) == 1
+        assert routed[0].order_id == "o1"
+
+    def test_topic_routing_by_broker_suffix(self):
+        bus = MessageBus()
+        clock = StaticClock()
+        engine = ExecutionEngine(bus, clock)
+        engine.start()
+        dhan_routed = []
+        fake_routed = []
+
+        bus.subscribe("exec.command.submit.dhan", lambda e: dhan_routed.append(e))
+        bus.subscribe("exec.command.submit.fake", lambda e: fake_routed.append(e))
+
+        order_dhan = make_order(order_id="o1")
+        order_fake = make_order(order_id="o2")
+
+        bus.publish("exec.command.submit", SubmitOrder(order=order_dhan, broker="dhan"))
+        bus.publish("exec.command.submit", SubmitOrder(order=order_fake, broker="fake"))
+
+        assert len(dhan_routed) == 1
+        assert len(fake_routed) == 1
+
+    def test_stop_does_not_crash(self):
+        bus = MessageBus()
+        clock = StaticClock()
+        engine = ExecutionEngine(bus, clock)
+        engine.start()
+        engine.stop()
 
     def test_start_subscribes_and_routes_submit(self):
         bus = MessageBus()
@@ -180,9 +247,9 @@ class TestExecutionEngineFSM:
         engine.start()
 
         order = make_order(order_id="o1")
-        cmd = SubmitOrder(order=order, broker="fake")
+        cmd = SubmitOrder(order=order, broker="dhan")
         bus.publish("exec.command.submit", cmd)
-        bus.publish("exec.event.accepted", "o1")
+        bus.publish("exec.event.accepted.dhan", OrderAccepted(order_id="o1", timestamp=clock.utc_now()))
 
         cached = engine.cache.order("o1")
         assert cached is not None
@@ -195,11 +262,11 @@ class TestExecutionEngineFSM:
         engine.start()
 
         order = make_order(order_id="o1")
-        cmd = SubmitOrder(order=order, broker="fake")
+        cmd = SubmitOrder(order=order, broker="dhan")
         bus.publish("exec.command.submit", cmd)
 
         fill = make_fill(order_id="o1", quantity=10)
-        bus.publish("exec.event.fill", fill)
+        bus.publish("exec.event.filled.dhan", OrderFilled(order_id="o1", fill=fill, timestamp=clock.utc_now()))
 
         cached = engine.cache.order("o1")
         assert cached is not None
@@ -213,12 +280,12 @@ class TestExecutionEngineFSM:
         engine.start()
 
         order = make_order(order_id="o1")
-        cmd = SubmitOrder(order=order, broker="fake")
+        cmd = SubmitOrder(order=order, broker="dhan")
         bus.publish("exec.command.submit", cmd)
         fill = make_fill(order_id="o1", quantity=10)
-        bus.publish("exec.event.fill", fill)
+        bus.publish("exec.event.filled.dhan", OrderFilled(order_id="o1", fill=fill, timestamp=clock.utc_now()))
 
-        cancel_cmd = CancelOrder(order_id="o1", broker="fake")
+        cancel_cmd = CancelOrder(order_id="o1", broker="dhan")
         bus.publish("exec.command.cancel", cancel_cmd)
 
         cached = engine.cache.order("o1")
@@ -232,12 +299,12 @@ class TestExecutionEngineFSM:
         engine.start()
 
         order = make_order(order_id="o1")
-        cmd = SubmitOrder(order=order, broker="fake")
+        cmd = SubmitOrder(order=order, broker="dhan")
         bus.publish("exec.command.submit", cmd)
         fill = make_fill(order_id="o1", quantity=10)
-        bus.publish("exec.event.fill", fill)
+        bus.publish("exec.event.filled.dhan", OrderFilled(order_id="o1", fill=fill, timestamp=clock.utc_now()))
 
-        modify_cmd = ModifyOrder(order_id="o1", updates={"price": Decimal("160.0")}, broker="fake")
+        modify_cmd = ModifyOrder(order_id="o1", updates={"price": Decimal("160.0")}, broker="dhan")
         bus.publish("exec.command.modify", modify_cmd)
 
         cached = engine.cache.order("o1")
@@ -251,11 +318,11 @@ class TestExecutionEngineFSM:
         engine.start()
 
         order = make_order(order_id="o1", quantity=20)
-        cmd = SubmitOrder(order=order, broker="fake")
+        cmd = SubmitOrder(order=order, broker="dhan")
         bus.publish("exec.command.submit", cmd)
 
         fill = make_fill(order_id="o1", quantity=5)
-        bus.publish("exec.event.fill", fill)
+        bus.publish("exec.event.filled.dhan", OrderFilled(order_id="o1", fill=fill, timestamp=clock.utc_now()))
 
         cached = engine.cache.order("o1")
         assert cached is not None
@@ -269,13 +336,13 @@ class TestExecutionEngineFSM:
         engine.start()
 
         order = make_order(order_id="o1", quantity=20)
-        cmd = SubmitOrder(order=order, broker="fake")
+        cmd = SubmitOrder(order=order, broker="dhan")
         bus.publish("exec.command.submit", cmd)
 
         fill1 = make_fill(order_id="o1", quantity=5)
-        bus.publish("exec.event.fill", fill1)
+        bus.publish("exec.event.filled.dhan", OrderFilled(order_id="o1", fill=fill1, timestamp=clock.utc_now()))
         fill2 = make_fill(order_id="o1", quantity=15)
-        bus.publish("exec.event.fill", fill2)
+        bus.publish("exec.event.filled.dhan", OrderFilled(order_id="o1", fill=fill2, timestamp=clock.utc_now()))
 
         cached = engine.cache.order("o1")
         assert cached is not None
@@ -289,14 +356,10 @@ class TestExecutionEngineFSM:
         engine.start()
 
         order = make_order(order_id="o1")
-        cmd = SubmitOrder(order=order, broker="fake")
+        cmd = SubmitOrder(order=order, broker="dhan")
         bus.publish("exec.command.submit", cmd)
 
-        class RejectPayload:
-            order_id = "o1"
-            reason = "insufficient margin"
-
-        bus.publish("exec.event.rejected", RejectPayload())
+        bus.publish("exec.event.rejected.dhan", OrderRejected(order_id="o1", reason="insufficient margin", timestamp=clock.utc_now()))
 
         cached = engine.cache.order("o1")
         assert cached is not None
@@ -313,7 +376,7 @@ class TestExecutionEngineFSM:
         cache_order = replace(order)
         engine.cache.update(cache_order)
 
-        bus.publish("exec.event.cancelled", "o1")
+        bus.publish("exec.event.cancelled.dhan", OrderCancelled(order_id="o1", timestamp=clock.utc_now()))
 
         cached = engine.cache.order("o1")
         assert cached is not None
@@ -435,11 +498,11 @@ class TestExecutionEngineDomainEvents:
 
         bus.subscribe("domain.fill.received", lambda e: received.append(e))
         order = make_order()
-        cmd = SubmitOrder(order=order, broker="fake")
+        cmd = SubmitOrder(order=order, broker="dhan")
         bus.publish("exec.command.submit", cmd)
 
         fill = make_fill(order_id="o1", quantity=10)
-        bus.publish("exec.event.fill", fill)
+        bus.publish("exec.event.filled.dhan", OrderFilled(order_id="o1", fill=fill, timestamp=clock.utc_now()))
 
         assert len(received) == 1
         assert isinstance(received[0], FillReceived)
@@ -454,10 +517,10 @@ class TestExecutionEngineDomainEvents:
 
         bus.subscribe("domain.fill.received", lambda e: received.append(e))
         order = make_order()
-        cmd = SubmitOrder(order=order, broker="fake")
+        cmd = SubmitOrder(order=order, broker="dhan")
         bus.publish("exec.command.submit", cmd)
         fill = make_fill(order_id="o1", quantity=10)
-        bus.publish("exec.event.fill", fill)
+        bus.publish("exec.event.filled.dhan", OrderFilled(order_id="o1", fill=fill, timestamp=clock.utc_now()))
 
         assert received[0].timestamp.tzinfo == timezone.utc
 
@@ -471,7 +534,7 @@ class TestExecutionEngineClock:
 
         order = make_order(order_id="o1", state=OrderState.PENDING)
         engine.cache.update(order)
-        bus.publish("exec.event.accepted", "o1")
+        bus.publish("exec.event.accepted.dhan", OrderAccepted(order_id="o1", timestamp=clock.utc_now()))
 
         events = engine.event_store.events("o1")
         accepted = [e for e in events if isinstance(e, OrderAccepted)]
@@ -487,7 +550,7 @@ class TestExecutionEngineClock:
         order = make_order(order_id="o1", state=OrderState.OPEN)
         engine.cache.update(order)
         fill = make_fill(order_id="o1", quantity=10)
-        bus.publish("exec.event.fill", fill)
+        bus.publish("exec.event.filled.dhan", OrderFilled(order_id="o1", fill=fill, timestamp=clock.utc_now()))
 
         events = engine.event_store.events("o1")
         filled = [e for e in events if isinstance(e, OrderFilled)]
@@ -503,7 +566,7 @@ class TestExecutionEngineClock:
         order = make_order(order_id="o1", state=OrderState.PENDING)
         engine.cache.update(order)
         clock.advance(60)
-        bus.publish("exec.event.accepted", "o1")
+        bus.publish("exec.event.accepted.dhan", OrderAccepted(order_id="o1", timestamp=clock.utc_now()))
 
         events = engine.event_store.events("o1")
         accepted = [e for e in events if isinstance(e, OrderAccepted)]
@@ -552,7 +615,7 @@ class TestExecutionEngineEdgeCases:
         engine.start()
 
         fill = make_fill(order_id="nonexistent")
-        bus.publish("exec.event.fill", fill)
+        bus.publish("exec.event.filled.dhan", OrderFilled(order_id="nonexistent", fill=fill, timestamp=clock.utc_now()))
 
     def test_rejected_for_unknown_order_does_not_crash(self):
         bus = MessageBus()
@@ -560,11 +623,7 @@ class TestExecutionEngineEdgeCases:
         engine = ExecutionEngine(bus, clock)
         engine.start()
 
-        class RejectPayload:
-            order_id = "nonexistent"
-            reason = "test"
-
-        bus.publish("exec.event.rejected", RejectPayload())
+        bus.publish("exec.event.rejected.dhan", OrderRejected(order_id="nonexistent", reason="test", timestamp=clock.utc_now()))
 
     def test_accepted_for_unknown_order_does_not_crash(self):
         bus = MessageBus()
@@ -572,4 +631,4 @@ class TestExecutionEngineEdgeCases:
         engine = ExecutionEngine(bus, clock)
         engine.start()
 
-        bus.publish("exec.event.accepted", "nonexistent")
+        bus.publish("exec.event.accepted.dhan", OrderAccepted(order_id="nonexistent", timestamp=clock.utc_now()))

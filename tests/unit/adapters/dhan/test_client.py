@@ -6,7 +6,6 @@ from decimal import Decimal
 from unittest.mock import MagicMock, patch
 
 from scalpr.adapters.dhan.client import DhanClient
-from scalpr.domain.fill import Fill
 from scalpr.domain.instrument import (
     Exchange,
     ResolvedInstrument,
@@ -21,8 +20,8 @@ from scalpr.engine.clock import StaticClock
 from scalpr.engine.execution_engine import (
     CancelOrder,
     ModifyOrder,
+    OrderAccepted,
     OrderCancelled,
-    OrderFilled,
     OrderRejected,
     SubmitOrder,
 )
@@ -192,7 +191,6 @@ class TestDhanClientOnSubmit(unittest.TestCase):
             patch("scalpr.adapters.dhan.client.DhanWebSocket"),
             patch("scalpr.adapters.dhan.client.SymbolResolver"),
             patch("scalpr.adapters.dhan.client.order_to_dhan_request_v2"),
-            patch("scalpr.adapters.dhan.client.response_to_fill"),
         ]
         self.mocks = [p.start() for p in self._patchers]
         self.addCleanup(lambda: [p.stop() for p in self._patchers])
@@ -203,7 +201,6 @@ class TestDhanClientOnSubmit(unittest.TestCase):
         self.mock_ws = self.mocks[3].return_value
         self.mock_resolver = self.mocks[4].return_value
         self.mock_order_to_dhan_v2 = self.mocks[5]
-        self.mock_response_to_fill = self.mocks[6]
 
         self.client = DhanClient(self.bus, self.clock, self.config)
 
@@ -248,15 +245,6 @@ class TestDhanClientOnSubmit(unittest.TestCase):
             "afterMarketOrder": False,
         }
         self.mock_http_client.post.return_value = {"orderId": "ord-1", "filledQuantity": 10}
-        self.mock_response_to_fill.return_value = Fill(
-            fill_id="f_ord-1",
-            order_id="ord-1",
-            symbol="RELIANCE",
-            side=OrderSide.BUY,
-            quantity=10,
-            price=Decimal("2500"),
-            timestamp=datetime(2024, 6, 15, 10, 30),
-        )
 
     def test_acquires_rate_limit_bucket_orders(self):
         self.client._on_submit(self.msg)
@@ -282,19 +270,23 @@ class TestDhanClientOnSubmit(unittest.TestCase):
             "/orders", data=self.mock_order_to_dhan_v2.return_value,
         )
 
-    def test_converts_response_to_fill(self):
+    def test_does_not_convert_response_to_fill(self):
+        """Phantom fill creation must be removed — response_to_fill should not be called."""
         self.client._on_submit(self.msg)
-        self.mock_response_to_fill.assert_called_once_with(
-            {"orderId": "ord-1", "filledQuantity": 10}, self.order,
-        )
 
-    def test_publishes_order_filled_on_success(self):
+    def test_publishes_order_accepted_on_success(self):
         self.client._on_submit(self.msg)
-        events = self.bus.filter("exec.event.filled.dhan")
+        events = self.bus.filter("exec.event.accepted.dhan")
         self.assertEqual(len(events), 1)
         ev = events[0].payload
-        self.assertIsInstance(ev, OrderFilled)
+        self.assertIsInstance(ev, OrderAccepted)
         self.assertEqual(ev.order_id, "ord-1")
+
+    def test_does_not_publish_fill_on_success(self):
+        """Order placement should NOT fabricate a fill — only an acceptance."""
+        self.client._on_submit(self.msg)
+        events = self.bus.filter("exec.event.filled.dhan")
+        self.assertEqual(len(events), 0)
 
     def test_publishes_order_rejected_on_error(self):
         self.mock_http_client.post.side_effect = RuntimeError("API down")

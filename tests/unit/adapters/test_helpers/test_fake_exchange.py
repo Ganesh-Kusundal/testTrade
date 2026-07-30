@@ -52,11 +52,11 @@ class TestFakeExchangeSubmit:
         order = make_order()
         received = []
 
-        bus.subscribe("exec.event.fill", lambda e: received.append(e))
+        bus.subscribe("exec.event.filled.fake", lambda e: received.append(e))
         ex.submit_order(order)
 
         assert len(received) == 1
-        assert received[0].order_id == "o1"
+        assert received[0].fill.order_id == "o1"
 
     def test_submit_order_publishes_accepted_event(self):
         bus = MessageBus()
@@ -64,7 +64,7 @@ class TestFakeExchangeSubmit:
         order = make_order()
         received = []
 
-        bus.subscribe("exec.event.accepted", lambda e: received.append(e))
+        bus.subscribe("exec.event.accepted.fake", lambda e: received.append(e))
         ex.submit_order(order)
 
         assert len(received) == 1
@@ -114,7 +114,7 @@ class TestFakeExchangeSubmit:
 
         cmd = SubmitOrder(order=order, broker="fake")
         received = []
-        bus.subscribe("exec.event.fill", lambda e: received.append(e))
+        bus.subscribe("exec.event.filled.fake", lambda e: received.append(e))
         bus.publish("exec.command.submit.fake", cmd)
 
         assert len(received) == 1
@@ -237,7 +237,7 @@ class TestFakeExchangeOrders:
         bus = MessageBus()
         ex = FakeExchange(bus)
         received = []
-        bus.subscribe("exec.event.cancelled", lambda e: received.append(e))
+        bus.subscribe("exec.event.cancelled.fake", lambda e: received.append(e))
 
         open_order = make_order(order_id="open1")
         ex._orders["open1"] = open_order

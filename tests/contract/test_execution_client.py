@@ -25,7 +25,7 @@ from scalpr.domain.instrument import Exchange, SimpleInstrumentId
 from scalpr.domain.order import Order, OrderSide, OrderType
 from scalpr.domain.position import Position, PositionSide
 from scalpr.domain.values import ZERO
-from scalpr.engine.execution_engine import CancelOrder, SubmitOrder
+from scalpr.engine.execution_engine import CancelOrder, OrderFilled, SubmitOrder
 from scalpr.engine.message_bus import RecordingBus
 
 
@@ -78,14 +78,14 @@ class TestExecutionClientContract:
 
         bus.publish("exec.command.submit", SubmitOrder(order=order, broker=client.broker))
 
-        fills = bus.filter("exec.event.fill")
+        fills = bus.filter("exec.event.filled.*")
         assert len(fills) >= 1
         ev = fills[0]
-        assert ev.payload.order_id == "fill-1"
-        assert ev.payload.symbol == "RELIANCE"
-        assert ev.payload.quantity == 10
-        assert isinstance(ev.payload, Fill)
-        assert isinstance(ev.payload.price, Decimal)
+        assert ev.payload.fill.order_id == "fill-1"
+        assert ev.payload.fill.symbol == "RELIANCE"
+        assert ev.payload.fill.quantity == 10
+        assert isinstance(ev.payload, OrderFilled)
+        assert isinstance(ev.payload.fill.price, Decimal)
 
     # ── Rejection flow ────────────────────────────────────────────────
 
@@ -98,9 +98,9 @@ class TestExecutionClientContract:
         client.hold_next_order = True
         bus.publish("exec.command.submit", SubmitOrder(order=order, broker=client.broker))
 
-        accepts = bus.filter("exec.event.accepted")
+        accepts = bus.filter("exec.event.accepted.*")
         assert len(accepts) >= 1
-        fills = bus.filter("exec.event.fill")
+        fills = bus.filter("exec.event.filled.*")
         assert len(fills) == 0  # not yet filled — still holdable
 
     # ── Cancel flow ───────────────────────────────────────────────────
@@ -117,9 +117,9 @@ class TestExecutionClientContract:
 
         bus.publish("exec.command.cancel", CancelOrder(order_id="cancel-1", broker=client.broker))
 
-        cancels = bus.filter("exec.event.cancelled")
+        cancels = bus.filter("exec.event.cancelled.*")
         assert len(cancels) >= 1
-        fills = bus.filter("exec.event.fill")
+        fills = bus.filter("exec.event.filled.*")
         assert len(fills) == 0  # was cancelled, never filled
 
     # ── Positions ─────────────────────────────────────────────────────
@@ -193,7 +193,7 @@ class TestExecutionClientContract:
         o2 = self._buy_order(order_id="acc-2", symbol="TCS", quantity=5)
 
         bus.publish("exec.command.submit", SubmitOrder(order=o1, broker=client.broker))
-        fills = bus.filter("exec.event.fill")
+        fills = bus.filter("exec.event.filled.*")
         assert len(fills) >= 1
 
         bus.publish("exec.command.submit", SubmitOrder(order=o2, broker=client.broker))
@@ -225,12 +225,12 @@ class TestExecutionClientContract:
 
         bus.publish("exec.command.submit", SubmitOrder(order=order, broker=client.broker))
 
-        fills = bus.filter("exec.event.fill")
+        fills = bus.filter("exec.event.filled.*")
         assert len(fills) >= 1
         fill = fills[0].payload
-        assert fill.quantity == 50
-        assert fill.order_id == "flow-1"
-        assert fill.symbol == "NIFTY"
+        assert fill.fill.quantity == 50
+        assert fill.fill.order_id == "flow-1"
+        assert fill.fill.symbol == "NIFTY"
 
     # ── Reject after submit (broker-side) ─────────────────────────────
 
@@ -244,11 +244,11 @@ class TestExecutionClientContract:
 
         client.hold_next_order = True
         bus.publish("exec.command.submit", SubmitOrder(order=order, broker=client.broker))
-        fills_before = bus.filter("exec.event.fill")
+        fills_before = bus.filter("exec.event.filled.*")
         assert len(fills_before) == 0
 
         second_order = self._buy_order(order_id="hold-fill-2", quantity=10)
         client.hold_next_order = False
         bus.publish("exec.command.submit", SubmitOrder(order=second_order, broker=client.broker))
-        fills_after = bus.filter("exec.event.fill")
+        fills_after = bus.filter("exec.event.filled.*")
         assert len(fills_after) >= 1

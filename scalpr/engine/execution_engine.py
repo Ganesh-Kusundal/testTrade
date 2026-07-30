@@ -113,10 +113,11 @@ class ExecutionEngine:
         self._bus.subscribe("exec.command.submit", self._on_submit)
         self._bus.subscribe("exec.command.cancel", self._on_cancel)
         self._bus.subscribe("exec.command.modify", self._on_modify)
-        self._bus.subscribe("exec.event.accepted", self._on_accepted)
-        self._bus.subscribe("exec.event.fill", self._on_fill)
-        self._bus.subscribe("exec.event.rejected", self._on_rejected)
-        self._bus.subscribe("exec.event.cancelled", self._on_cancelled)
+        # Broker-specific event topics
+        self._bus.subscribe("exec.event.accepted.dhan", self._on_accepted)
+        self._bus.subscribe("exec.event.filled.dhan", self._on_fill)
+        self._bus.subscribe("exec.event.rejected.dhan", self._on_rejected)
+        self._bus.subscribe("exec.event.cancelled.dhan", self._on_cancelled)
         self._running = True
 
     def stop(self) -> None:
@@ -166,21 +167,21 @@ class ExecutionEngine:
         self._cache.update(new_order)
         self._route("exec.command.modify", cmd.broker, cmd)
 
-    def _on_accepted(self, order_id: str) -> None:
+    def _on_accepted(self, payload: OrderAccepted) -> None:
+        order_id = payload.order_id
         order = self._cache.order(order_id)
         if order is None:
             return
         try:
             accepted = order.transition_to(OrderState.OPEN)
             self._cache.update(accepted)
-            self._event_store.append(
-                OrderAccepted(order_id=order_id, timestamp=self._clock.utc_now())
-            )
+            self._event_store.append(payload)
         except ValueError:
             pass
 
-    def _on_fill(self, fill: Fill) -> None:
-        self._event_store.append(fill)
+    def _on_fill(self, payload: OrderFilled) -> None:
+        fill = payload.fill
+        self._event_store.append(payload)
         order = self._cache.order(fill.order_id)
         if order is None:
             return
@@ -203,7 +204,6 @@ class ExecutionEngine:
             avg_price=fill.price,
         )
         self._cache.update(new_order)
-        self._event_store.append(OrderFilled(order_id=fill.order_id, fill=fill, timestamp=self._clock.utc_now()))
         self._bus.publish(
             "domain.fill.received",
             FillReceived(fill=fill, timestamp=datetime.now(timezone.utc)),
@@ -218,9 +218,9 @@ class ExecutionEngine:
                 ),
             )
 
-    def _on_rejected(self, payload: Any) -> None:
-        order_id = payload.order_id if hasattr(payload, "order_id") else str(payload)
-        reason = payload.reason if hasattr(payload, "reason") else ""
+    def _on_rejected(self, payload: OrderRejected) -> None:
+        order_id = payload.order_id
+        reason = payload.reason
         order = self._cache.order(order_id)
         if order is None:
             return
@@ -228,19 +228,18 @@ class ExecutionEngine:
             rejected = order.transition_to(OrderState.REJECTED)
             rejected = dataclasses.replace(rejected, reject_reason=reason)
             self._cache.update(rejected)
-            self._event_store.append(
-                OrderRejected(order_id=order_id, reason=reason, timestamp=self._clock.utc_now())
-            )
+            self._event_store.append(payload)
         except ValueError:
             pass
 
-    def _on_cancelled(self, payload: Any) -> None:
-        order_id = payload.order_id if hasattr(payload, "order_id") else str(payload)
+    def _on_cancelled(self, payload: OrderCancelled) -> None:
+        order_id = payload.order_id
         order = self._cache.order(order_id)
         if order is None:
             return
         try:
             cancelled = order.transition_to(OrderState.CANCELLED)
             self._cache.update(cancelled)
+            self._event_store.append(payload)
         except ValueError:
             pass

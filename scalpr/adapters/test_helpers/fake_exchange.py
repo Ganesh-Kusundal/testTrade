@@ -9,6 +9,7 @@ from scalpr.domain.fill import Fill
 from scalpr.domain.order import Order, OrderSide, OrderState
 from scalpr.domain.position import Position
 from scalpr.domain.values import ZERO
+from scalpr.engine.execution_engine import OrderCancelled, OrderFilled
 from scalpr.engine.message_bus import MessageBus
 
 
@@ -81,8 +82,8 @@ class FakeExchange:
             pos = pos.with_fill(delta, price, side)
             self._positions[order.symbol] = pos
 
-        self._bus.publish("exec.event.accepted", order.order_id)
-        self._bus.publish("exec.event.fill", fill)
+        self._bus.publish("exec.event.accepted.fake", order.order_id)
+        self._bus.publish("exec.event.filled.fake", OrderFilled(order_id=order.order_id, fill=fill, timestamp=ts))
 
         return fill
 
@@ -102,7 +103,7 @@ class FakeExchange:
             try:
                 cancelled = order.transition_to(OrderState.CANCELLED)
                 self._orders[order_id] = cancelled
-                self._bus.publish("exec.event.cancelled", cancelled)
+                self._bus.publish("exec.event.cancelled.fake", OrderCancelled(order_id=order_id, timestamp=datetime.now(timezone.utc)))
                 return True
             except ValueError:
                 return False

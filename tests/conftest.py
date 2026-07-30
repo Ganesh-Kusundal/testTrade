@@ -88,7 +88,12 @@ from scalpr.domain.order import Order, OrderSide, OrderState, OrderType
 from scalpr.domain.position import Position
 from scalpr.domain.values import ZERO
 from scalpr.engine.clock import StaticClock
-from scalpr.engine.execution_engine import ExecutionEngine
+from scalpr.engine.execution_engine import (
+    ExecutionEngine,
+    OrderAccepted,
+    OrderCancelled,
+    OrderFilled,
+)
 from scalpr.engine.message_bus import RecordingBus
 
 
@@ -129,7 +134,7 @@ class DhanClient:
         if self.hold_next_order:
             self.hold_next_order = False
             self._orders[order.order_id] = order
-            self._bus.publish("exec.event.accepted", order.order_id)
+            self._bus.publish("exec.event.accepted.dhan", OrderAccepted(order_id=order.order_id, timestamp=self._clock.utc_now()))
             return Fill(
                 fill_id=f"held_{order.order_id}",
                 order_id=order.order_id,
@@ -165,8 +170,8 @@ class DhanClient:
         pos = pos.with_fill(delta, price, order.side)
         self._positions[order.symbol] = pos
 
-        self._bus.publish("exec.event.accepted", order.order_id)
-        self._bus.publish("exec.event.fill", fill)
+        self._bus.publish("exec.event.accepted.dhan", OrderAccepted(order_id=order.order_id, timestamp=ts))
+        self._bus.publish("exec.event.filled.dhan", OrderFilled(order_id=order.order_id, fill=fill, timestamp=ts))
         return fill
 
     def cancel_order(self, order_id: str) -> bool:
@@ -176,7 +181,7 @@ class DhanClient:
             return False
         cancelled = order.transition_to(OrderState.CANCELLED)
         self._orders[order_id] = cancelled
-        self._bus.publish("exec.event.cancelled", cancelled)
+        self._bus.publish("exec.event.cancelled.dhan", OrderCancelled(order_id=order_id, timestamp=self._clock.utc_now()))
         return True
 
     def get_positions(self) -> list[Position]:
@@ -199,7 +204,7 @@ class ContractFakeExchange(FakeExchange):
         if self.hold_next_order:
             self.hold_next_order = False
             self._orders[order.order_id] = order
-            self._bus.publish("exec.event.accepted", order.order_id)
+            self._bus.publish("exec.event.accepted.fake", OrderAccepted(order_id=order.order_id, timestamp=datetime.now(timezone.utc)))
             return Fill(
                 fill_id=f"held_{order.order_id}",
                 order_id=order.order_id,

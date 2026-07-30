@@ -19,7 +19,6 @@ from scalpr.adapters.dhan._mapper_advanced_orders import (
 )
 from scalpr.adapters.dhan._mapper_orders import (
     order_to_dhan_request_v2,
-    response_to_fill,
 )
 from scalpr.adapters.dhan._mapper_portfolio import (
     margin_calc_to_dhan_request,
@@ -43,8 +42,8 @@ from scalpr.engine.clock import Clock
 from scalpr.engine.execution_engine import (
     CancelOrder,
     ModifyOrder,
+    OrderAccepted,
     OrderCancelled,
-    OrderFilled,
     OrderRejected,
     SubmitOrder,
 )
@@ -179,12 +178,10 @@ class DhanClient:
                 product_type=order.product_type,
             )
             resp = self._http_client.post("/orders", data=req)
-            fill = response_to_fill(resp, order)
             self._bus.publish(
-                "exec.event.filled.dhan",
-                OrderFilled(
+                "exec.event.accepted.dhan",
+                OrderAccepted(
                     order_id=order.order_id,
-                    fill=fill,
                     timestamp=self._clock.timestamp(),
                 ),
             )
@@ -532,7 +529,7 @@ class DhanClient:
             if isinstance(data, dict):
                 return data.get("exchangeTime", data.get("time", data.get("dateTime", "")))
             return str(data)
-        except (ConnectionError, TimeoutError, OSError) as exc:
+        except Exception as exc:
             logger.warning("exchange_time_endpoint_unavailable: %s", exc)
             from datetime import datetime, timezone, timedelta
             ist = timezone(timedelta(hours=5, minutes=30))
