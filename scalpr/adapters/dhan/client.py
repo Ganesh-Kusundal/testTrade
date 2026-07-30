@@ -12,16 +12,20 @@ from scalpr.adapters.dhan._greeks import GreeksCalculator
 from scalpr.adapters.dhan._historical import HistoricalDataAdapter
 from scalpr.adapters.dhan._http import DhanHttpClient, RateLimiter
 from scalpr.adapters.dhan._loader import InstrumentLoader
-from scalpr.adapters.dhan._mapper import (  # noqa: F401 — imported for test patch targets
+from scalpr.adapters.dhan._mapper_advanced_orders import (
     forever_order_to_dhan_request,
     kill_switch_to_dhan,
-    margin_calc_to_dhan_request,
+    super_order_to_dhan_request,
+)
+from scalpr.adapters.dhan._mapper_orders import (
     order_to_dhan_request_v2,
     response_to_fill,
-    super_order_to_dhan_request,
-    to_position,
-    to_quote,
 )
+from scalpr.adapters.dhan._mapper_portfolio import (
+    margin_calc_to_dhan_request,
+    to_position,
+)
+from scalpr.adapters.dhan._mapper_market import to_quote
 from scalpr.adapters.dhan._market_data_client import MarketDataClient
 from scalpr.adapters.dhan._option_chain import OptionChainAdapter
 from scalpr.adapters.dhan._order_client import OrderClient
@@ -85,8 +89,10 @@ class DhanClient:
         self._portfolio: PortfolioAdapter = PortfolioAdapter(self._http_client)
         self._subscriptions: list[tuple[str, Any]] = []
 
-        hp = lambda: self._http_client
-        tp = lambda: self._token_manager
+        def hp():
+            return self._http_client
+        def tp():
+            return self._token_manager
 
         self._order_client = OrderClient(
             http_provider=hp,
