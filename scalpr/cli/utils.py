@@ -17,7 +17,6 @@ def _make_dhan_client() -> object | None:
     if not (client_id and access_token):
         return None
     from scalpr.adapters.dhan.client import DhanClient
-    from scalpr.brokers.broker_gateway import DhanBrokerGateway
 
     bus = MessageBus()
     clock = LiveClock()
@@ -29,18 +28,17 @@ def _make_dhan_client() -> object | None:
         "csv_path": os.environ.get("DHAN_INSTRUMENT_CSV", "instrument.csv"),
     }
     client = DhanClient(bus, clock, config)
-    gateway = DhanBrokerGateway(client)
-    gateway.connect()
-    return gateway
+    client.start()
+    return client
 
 
 def get_gateway(broker: str = "dhan") -> object | None:
-    """Create and connect a DhanBrokerGateway from environment variables.
+    """Create and connect a DhanClient from environment variables.
 
     Args:
         broker: Ignored (kept for backward compat).
 
     Returns:
-        Connected DhanBrokerGateway instance, or None if credentials missing.
+        Connected DhanClient instance, or None if credentials missing.
     """
     return _make_dhan_client()

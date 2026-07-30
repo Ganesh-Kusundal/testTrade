@@ -131,6 +131,7 @@ def _build_board_lines(state: dict) -> list[str]:
     components = state["components"]
     flows = state["flows"]
     risks = state["risks"]
+    runbook = state.get("runbook", {})
 
     dirty_str = f" | {len(g['dirty'])} dirty" if g["dirty"] else ""
     ts = now_iso()
@@ -206,6 +207,19 @@ def _build_board_lines(state: dict) -> list[str]:
         out.append("## Flows")
         for name, flow in sorted(flows.items()):
             out.append(f"- **{name}** — {flow.get('summary', '')[:50]}")
+        out.append("")
+
+    # Runbook
+    if runbook:
+        out.append("## Runbook")
+        out.append("| ID | Intent | API | Tags |")
+        out.append("|---|---|---|---|")
+        for rid in sorted(runbook):
+            entry = runbook[rid]
+            tags_str = ", ".join(entry.get("tags", []))[:20]
+            out.append(f"| {rid} | {entry.get('intent', '')[:45]} | `{entry.get('api', '')[:40]}` | {tags_str} |")
+        out.append("")
+        out.append(f"> Use `kanban runbook show <id>` for detailed steps and examples.")
         out.append("")
 
     # Stale annotations
@@ -567,7 +581,8 @@ def cmd_init(args, root: Path) -> None:
         "cards": {},
         "flows": {},
         "risks": {},
-        "next_id": {"card": 1, "risk": 1},
+        "runbook": {},
+        "next_id": {"card": 1, "risk": 1, "runbook": 1},
     }
     save_state(root, state)
     # Run initial scan
@@ -931,6 +946,96 @@ def cmd_risk_list(args, root: Path) -> None:
         print(f"{rid:<8} {r['severity']:<6} {r.get('area', '')[:15]:<15} {r['status']:<10} {r['desc'][:30]}")
 
 
+# ── runbook ───────────────────────────────────────────────────────────────────
+
+
+def cmd_runbook_add(args, root: Path) -> None:
+    state = load_state(root)
+    if "runbook" not in state:
+        state["runbook"] = {}
+    if "runbook" not in state["next_id"]:
+        state["next_id"]["runbook"] = 1
+    rid = f"R-{state['next_id']['runbook']:03d}"
+    state["next_id"]["runbook"] += 1
+    steps = [s.strip() for s in args.steps.split(";")] if args.steps else []
+    files = [f.strip() for f in args.files.split(",")] if args.files else []
+    tags = [t.strip() for t in args.tags.split(",")] if args.tags else []
+    state["runbook"][rid] = {
+        "intent": args.intent,
+        "api": args.api or "",
+        "steps": steps,
+        "example": args.example or "",
+        "files": files,
+        "tags": tags,
+        "updated": now_iso(),
+    }
+    save_state(root, state)
+    print(f"Created runbook entry {rid}: {args.intent[:50]}")
+
+
+def cmd_runbook_update(args, root: Path) -> None:
+    state = load_state(root)
+    if "runbook" not in state:
+        die("no runbook entries yet")
+    rid = args.id.upper()
+    if rid not in state["runbook"]:
+        die(f"runbook entry {rid} not found")
+    entry = state["runbook"][rid]
+    if args.intent is not None:
+        entry["intent"] = args.intent
+    if args.api is not None:
+        entry["api"] = args.api
+    if args.steps is not None:
+        entry["steps"] = [s.strip() for s in args.steps.split(";")]
+    if args.example is not None:
+        entry["example"] = args.example
+    if args.files is not None:
+        entry["files"] = [f.strip() for f in args.files.split(",")]
+    if args.tags is not None:
+        entry["tags"] = [t.strip() for t in args.tags.split(",")]
+    entry["updated"] = now_iso()
+    save_state(root, state)
+    print(f"Updated {rid}")
+
+
+def cmd_runbook_list(args, root: Path) -> None:
+    state = load_state(root)
+    if args.json:
+        print(json.dumps(state["runbook"], indent=2, sort_keys=True))
+        return
+    print(f"{'ID':<8} Intent")
+    print("-" * 60)
+    for rid in sorted(state["runbook"]):
+        entry = state["runbook"][rid]
+        print(f"{rid:<8} {entry.get('intent', '')[:50]}")
+    print(f"\n{len(state['runbook'])} entries. Use `kanban runbook show <id>` for details.")
+
+
+def cmd_runbook_show(args, root: Path) -> None:
+    state = load_state(root)
+    rid = args.id.upper()
+    if rid not in state["runbook"]:
+        die(f"runbook entry {rid} not found")
+    entry = state["runbook"][rid]
+    if args.json:
+        print(json.dumps(entry, indent=2, sort_keys=True))
+        return
+    print(f"Runbook: {rid}")
+    print(f"  Intent:  {entry.get('intent', '')}")
+    print(f"  API:     {entry.get('api', '')}")
+    print(f"  Steps:")
+    for i, step in enumerate(entry.get("steps", []), 1):
+        print(f"    {i}. {step}")
+    if entry.get("example"):
+        print(f"  Example:")
+        for line in entry["example"].split("\\n"):
+            print(f"    {line}")
+    if entry.get("files"):
+        print(f"  Files:   {', '.join(entry['files'])}")
+    if entry.get("tags"):
+        print(f"  Tags:    {', '.join(entry['tags'])}")
+    print(f"  Updated: {entry.get('updated', '')}")
+
 # ── stale / status ───────────────────────────────────────────────────────────
 
 
@@ -1072,6 +1177,7 @@ def _status_json(state: dict, root: Path) -> dict:
         "stale_files_count": len(stale_files),
         "stale_files_top5": sorted(stale_files)[:5],
         "graphify": scan.get("graphify", {"available": False}),
+        "runbook_count": len(state.get("runbook", {})),
         "hints": hints,
     }
 
@@ -1160,6 +1266,16 @@ def _status_lines(state: dict, root: Path) -> list[str]:
     lines.append(f"STALE ANNOTATIONS: {len(stale)} (top 5)")
     for path in sorted(stale)[:5]:
         lines.append(f"  {path}")
+
+    # Runbook entries
+    runbook = state.get("runbook", {})
+    if runbook:
+        lines.append("")
+        lines.append(f"RUNBOOK: {len(runbook)} entries")
+        for rid in sorted(runbook):
+            entry = runbook[rid]
+            lines.append(f"  {rid} {entry.get('intent', '')[:60]}")
+        lines.append("  (use `kanban runbook show <id>` for details)")
 
     # Knowledge graph (graphify) staleness — AGENTS.md rule 3
     gf = scan.get("graphify", {})
@@ -1302,6 +1418,9 @@ def cmd_check(args, root: Path) -> None:
         errors.append(f"next_id.card ({state['next_id']['card']}) <= max card id ({max_card})")
     if state["next_id"]["risk"] <= max_risk:
         errors.append(f"next_id.risk ({state['next_id']['risk']}) <= max risk id ({max_risk})")
+    max_runbook = max((int(k.split("-")[1]) for k in state.get("runbook", {})), default=0)
+    if state["next_id"].get("runbook", 0) <= max_runbook:
+        errors.append(f"next_id.runbook ({state['next_id']['runbook']}) <= max runbook id ({max_runbook})")
 
     # Card validation
     files_index = set(state["files"].keys())
@@ -1325,6 +1444,11 @@ def cmd_check(args, root: Path) -> None:
             errors.append(f"{rid}: invalid severity '{risk['severity']}'")
         if risk["status"] not in VALID_RISK_STATUS:
             errors.append(f"{rid}: invalid status '{risk['status']}'")
+
+    # Runbook validation
+    for rid, entry in state.get("runbook", {}).items():
+        if not entry.get("intent"):
+            warnings.append(f"{rid}: missing intent")
 
     # Hash validation
     for path, f in state["files"].items():
@@ -1645,6 +1769,38 @@ def build_parser() -> argparse.ArgumentParser:
     sp_list = risk_sub.add_parser("list", help="List risks")
     sp_list.add_argument("--json", action="store_true")
     sp_list.set_defaults(func=cmd_risk_list)
+
+    # runbook
+    sp = sub.add_parser("runbook", help="Manage operational runbook")
+    runbook_sub = sp.add_subparsers(dest="runbook_cmd", required=True)
+
+    sp_add = runbook_sub.add_parser("add", help="Add runbook entry")
+    sp_add.add_argument("intent")
+    sp_add.add_argument("--api", default="")
+    sp_add.add_argument("--steps", default="")
+    sp_add.add_argument("--example", default="")
+    sp_add.add_argument("--files", default="")
+    sp_add.add_argument("--tags", default="")
+    sp_add.set_defaults(func=cmd_runbook_add)
+
+    sp_update = runbook_sub.add_parser("update", help="Update runbook entry")
+    sp_update.add_argument("id")
+    sp_update.add_argument("--intent")
+    sp_update.add_argument("--api")
+    sp_update.add_argument("--steps")
+    sp_update.add_argument("--example")
+    sp_update.add_argument("--files")
+    sp_update.add_argument("--tags")
+    sp_update.set_defaults(func=cmd_runbook_update)
+
+    sp_list = runbook_sub.add_parser("list", help="List runbook entries")
+    sp_list.add_argument("--json", action="store_true")
+    sp_list.set_defaults(func=cmd_runbook_list)
+
+    sp_show = runbook_sub.add_parser("show", help="Show runbook entry detail")
+    sp_show.add_argument("id")
+    sp_show.add_argument("--json", action="store_true")
+    sp_show.set_defaults(func=cmd_runbook_show)
 
     # stale
     sp = sub.add_parser("stale", help="Show stale annotations and cards")

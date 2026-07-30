@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import re
 import threading
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -19,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 TOKEN_URL = "https://auth.dhan.co/app/generateAccessToken"
 PROFILE_URL = "https://api.dhan.co/v2/profile"
-REFRESH_THRESHOLD = 0.9
+REFRESH_THRESHOLD = 0.8
 
 # Token cache directory for daily file-based token persistence.
 # Each token file is named token_{client_id}_{date}.txt and stores
@@ -126,14 +127,23 @@ def _validate_token_via_profile(token: str, client_id: str) -> dict | None:
         return None
 
 
+TOTP_COOLDOWN_SECONDS = 125  # Dhan rate-limits to 1 per 2 min; add 5s safety
+TOKEN_EXPIRY_WARNING_SECONDS = 3600  # Warn when token has < 1 hour remaining
+
+
 class TokenManager:
     """Thread-safe Dhan token manager with auto-refresh and daily file cache.
 
     On startup, tries to load a cached token from ``runtime-dev/tokens/``.
-    If the cached token is still fresh (validated via JWT + optional profile
-    check), it is reused — avoiding an unnecessary TOTP mint (rate-limited
-    to once per 2 minutes by Dhan). On successful mint, the new token is
-    persisted to the daily cache file.
+    If the cached token is still fresh (validated via JWT expiry), it is
+    reused — avoiding an unnecessary TOTP mint (rate-limited to once per 2
+    minutes by Dhan). On successful mint, the new token is persisted to the
+    daily cache file.
+
+    TOTP rate-limit resilience:
+    - Tracks the last TOTP mint attempt timestamp
+    - Skips TOTP if the cooldown (125s) hasn't elapsed since the last attempt
+    - Warns proactively when the token has < 1 hour until expiry
     """
 
     def __init__(self, client_id: str, totp_secret: str, clock: Clock, *,
@@ -145,6 +155,8 @@ class TokenManager:
         self._clock = clock
         self._lock = threading.Lock()
         self._cache_path = Path(cache_dir) / _token_cache_path(client_id).name if cache_dir else _token_cache_path(client_id)
+        self._last_totp_attempt: float = 0.0  # time.monotonic() of last TOTP call
+        self._refresh_timer: threading.Timer | None = None
 
         # Prefer initial_token from env, then try file cache
         token = initial_token or _read_cached_token(self._cache_path)
@@ -166,9 +178,17 @@ class TokenManager:
         """Return a valid token, refreshing if expired or absent.
 
         Thread-safe: only one thread enters the refresh path.
+        Respects TOTP cooldown — skips refresh if Dhan is rate-limiting.
         """
         if self._token is not None and self._is_fresh():
+            self._warn_if_expiry_near()
             return self._token
+        if self._in_totp_cooldown():
+            raise DhanTokenRefreshThrottled(
+                f"TOTP refresh blocked by Dhan rate limit (cooldown ~{TOTP_COOLDOWN_SECONDS}s, "
+                f"last attempt was {time.monotonic() - self._last_totp_attempt:.0f}s ago). "
+                f"Token expired at {self._expires_at.isoformat() if self._expires_at else '?'}."
+            )
         return self.refresh_token()
 
     def is_token_fresh(self) -> bool:
@@ -185,7 +205,18 @@ class TokenManager:
         with self._lock:
             if self._token is not None and self._is_fresh():
                 return self._token
-            resp = self._mint_token()
+            if self._in_totp_cooldown():
+                remaining = TOTP_COOLDOWN_SECONDS - (time.monotonic() - self._last_totp_attempt)
+                raise DhanTokenRefreshThrottled(
+                    f"TOTP refresh rate-limited. Wait {remaining:.0f}s before retrying.",
+                    remaining_seconds=remaining,
+                )
+            try:
+                resp = self._mint_token()
+            except DhanTokenRefreshThrottled:
+                self._last_totp_attempt = time.monotonic()
+                raise
+            self._last_totp_attempt = 0.0  # Reset cooldown on success
             self._token = resp.access_token
             exp = _decode_jwt_exp(resp.access_token)
             expires_at = exp or (
@@ -199,6 +230,7 @@ class TokenManager:
                 "dhan_token_refreshed: expires_at=%s cache=%s",
                 self._expires_at.isoformat(), self._cache_path,
             )
+            self._schedule_proactive_refresh()
             return self._token
 
     def clear_cache(self) -> None:
@@ -211,6 +243,41 @@ class TokenManager:
                 logger.info("dhan_token_cache_cleared: %s", self._cache_path)
             except OSError:
                 pass
+
+    def stop(self) -> None:
+        """Cancel the proactive refresh timer. Called during shutdown."""
+        self._cancel_proactive_refresh()
+
+    def _schedule_proactive_refresh(self) -> None:
+        if type(self._clock).__name__ == "StaticClock":
+            return
+        remaining = self.time_until_expiry()
+        if remaining <= 0:
+            return
+        threshold_remaining = 86400.0 * (1.0 - REFRESH_THRESHOLD)
+        delay = max(0.0, remaining - threshold_remaining)
+        if delay < 1.0:
+            return
+        self._cancel_proactive_refresh()
+        self._refresh_timer = threading.Timer(delay, self.refresh_token)
+        self._refresh_timer.daemon = True
+        self._refresh_timer.start()
+
+    def _cancel_proactive_refresh(self) -> None:
+        timer = self._refresh_timer
+        if timer is not None:
+            timer.cancel()
+            self._refresh_timer = None
+
+    def time_until_expiry(self) -> float:
+        """Seconds until the current token expires. Returns 0 if no token."""
+        if self._expires_at is None:
+            return 0.0
+        now = self._clock.utc_now()
+        delta = self._expires_at - now
+        if delta.total_seconds() <= 0:
+            return 0.0
+        return delta.total_seconds()
 
     # ── Internal ────────────────────────────────────────────────────────────
 
@@ -226,6 +293,24 @@ class TokenManager:
             return False
         elapsed = 1.0 - (total_lifetime / 86400.0)
         return elapsed < REFRESH_THRESHOLD
+
+    def _warn_if_expiry_near(self) -> None:
+        """Log a warning if the token is approaching expiry."""
+        remaining = self.time_until_expiry()
+        if 0 < remaining < TOKEN_EXPIRY_WARNING_SECONDS:
+            logger.warning(
+                "dhan_token_expiry_approaching: expires_at=%s remaining=%.0fs "
+                "— refresh token or set a new DHAN_ACCESS_TOKEN in .env",
+                self._expires_at.isoformat() if self._expires_at else "?",
+                remaining,
+            )
+
+    def _in_totp_cooldown(self) -> bool:
+        """Check if we're still inside the TOTP rate-limit window."""
+        if self._last_totp_attempt == 0.0:
+            return False
+        elapsed = time.monotonic() - self._last_totp_attempt
+        return elapsed < TOTP_COOLDOWN_SECONDS
 
     def _mint_token(self) -> DhanAuthResponse:
         """Call the Dhan auth endpoint to mint a new token."""

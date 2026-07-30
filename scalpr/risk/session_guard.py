@@ -4,7 +4,9 @@ import logging
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
-from scalpr.brokers.broker_port import IBrokerGateway
+from scalpr.adapters.dhan.client import DhanClient
+from scalpr.domain.order import Order, OrderSide, OrderType
+from scalpr.domain.position import PositionSide
 
 logger = logging.getLogger(__name__)
 IST = timezone(timedelta(hours=5, minutes=30))
@@ -13,8 +15,8 @@ IST = timezone(timedelta(hours=5, minutes=30))
 class SessionGuard:
     """Tracks consecutive session losses and manages IST intraday square-off times."""
 
-    def __init__(self, gateway: IBrokerGateway, max_losses: int = 3) -> None:
-        self.gateway = gateway
+    def __init__(self, gateway: DhanClient, max_losses: int = 3) -> None:
+        self._client = gateway
         self.max_losses = max_losses
         self.consecutive_losses = 0
         self.halted = False
@@ -31,7 +33,7 @@ class SessionGuard:
             if self.consecutive_losses >= self.max_losses:
                 self.halted = True
                 logger.critical("SessionGuard: 3 consecutive losses reached! Initiating square_off_all and halting trading.")
-                self.gateway.square_off_all()
+                self._square_off_all()
         else:
             self.consecutive_losses = 0
 
@@ -51,7 +53,7 @@ class SessionGuard:
         if hour == 15 and minute >= 15 and not self._squared_off_nse:
             self._squared_off_nse = True
             logger.critical("SessionGuard Cutoff: NSE Intraday square-off time reached. Squaring off.")
-            self.gateway.square_off_all()
+            self._square_off_all()
             self.halted = True
             return True
 
@@ -65,11 +67,29 @@ class SessionGuard:
         if hour == 23 and minute >= 15 and not self._squared_off_mcx:
             self._squared_off_mcx = True
             logger.critical("SessionGuard Cutoff: MCX Intraday square-off time reached. Squaring off.")
-            self.gateway.square_off_all()
+            self._square_off_all()
             self.halted = True
             return True
 
         return False
+
+    def _square_off_all(self) -> None:
+        positions = self._client.get_positions()
+        for pos in positions:
+            if pos.quantity != 0:
+                try:
+                    side = OrderSide.SELL if pos.position_side == PositionSide.LONG else OrderSide.BUY
+                    self._client.place_order(Order(
+                        order_id="",
+                        symbol=pos.symbol,
+                        exchange=pos.exchange,
+                        side=side,
+                        order_type=pos.order_type if hasattr(pos, 'order_type') else None,
+                        quantity=abs(pos.quantity),
+                        price=pos.avg_price,
+                    ))
+                except Exception as exc:
+                    logger.error("square_off_failed: symbol=%s error=%s", pos.symbol, exc)
 
     def reset_guard(self) -> None:
         """Reset the loss counters and halt state (requires manual operator action)."""

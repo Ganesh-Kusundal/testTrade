@@ -3,6 +3,9 @@ from __future__ import annotations
 from decimal import Decimal
 from unittest.mock import MagicMock
 
+import pandas as pd
+import pytest
+
 from scalpr.adapters.dhan._portfolio import (
     PnLCalculationError,
     PortfolioAdapter,
@@ -805,3 +808,98 @@ class TestEdgeCases:
         adapter.get_funds()
 
         http.close.assert_not_called()
+
+
+# =========================================================================
+# _positions_to_df — DataFrame output
+# =========================================================================
+
+class TestPositionsToDf:
+    def test_get_positions_with_as_df_returns_dataframe(self):
+        http = MagicMock()
+        adapter = PortfolioAdapter(http)
+        positions = [
+            Position(
+                symbol="RELIANCE", exchange=Exchange.NSE,
+                quantity=10, avg_price=Decimal("2500"),
+                ltp=Decimal("2550"), unrealised_pnl=Decimal("500"),
+                realised_pnl=Decimal("200"), position_side=PositionSide.LONG,
+                state=PositionState.OPEN,
+            ),
+            Position(
+                symbol="TCS", exchange=Exchange.NSE,
+                quantity=-5, avg_price=Decimal("4000"),
+                ltp=Decimal("3950"), unrealised_pnl=Decimal("-250"),
+                realised_pnl=Decimal("100"), position_side=PositionSide.SHORT,
+                state=PositionState.OPEN,
+            ),
+        ]
+
+        df = adapter._positions_to_df(positions)
+
+        assert isinstance(df, pd.DataFrame)
+        assert list(df.columns) == [
+            "symbol", "exchange", "quantity", "avg_price", "ltp",
+            "unrealised_pnl", "realised_pnl", "position_side",
+        ]
+        assert len(df) == 2
+        assert df.iloc[0]["symbol"] == "RELIANCE"
+        assert df.iloc[0]["exchange"] == "NSE"
+        assert df.iloc[0]["quantity"] == 10
+        assert df.iloc[0]["avg_price"] == 2500.0
+        assert df.iloc[0]["ltp"] == 2550.0
+        assert df.iloc[0]["unrealised_pnl"] == 500.0
+        assert df.iloc[0]["realised_pnl"] == 200.0
+        assert df.iloc[0]["position_side"] == "LONG"
+        assert df.iloc[1]["symbol"] == "TCS"
+        assert df.iloc[1]["position_side"] == "SHORT"
+
+    def test_get_positions_with_as_df_false_returns_list(self):
+        http = MagicMock()
+        adapter = PortfolioAdapter(http)
+
+        result = adapter.get_positions_summary(as_df=False)
+
+        assert isinstance(result, dict)
+
+
+# =========================================================================
+# get_funds — DataFrame output
+# =========================================================================
+
+class TestGetFundsAsDf:
+    def test_get_funds_with_as_df_returns_dataframe(self):
+        http = MagicMock()
+        http.get.return_value = {"availableBalance": "50000", "utilizedMargin": "25000"}
+        adapter = PortfolioAdapter(http)
+
+        df = adapter.get_funds(as_df=True)
+
+        assert isinstance(df, pd.DataFrame)
+        assert len(df) == 1
+        assert df.iloc[0]["availableBalance"] == "50000"
+        assert df.iloc[0]["utilizedMargin"] == "25000"
+
+
+# =========================================================================
+# get_trade_book — DataFrame output (general list[dict] conversion)
+# =========================================================================
+
+class TestGetTradeBookAsDf:
+    def test_get_trade_book_with_as_df_returns_dataframe(self):
+        http = MagicMock()
+        adapter = PortfolioAdapter(http)
+        positions = [
+            Position(
+                symbol="RELIANCE", exchange=Exchange.NSE,
+                quantity=10, avg_price=Decimal("2500"),
+                ltp=Decimal("2550"), position_side=PositionSide.LONG,
+                state=PositionState.OPEN,
+            ),
+        ]
+
+        df = adapter._positions_to_df(positions)
+
+        assert isinstance(df, pd.DataFrame)
+        assert df.iloc[0]["symbol"] == "RELIANCE"
+        assert df.iloc[0]["avg_price"] == 2500.0

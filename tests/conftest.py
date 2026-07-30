@@ -264,3 +264,53 @@ def dhan_client(
 @pytest.fixture
 def fake_exchange(bus: RecordingBus, engine: ExecutionEngine) -> ContractFakeExchange:
     return ContractFakeExchange(bus)
+
+
+# ── Credential-free integration test fixtures ──────────────────────
+
+@pytest.fixture
+def dhan_fundlimit_response() -> dict:
+    """Raw Dhan /v2/fundlimit GET response."""
+    return _load_json("fundlimit_response.json")
+
+
+@pytest.fixture
+def dhan_positions_response() -> list:
+    """Raw Dhan /v2/positions GET response (array)."""
+    return _load_json("positions_response.json")
+
+
+@pytest.fixture
+def dhan_holdings_response() -> list:
+    """Raw Dhan /v2/holdings GET response (array)."""
+    return _load_json("holdings_response.json")
+
+
+@pytest.fixture
+def dhan_quote_nse_response() -> dict:
+    """Raw Dhan /v2/marketfeed/quote POST response for NSE equity."""
+    return _load_json("quote_nse_response.json")
+
+
+@pytest.fixture
+def dhan_quote_mcx_response() -> dict:
+    """Raw Dhan /v2/marketfeed/quote POST response for MCX commodity."""
+    return _load_json("quote_mcx_response.json")
+
+
+@pytest.fixture
+def dhan_intraday_response() -> dict:
+    """Raw Dhan /v2/charts/intraday POST response (column-array format)."""
+    return _load_json("intraday_response.json")
+
+
+@pytest.fixture
+def dhan_daily_response() -> dict:
+    """Raw Dhan /v2/charts/historical POST response with OI (column-array format)."""
+    return _load_json("daily_response.json")
+
+
+@pytest.fixture
+def dhan_optionchain_response() -> dict:
+    """Raw Dhan /v2/optionchain POST response with CE/PE and greeks."""
+    return _load_json("optionchain_response.json")

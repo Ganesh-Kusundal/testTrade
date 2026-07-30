@@ -6,7 +6,8 @@ import logging
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from scalpr.brokers.broker_port import ITradingPort
+from typing import Any
+
 from scalpr.domain.errors import (
     CircuitBreakerTripped,
     OrderRateLimitExceeded,
@@ -49,7 +50,7 @@ class OrderRouter:
 
     def __init__(
         self,
-        gateway: ITradingPort,
+        gateway: Any,
         risk_gate: PreTradeRiskGate,
         circuit_breaker: CircuitBreaker,
         event_bus: IEventBus | None = None,
@@ -179,7 +180,20 @@ class OrderRouter:
             self.order_manager.add_order(order)
 
         # 4. Submit to broker
-        fill = self.gateway.place_order(order)
+        result = self.gateway.place_order(order)
+        if isinstance(result, Fill):
+            fill = result
+        else:
+            order_id = str(result)
+            fill = Fill(
+                fill_id=order_id,
+                order_id=order_id,
+                symbol=order.symbol,
+                side=order.side,
+                quantity=order.quantity,
+                price=order.price if order.price is not None else Decimal("0"),
+                timestamp=datetime.now(timezone.utc),
+            )
 
         # 5. Process fill via OrderManager
         if self.order_manager and fill:

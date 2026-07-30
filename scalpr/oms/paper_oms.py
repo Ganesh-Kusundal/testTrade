@@ -5,7 +5,6 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any
 
-from scalpr.brokers.broker_port import IBrokerGateway
 from scalpr.domain.events import FillReceived, IEventBus, PositionUpdated
 from scalpr.domain.fill import Fill
 from scalpr.domain.order import Order, OrderSide, OrderState, OrderType
@@ -13,7 +12,7 @@ from scalpr.domain.position import Position, PositionSide, PositionState
 from scalpr.domain.values import ZERO
 
 
-class PaperOms(IBrokerGateway):
+class PaperOms:
     """Paper Trading OMS simulating order executions, slippage, and tracking paper portfolio metrics."""
 
     def __init__(

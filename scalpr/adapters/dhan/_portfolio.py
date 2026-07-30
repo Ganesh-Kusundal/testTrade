@@ -5,6 +5,8 @@ from collections import defaultdict
 from decimal import Decimal
 from typing import Any
 
+import pandas as pd
+
 from scalpr.adapters.dhan._http import DhanHttpClient
 from scalpr.domain.position import Position
 from scalpr.domain.values import ZERO
@@ -50,12 +52,13 @@ class PortfolioAdapter:
             logger.warning("get_live_pnl_failed: %s", exc)
             return 0.0
 
-    def get_positions_summary(self) -> dict[str, Any]:
+    def get_positions_summary(self, as_df: bool = False) -> dict[str, Any] | pd.DataFrame:
         try:
             raw = self._fetch_raw_positions()
         except Exception as exc:
             logger.warning("get_positions_summary_failed: %s", exc)
-            return {"total_investment": 0.0, "current_value": 0.0, "unrealized_pnl": 0.0, "realized_pnl": 0.0}
+            result = {"total_investment": 0.0, "current_value": 0.0, "unrealized_pnl": 0.0, "realized_pnl": 0.0}
+            return pd.DataFrame([result]) if as_df else result
 
         total_investment = ZERO
         total_unrealized = ZERO
@@ -90,15 +93,17 @@ class PortfolioAdapter:
             elif qty < 0:
                 total_unrealized += Decimal(abs(qty)) * (avg_val - ltp_val)
 
-        return {
+        result = {
             "total_investment": float(round(total_investment, 2)),
             "current_value": float(round(current_value, 2)),
             "unrealized_pnl": float(round(total_unrealized, 2)),
             "realized_pnl": float(round(total_realized, 2)),
         }
+        return pd.DataFrame([result]) if as_df else result
 
-    def get_funds(self) -> dict[str, Any]:
-        return self._http.get("/fundlimit", bucket="portfolio")
+    def get_funds(self, as_df: bool = False) -> dict[str, Any] | pd.DataFrame:
+        data = self._http.get("/fundlimit", bucket="portfolio")
+        return pd.DataFrame([data]) if as_df else data
 
     def _fetch_raw_positions(self) -> list[dict[str, Any]]:
         data = self._http.get("/positions", bucket="portfolio")
@@ -146,6 +151,22 @@ class PortfolioAdapter:
                 "realized_pnl": pos.realised_pnl,
             })
         return result
+
+    @staticmethod
+    def _positions_to_df(positions: list[Position]) -> pd.DataFrame:
+        rows = []
+        for p in positions:
+            rows.append({
+                "symbol": p.symbol,
+                "exchange": p.exchange.value,
+                "quantity": p.quantity,
+                "avg_price": float(p.avg_price),
+                "ltp": float(p.ltp),
+                "unrealised_pnl": float(p.unrealised_pnl),
+                "realised_pnl": float(p.realised_pnl),
+                "position_side": p.position_side.value,
+            })
+        return pd.DataFrame(rows)
 
     def _fetch_ltp_batch(self, raw_positions: list[dict[str, Any]]) -> dict[str, Decimal]:
         ltps: dict[str, Decimal] = {}

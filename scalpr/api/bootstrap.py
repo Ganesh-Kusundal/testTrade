@@ -34,16 +34,13 @@ def _load_dotenv() -> None:
 
 
 def _create_gateway() -> tuple[Any, str | None]:
-    """Create and configure the broker gateway port.
+    """Create and configure the DhanClient.
 
-    Returns (port, error) — an IBrokerGateway-compatible port backed by
-    the new DhanClient + DhanBrokerGateway shim. Routers and wire() speak
-    the port vocabulary (get_positions/get_margins/get_ltp) without knowing
-    about the new adapter internals. Falls back gracefully: the API still
-    boots without broker credentials, returning 503 on broker endpoints.
+    Returns (client, error) — a DhanClient. Falls back gracefully: the
+    API still boots without broker credentials, returning 503 on broker
+    endpoints.
     """
     from config.secrets_manager import SecretsManager
-    from scalpr.brokers.broker_gateway import DhanBrokerGateway
     from scalpr.adapters.dhan.client import DhanClient
     from scalpr.engine.clock import LiveClock
     from scalpr.engine.message_bus import MessageBus
@@ -65,17 +62,16 @@ def _create_gateway() -> tuple[Any, str | None]:
             "pin": sm.get_dhan_pin() or "1111",
             "csv_path": "instrument.csv",
         })
-        gateway = DhanBrokerGateway(client)
-        return gateway, None
+        return client, None
     except Exception as e:
-        logger.error("DhanBrokerGateway creation failed: %s", e)
+        logger.error("DhanClient creation failed: %s", e)
         return None, str(e)
 
 
 def _create_event_system(existing_client: Any = None) -> dict | None:
     """Create the new event-driven system: MessageBus + ExecutionEngine + DhanClient.
 
-    When *existing_client* is provided (from DhanBrokerGateway), it is reused
+    When *existing_client* is provided (from _create_gateway), it is reused
     to avoid duplicating the connection. Returns None when no DhanClient is
     available (e.g. credentials missing).
     """
@@ -253,14 +249,13 @@ async def _start_trading(app: FastAPI) -> None:
         logger.info("trading_wired_event_system: %s", watchlist)
         return
 
-    # Fallback: use DhanClient WS directly
-    if gateway is not None and gateway.is_connected():
-        client = gateway.connection
+    # Fallback: use DhanClient directly
+    if gateway is not None:
         for symbol in watchlist:
             from scalpr.domain.instrument import SimpleInstrumentId
-            client.subscribe_quotes(SimpleInstrumentId.parse(f"{symbol}:NSE"))
+            gateway.subscribe_quotes(SimpleInstrumentId.parse(f"{symbol}:NSE"))
         loop = asyncio.get_running_loop()
-        client._bus.subscribe(
+        gateway._bus.subscribe(
             "market.quote.dhan",
             lambda t: asyncio.run_coroutine_threadsafe(ctx.executor.on_tick(t), loop),
         )
@@ -270,16 +265,25 @@ async def _start_trading(app: FastAPI) -> None:
 
 
 def _create_candle_provider(gateway: Any) -> Any:
-    """Create a candle provider from the gateway's existing connection.
+    """Create a candle provider from the gateway.
 
-    Shares the gateway's single DhanConnection — no duplicate connection,
-    no extra instrument load, no orphaned HTTP session.
-    Returns None if gateway has no connection (fail-closed — replay returns 503).
+    Uses DhanClient._historical when available; falls back to
+    gateway.connection.historical for backward compat with tests / mocks.
+    Returns None if unavailable (fail-closed — replay returns 503).
     """
     if gateway is None:
         return None
-    conn = getattr(gateway, "connection", None)
-    if conn is None:
+
+    from scalpr.adapters.dhan.client import DhanClient
+
+    if isinstance(gateway, DhanClient):
+        hist = gateway._historical
+    else:
+        conn = getattr(gateway, 'connection', None)
+        if conn is None:
+            return None
+        hist = getattr(conn, 'historical', None)
+    if hist is None:
         return None
 
     try:
@@ -295,7 +299,7 @@ def _create_candle_provider(gateway: Any) -> Any:
             logger.error("replay_provider_invalid_date: %s", date_str)
             return []
 
-        candles = conn.historical.get_ohlcv(
+        candles = hist.get_ohlcv(
             symbol=symbol,
             exchange=exchange,
             timeframe=timeframe,
@@ -347,7 +351,7 @@ async def _lifespan(app: FastAPI) -> Any:
             await app.state.feed.stop()
     if getattr(app.state, "gateway", None):
         with suppress(Exception):
-            app.state.gateway.disconnect()
+            app.state.gateway.stop()
     if getattr(app.state, "replay_manager", None):
         with suppress(Exception):
             app.state.replay_manager.shutdown()
@@ -396,7 +400,7 @@ def create_app() -> FastAPI:
     app.state.broker_error = broker_error
     # Event system shares the DhanClient from gateway when available
     app.state.event_system = _create_event_system(
-        existing_client=gateway.connection if gateway and gateway.is_connected() else None
+        existing_client=gateway if gateway else None
     )
     app.state.feed = None
     app.state.executor = None

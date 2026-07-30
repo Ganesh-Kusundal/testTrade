@@ -14,7 +14,7 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from scalpr.brokers.broker_port import IBrokerGateway
+from scalpr.adapters.dhan.client import DhanClient
 from scalpr.portfolio.portfolio import PortfolioManager
 
 logger = logging.getLogger(__name__)
@@ -35,12 +35,12 @@ class PositionReconciler:
 
     def __init__(
         self,
-        gateway: IBrokerGateway,
+        client: DhanClient,
         portfolio: PortfolioManager,
         interval_s: float = 30.0,
         on_discrepancy: Callable[[PositionDiscrepancy], None] | None = None,
     ) -> None:
-        self._gateway = gateway
+        self._client = client
         self._portfolio = portfolio
         self._interval_s = interval_s
         self._on_discrepancy = on_discrepancy
@@ -50,7 +50,7 @@ class PositionReconciler:
         """Compare books once. Fail-safe: a broker error yields [] and a log,
         never an exception into the trading loop."""
         try:
-            broker_positions = self._gateway.get_positions()
+            broker_positions = self._client.get_positions()
         except Exception as exc:
             logger.error("Reconciliation skipped: broker positions unavailable: %s", exc)
             return []

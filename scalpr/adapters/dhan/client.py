@@ -5,13 +5,14 @@ import logging
 import os
 from typing import Any
 
+import pandas as pd
+
 from scalpr.adapters.dhan._auth import TokenManager
 from scalpr.adapters.dhan._greeks import GreeksCalculator
 from scalpr.adapters.dhan._historical import HistoricalDataAdapter
 from scalpr.adapters.dhan._http import DhanHttpClient, RateLimiter
 from scalpr.adapters.dhan._loader import InstrumentLoader
-from scalpr.adapters.dhan._mapper import (
-    conditional_trigger_to_dhan_request,
+from scalpr.adapters.dhan._mapper import (  # noqa: F401 — imported for test patch targets
     forever_order_to_dhan_request,
     kill_switch_to_dhan,
     margin_calc_to_dhan_request,
@@ -21,11 +22,14 @@ from scalpr.adapters.dhan._mapper import (
     to_position,
     to_quote,
 )
+from scalpr.adapters.dhan._market_data_client import MarketDataClient
 from scalpr.adapters.dhan._option_chain import OptionChainAdapter
+from scalpr.adapters.dhan._order_client import OrderClient
 from scalpr.adapters.dhan._portfolio import PortfolioAdapter
+from scalpr.adapters.dhan._portfolio_client import PortfolioClient
 from scalpr.adapters.dhan._resolver import SymbolResolver
-from scalpr.adapters.dhan._ws import DhanWebSocket
 from scalpr.adapters.dhan._resolver import DhanInstrumentNotFoundError as InstrumentNotFoundError
+from scalpr.adapters.dhan._ws import DhanWebSocket
 from scalpr.domain.instrument import (
     DerivativeInstrumentId,
     InstrumentId,
@@ -81,9 +85,33 @@ class DhanClient:
         self._historical: HistoricalDataAdapter = HistoricalDataAdapter(self._http_client, self._resolver)
         self._option_chain: OptionChainAdapter = OptionChainAdapter(self._http_client, self._resolver)
         self._greeks: GreeksCalculator = GreeksCalculator(self._http_client, self._option_chain)
-
         self._portfolio: PortfolioAdapter = PortfolioAdapter(self._http_client)
         self._subscriptions: list[tuple[str, Any]] = []
+
+        hp = lambda: self._http_client
+        tp = lambda: self._token_manager
+
+        self._order_client = OrderClient(
+            http_provider=hp,
+            token_provider=tp,
+            client_id=self._client_id,
+            resolve_fn=self._resolve,
+        )
+        self._market_data_client = MarketDataClient(
+            http_provider=hp,
+            token_provider=tp,
+            ws_provider=lambda: self._ws,
+            historical_provider=lambda: self._historical,
+            option_chain_provider=lambda: self._option_chain,
+            greeks_provider=lambda: self._greeks,
+            bus=self._bus,
+            resolve_fn=self._resolve,
+        )
+        self._portfolio_client = PortfolioClient(
+            http_provider=hp,
+            token_provider=tp,
+            portfolio=self._portfolio,
+        )
 
     # ── Lifecycle ──────────────────────────────────────────────────────
 
@@ -94,6 +122,10 @@ class DhanClient:
         except Exception as exc:
             logger.warning("instrument_download_failed; using configured csv_path: %s", exc)
         self._load_resolver()
+        try:
+            self._token_manager.get_token()
+        except Exception as exc:
+            logger.warning("token_fetch_at_startup_failed; API calls may fail: %s", exc)
         self._ws.connect()
         self._bus.subscribe("exec.command.submit.dhan", self._on_submit)
         self._bus.subscribe("exec.command.cancel.dhan", self._on_cancel)
@@ -105,6 +137,7 @@ class DhanClient:
         ]
 
     def stop(self) -> None:
+        self._token_manager.stop()
         self._ws.disconnect()
         for topic, handler in self._subscriptions:
             self._bus.unsubscribe(topic, handler)
@@ -125,11 +158,6 @@ class DhanClient:
     # ─── Symbol resolution helper ──────────────────────────────────────
 
     def _resolve(self, symbol: str, exchange: str) -> tuple[str, str]:
-        """Resolve symbol to (security_id, wire_segment).
-
-        Falls back to the near-month futures contract for commodity
-        underlyings (e.g. 'CRUDEOIL' on MCX -> CRUDEOIL-19Aug2026-FUT).
-        """
         try:
             r = self._resolver.resolve_full(symbol, exchange)
             return r.security_id, r.wire_segment
@@ -141,7 +169,7 @@ class DhanClient:
                     return r.security_id, r.wire_segment
             raise
 
-    # ── Order execution ────────────────────────────────────────────────
+    # ── Bus handlers (stay on facade) ──────────────────────────────────
 
     def _on_submit(self, msg: SubmitOrder) -> None:
         order = msg.order
@@ -192,344 +220,101 @@ class DhanClient:
         except Exception as exc:
             logger.error("modify_failed: order_id=%s error=%s", msg.order_id, exc)
 
-    # ── Public order API ───────────────────────────────────────────────
+    # ── Delegated: OrderClient ─────────────────────────────────────────
 
-    def place_order(
-        self,
-        order: Order,
-        product_type: str = "INTRADAY",
-        after_market: bool = False,
-        amo_time: str = "OPEN",
-        bo_profit: float | None = None,
-        bo_stop_loss: float | None = None,
-        tag: str | None = None,
-        should_slice: bool = False,
-    ) -> str:
-        self._token_manager.get_token()
-        security_id, segment = self._resolve(order.symbol, order.exchange.value)
-        req = order_to_dhan_request_v2(
-            order, security_id, segment, self._client_id,
-            product_type=product_type,
-            after_market=after_market,
-            amo_time=amo_time,
-            bo_profit=bo_profit,
-            bo_stop_loss=bo_stop_loss,
-            disclosed_qty=0,
-            tag=tag,
-        )
-        if should_slice:
-            resp = self._http_client.post("/orders/slicing", data=req)
-        else:
-            resp = self._http_client.post("/orders", data=req)
-        order_id: str = resp.get("orderId", "")
-        return order_id
+    def place_order(self, *args, **kwargs) -> str:
+        return self._order_client.place_order(*args, **kwargs)
 
-    def modify_order(self, order_id: str, **updates) -> bool:
-        self._http_client.put(f"/orders/{order_id}", data=updates)
-        return True
+    def modify_order(self, *args, **kwargs) -> bool:
+        return self._order_client.modify_order(*args, **kwargs)
 
-    def cancel_order(self, order_id: str) -> bool:
-        self._http_client.delete(f"/orders/{order_id}")
-        return True
+    def cancel_order(self, *args, **kwargs) -> bool:
+        return self._order_client.cancel_order(*args, **kwargs)
 
-    def get_order_detail(self, order_id: str) -> dict:
-        return self._http_client.get(f"/orders/{order_id}", bucket="orders")
+    def get_order_detail(self, *args, **kwargs) -> dict | pd.DataFrame:
+        return self._order_client.get_order_detail(*args, **kwargs)
 
-    def get_order_status(self, order_id: str) -> str:
-        detail = self._http_client.get(f"/orders/{order_id}", bucket="orders")
-        return detail.get("status", "")
+    def get_order_status(self, *args, **kwargs) -> str:
+        return self._order_client.get_order_status(*args, **kwargs)
 
-    def get_executed_price(self, order_id: str) -> float:
-        detail = self._http_client.get(f"/orders/{order_id}", bucket="orders")
-        raw = detail.get("tradedPrice")
-        if raw is None:
-            return 0.0
-        return float(raw)
+    def get_executed_price(self, *args, **kwargs) -> float:
+        return self._order_client.get_executed_price(*args, **kwargs)
 
-    def get_executed_price_and_time(self, order_id: str) -> tuple[float, str]:
-        detail = self._http_client.get(f"/orders/{order_id}", bucket="orders")
-        raw = detail.get("tradedPrice")
-        price = float(raw) if raw is not None else 0.0
-        traded_at = detail.get("traded_at") or detail.get("tradedTime", "")
-        return (price, traded_at)
+    def get_executed_price_and_time(self, *args, **kwargs) -> tuple[float, str]:
+        return self._order_client.get_executed_price_and_time(*args, **kwargs)
 
-    def cancel_all_orders(self, symbol: str | None = None) -> int:
-        orders = self._http_client.get("/orders", bucket="orders")
-        if isinstance(orders, dict):
-            orders = orders.get("data", orders.get("orders", []))
-        if not isinstance(orders, list):
-            return 0
-        open_statuses = {"OPEN", "PENDING", "TRIGGER PENDING", "PARTIALLY FILLED"}
-        cancelled = 0
-        for order in orders:
-            status = order.get("status", "").upper()
-            if status not in open_statuses:
-                continue
-            if symbol and order.get("tradingSymbol", order.get("symbol", "")) != symbol:
-                continue
-            try:
-                self._http_client.delete(f"/orders/{order['orderId']}", bucket="orders")
-                cancelled += 1
-            except Exception:
-                logger.exception("cancel_all_orders: failed for %s", order.get("orderId"))
-        return cancelled
+    def cancel_all_orders(self, *args, **kwargs) -> int:
+        return self._order_client.cancel_all_orders(*args, **kwargs)
 
-    def order_report(self, order_id: str) -> dict:
-        return self._http_client.get(f"/orders/{order_id}", bucket="orders")
+    def order_report(self, *args, **kwargs) -> dict | pd.DataFrame:
+        return self._order_client.order_report(*args, **kwargs)
 
-    def get_trade_book(self) -> list[dict]:
-        data = self._http_client.get("/trades", bucket="orders")
-        if isinstance(data, list):
-            return data
-        if isinstance(data, dict):
-            return data.get("data", data.get("trades", []))
-        return []
+    def get_trade_book(self, *args, **kwargs) -> list[dict] | pd.DataFrame:
+        return self._order_client.get_trade_book(*args, **kwargs)
 
-    def get_exchange_time(self) -> str:
-        data = self._http_client.get("/exchange/time", bucket="portfolio")
-        if isinstance(data, str):
-            return data
-        if isinstance(data, dict):
-            return data.get("exchangeTime", data.get("time", data.get("dateTime", "")))
-        return str(data)
+    def kill_switch(self, *args, **kwargs) -> str:
+        return self._order_client.kill_switch(*args, **kwargs)
 
-    def kill_switch(self, action: str) -> str:
-        req = kill_switch_to_dhan(action)
-        resp = self._http_client.post("/killswitch", data=req)
-        status: str = resp.get("killSwitchStatus", "")
-        return status
+    def place_super_order(self, *args, **kwargs) -> list[str]:
+        return self._order_client.place_super_order(*args, **kwargs)
 
-    # ── Super orders ──────────────────────────────────────────────────
+    def modify_super_order(self, *args, **kwargs) -> bool:
+        return self._order_client.modify_super_order(*args, **kwargs)
 
-    def place_super_order(
-        self,
-        security_id: str,
-        exchange_segment: str,
-        transaction_type: str,
-        quantity: int,
-        price: float,
-        order_type: str = "LIMIT",
-        product_type: str = "INTRADAY",
-        target_price: float = 0.0,
-        stop_loss_price: float = 0.0,
-        trailing_jump: float = 0.0,
-        tag: str | None = None,
-    ) -> list[str]:
-        self._token_manager.get_token()
-        req = super_order_to_dhan_request(
-            security_id, exchange_segment, transaction_type,
-            quantity, order_type, product_type, price,
-            target_price=target_price,
-            stop_loss_price=stop_loss_price,
-            trailing_jump=trailing_jump,
-            tag=tag,
-        )
-        resp = self._http_client.post("/superorders", data=req)
-        raw = resp.get("orderIds", resp.get("orderId", ""))
-        if isinstance(raw, list):
-            return raw
-        return [raw] if raw else []
+    def cancel_super_order(self, *args, **kwargs) -> bool:
+        return self._order_client.cancel_super_order(*args, **kwargs)
 
-    def modify_super_order(
-        self,
-        order_id: str,
-        quantity: int = 0,
-        price: float = 0.0,
-        order_type: str = "LIMIT",
-        leg_name: str = "ENTRY_LEG",
-        target_price: float = 0.0,
-        stop_loss_price: float = 0.0,
-        trailing_jump: float = 0.0,
-    ) -> bool:
-        payload: dict[str, Any] = {
-            "orderId": order_id,
-            "orderType": order_type.upper(),
-            "legName": leg_name.upper(),
-            "quantity": int(quantity),
-            "price": float(price),
-            "targetPrice": float(target_price),
-            "stopLossPrice": float(stop_loss_price),
-            "trailingJump": float(trailing_jump),
-        }
-        self._http_client.put(f"/superorders/{order_id}", data=payload)
-        return True
+    def get_super_orders(self, *args, **kwargs) -> list[dict] | pd.DataFrame:
+        return self._order_client.get_super_orders(*args, **kwargs)
 
-    def cancel_super_order(self, order_id: str) -> bool:
-        self._http_client.delete(f"/superorders/{order_id}")
-        return True
+    def place_forever_order(self, *args, **kwargs) -> str:
+        return self._order_client.place_forever_order(*args, **kwargs)
 
-    def get_super_orders(self) -> list[dict]:
-        resp = self._http_client.get("/superorders", bucket="orders")
-        if isinstance(resp, list):
-            return resp
-        if isinstance(resp, dict):
-            return resp.get("data", resp.get("superOrders", []))
-        return []
+    def modify_forever_order(self, *args, **kwargs) -> bool:
+        return self._order_client.modify_forever_order(*args, **kwargs)
 
-    # ── Forever / GTD orders ─────────────────────────────────────────
+    def cancel_forever_order(self, *args, **kwargs) -> bool:
+        return self._order_client.cancel_forever_order(*args, **kwargs)
 
-    def place_forever_order(
-        self,
-        security_id: str,
-        exchange_segment: str,
-        transaction_type: str,
-        quantity: int,
-        price: float,
-        trigger_price: float,
-        order_type: str = "LIMIT",
-        product_type: str = "INTRADAY",
-        validity: str = "DAY",
-        order_flag: str = "SINGLE",
-        disclosed_quantity: int = 0,
-        price1: float = 0.0,
-        trigger_price1: float = 0.0,
-        quantity1: int = 0,
-        tag: str | None = None,
-        symbol: str = "",
-    ) -> str:
-        self._token_manager.get_token()
-        req = forever_order_to_dhan_request(
-            security_id, exchange_segment, transaction_type,
-            quantity, price, trigger_price, order_type, product_type,
-            validity=validity, order_flag=order_flag,
-            disclosed_quantity=disclosed_quantity,
-            price1=price1, trigger_price1=trigger_price1,
-            quantity1=quantity1, tag=tag, symbol=symbol,
-        )
-        resp = self._http_client.post("/foreverorders", data=req)
-        order_id: str = resp.get("orderId", "")
-        return order_id
+    def get_forever_orders(self, *args, **kwargs) -> list[dict] | pd.DataFrame:
+        return self._order_client.get_forever_orders(*args, **kwargs)
 
-    def modify_forever_order(
-        self,
-        order_id: str,
-        quantity: int = 0,
-        price: float = 0.0,
-        order_type: str = "LIMIT",
-        leg_name: str = "ENTRY_LEG",
-        trigger_price: float = 0.0,
-        disclosed_quantity: int = 0,
-        validity: str = "DAY",
-        order_flag: str = "SINGLE",
-    ) -> bool:
-        payload: dict[str, Any] = {
-            "orderId": order_id,
-            "orderFlag": order_flag.upper(),
-            "orderType": order_type.upper(),
-            "legName": leg_name.upper(),
-            "quantity": int(quantity),
-            "disclosedQuantity": int(disclosed_quantity),
-            "price": float(price),
-            "triggerPrice": float(trigger_price),
-            "validity": validity.upper(),
-        }
-        self._http_client.put(f"/foreverorders/{order_id}", data=payload)
-        return True
+    def place_conditional_trigger(self, *args, **kwargs) -> str:
+        return self._order_client.place_conditional_trigger(*args, **kwargs)
 
-    def cancel_forever_order(self, order_id: str) -> bool:
-        self._http_client.delete(f"/foreverorders/{order_id}")
-        return True
+    def delete_conditional_trigger(self, *args, **kwargs) -> bool:
+        return self._order_client.delete_conditional_trigger(*args, **kwargs)
 
-    def get_forever_orders(self) -> list[dict]:
-        resp = self._http_client.get("/foreverorders", bucket="orders")
-        if isinstance(resp, list):
-            return resp
-        if isinstance(resp, dict):
-            return resp.get("data", resp.get("foreverOrders", []))
-        return []
+    def get_all_conditional_triggers(self, *args, **kwargs) -> list[dict] | pd.DataFrame:
+        return self._order_client.get_all_conditional_triggers(*args, **kwargs)
 
-    # ── Conditional triggers ─────────────────────────────────────────
+    def get_conditional_trigger_by_id(self, *args, **kwargs) -> dict | pd.DataFrame:
+        return self._order_client.get_conditional_trigger_by_id(*args, **kwargs)
 
-    def place_conditional_trigger(
-        self,
-        security_id: str,
-        exchange_segment: str,
-        transaction_type: str,
-        quantity: int,
-        price: float,
-        trigger_price: float,
-        order_type: str = "LIMIT",
-        product_type: str = "INTRADAY",
-        trigger_type: str = "PRICE_TRIGGER",
-        validity: str = "DAY",
-        disclosed_quantity: int = 0,
-        tag: str | None = None,
-    ) -> str:
-        self._token_manager.get_token()
-        req = conditional_trigger_to_dhan_request(
-            security_id, exchange_segment, transaction_type,
-            quantity, price, trigger_price, order_type, product_type,
-            trigger_type=trigger_type, validity=validity,
-            disclosed_quantity=disclosed_quantity, tag=tag,
-        )
-        resp = self._http_client.post("/triggers", data=req)
-        trigger_id: str = resp.get("triggerId", "")
-        return trigger_id
+    # ── Delegated: MarketDataClient ────────────────────────────────────
 
-    def delete_conditional_trigger(self, trigger_id: str) -> bool:
-        self._http_client.delete(f"/triggers/{trigger_id}")
-        return True
+    def subscribe_quotes(self, *args, **kwargs) -> None:
+        return self._market_data_client.subscribe_quotes(*args, **kwargs)
 
-    def get_all_conditional_triggers(self) -> list[dict]:
-        resp = self._http_client.get("/triggers", bucket="orders")
-        if isinstance(resp, list):
-            return resp
-        if isinstance(resp, dict):
-            return resp.get("data", resp.get("triggers", []))
-        return []
+    def unsubscribe_quotes(self, *args, **kwargs) -> None:
+        return self._market_data_client.unsubscribe_quotes(*args, **kwargs)
 
-    def get_conditional_trigger_by_id(self, trigger_id: str) -> dict:
-        resp = self._http_client.get(f"/triggers/{trigger_id}", bucket="orders")
-        return resp if isinstance(resp, dict) else {}
+    def get_quote(self, *args, **kwargs) -> dict[str, Any]:
+        return self._market_data_client.get_quote(*args, **kwargs)
 
-    # ── Market data ────────────────────────────────────────────────────
+    def on_ws_tick(self, *args, **kwargs) -> None:
+        return self._market_data_client.on_ws_tick(*args, **kwargs)
 
-    def subscribe_quotes(self, instrument_id: InstrumentId) -> None:
-        symbol, exchange = self._instrument_id_to_symbol_exchange(instrument_id)
-        security_id, segment = self._resolve(symbol, exchange)
-        self._ws.subscribe([(security_id, segment)], mode="quote")
+    def subscribe_market_depth(self, *args, **kwargs) -> None:
+        return self._market_data_client.subscribe_market_depth(*args, **kwargs)
 
-    def unsubscribe_quotes(self, instrument_id: InstrumentId) -> None:
-        symbol, exchange = self._instrument_id_to_symbol_exchange(instrument_id)
-        security_id, segment = self._resolve(symbol, exchange)
-        self._ws.unsubscribe([(security_id, segment)])
+    def unsubscribe_market_depth(self, *args, **kwargs) -> None:
+        return self._market_data_client.unsubscribe_market_depth(*args, **kwargs)
 
-    def get_quote(self, instrument_id: InstrumentId) -> dict[str, Any]:
-        symbol, exchange = self._instrument_id_to_symbol_exchange(instrument_id)
-        security_id, segment = self._resolve(symbol, exchange)
-        data = self._http_client.post(
-            "/marketfeed/quote",
-            data={"security_ids": [security_id], "exchangeSegment": segment},
-            bucket="market_data",
-        )
-        return to_quote(data, instrument_id)
+    def get_market_depth_snapshot(self, *args, **kwargs) -> dict:
+        return self._market_data_client.get_market_depth_snapshot(*args, **kwargs)
 
-    def on_ws_tick(self, tick: QuoteTick) -> None:
-        self._bus.publish("market.quote.dhan", tick)
-
-    # ── Market depth ────────────────────────────────────────────────────
-
-    def subscribe_market_depth(self, instrument_id: InstrumentId) -> None:
-        symbol, exchange = self._instrument_id_to_symbol_exchange(instrument_id)
-        security_id, segment = self._resolve(symbol, exchange)
-        self._ws.subscribe_depth([(security_id, segment)])
-
-    def unsubscribe_market_depth(self, instrument_id: InstrumentId) -> None:
-        symbol, exchange = self._instrument_id_to_symbol_exchange(instrument_id)
-        security_id, segment = self._resolve(symbol, exchange)
-        self._ws.unsubscribe_depth([(security_id, segment)])
-
-    def get_market_depth_snapshot(self, instrument_id: InstrumentId) -> dict:
-        symbol, exchange = self._instrument_id_to_symbol_exchange(instrument_id)
-        security_id, segment = self._resolve(symbol, exchange)
-        data = self._http_client.post(
-            "/marketfeed/depth",
-            data={"security_ids": [security_id], "exchangeSegment": segment},
-            bucket="market_data",
-        )
-        return data
-
-    def get_market_depth_df(self, instrument_id: InstrumentId) -> list[dict]:
+    def get_market_depth_df(self, instrument_id: InstrumentId, as_df: bool = False) -> list[dict] | pd.DataFrame:
         raw = self.get_market_depth_snapshot(instrument_id)
         depth = raw.get("depth") or {}
         bids = depth.get("bid") or []
@@ -552,157 +337,74 @@ class DhanClient:
                 "ask_qty": int(a.get("quantity", 0)),
                 "ask_orders": int(a.get("orders", 0)),
             })
+        if as_df:
+            return pd.DataFrame(out)
         return out
 
-    # ── Portfolio ──────────────────────────────────────────────────────
+    def get_historical_batch(self, *args, **kwargs) -> dict[str, pd.DataFrame | list[dict] | Exception]:
+        return self._market_data_client.get_historical_batch(*args, **kwargs)
 
-    def get_positions(self) -> list[Position]:
-        data = self._http_client.get("/positions", bucket="portfolio")
-        if isinstance(data, list):
-            return [to_position(item) for item in data]
-        return [to_position(data)]
+    def get_historical(self, *args, **kwargs) -> list[dict[str, Any]] | pd.DataFrame:
+        return self._market_data_client.get_historical(*args, **kwargs)
 
-    def get_holdings(self) -> dict[str, Any]:
-        return self._http_client.get("/holdings", bucket="portfolio")
+    def get_intraday(self, *args, **kwargs) -> list[dict[str, Any]] | pd.DataFrame:
+        return self._market_data_client.get_intraday(*args, **kwargs)
 
-    def get_funds(self) -> dict[str, Any]:
-        return self._http_client.get("/fundlimit", bucket="portfolio")
+    def get_daily(self, *args, **kwargs) -> list[dict[str, Any]] | pd.DataFrame:
+        return self._market_data_client.get_daily(*args, **kwargs)
 
-    def margin_calculator(
-        self,
-        security_id: str,
-        exchange_segment: str,
-        transaction_type: str,
-        quantity: int,
-        product_type: str,
-        price: float,
-        trigger_price: float = 0,
-    ) -> dict[str, Any]:
-        req = margin_calc_to_dhan_request(
-            security_id, exchange_segment, transaction_type,
-            quantity, product_type, price, trigger_price,
-        )
-        return self._http_client.post("/margincalculator", data=req, bucket="portfolio")
+    def get_option_chain(self, *args, **kwargs) -> dict[str, Any] | pd.DataFrame:
+        return self._market_data_client.get_option_chain(*args, **kwargs)
 
-    def get_expired_option_data(
-        self,
-        security_id: str,
-        exchange_segment: str,
-        instrument_type: str,
-        expiry_flag: str,
-        expiry_code: int,
-        strike: str,
-        drv_option_type: str,
-        required_data: list[str],
-        from_date: str,
-        to_date: str,
-        interval: int = 1,
-    ) -> dict[str, Any]:
-        payload = {
-            "securityId": security_id,
-            "exchangeSegment": exchange_segment,
-            "instrument": instrument_type,
-            "expiryFlag": expiry_flag,
-            "expiryCode": expiry_code,
-            "strike": strike,
-            "drvOptionType": drv_option_type,
-            "requiredData": required_data,
-            "fromDate": from_date,
-            "toDate": to_date,
-            "interval": interval,
-        }
-        return self._http_client.post("/charts/rollingoption", data=payload, bucket="history")
+    def get_expiry_list(self, *args, **kwargs) -> list[str] | pd.Series:
+        return self._market_data_client.get_expiry_list(*args, **kwargs)
 
-    def get_live_pnl(self) -> float:
-        return self._portfolio.get_live_pnl()
+    def atm_strike(self, *args, **kwargs) -> tuple[str, str, float]:
+        return self._market_data_client.atm_strike(*args, **kwargs)
 
-    def get_positions_summary(self) -> dict[str, Any]:
-        return self._portfolio.get_positions_summary()
+    def otm_strike(self, *args, **kwargs) -> tuple[str, str, float, float]:
+        return self._market_data_client.otm_strike(*args, **kwargs)
 
-    # ── Historical data ────────────────────────────────────────────────
+    def itm_strike(self, *args, **kwargs) -> tuple[str, str, float, float]:
+        return self._market_data_client.itm_strike(*args, **kwargs)
 
-    def get_historical(
-        self,
-        symbol: str,
-        exchange: str = "NSE",
-        timeframe: str = "DAY",
-        interval: int = 5,
-        from_date: str | None = None,
-        to_date: str | None = None,
-    ) -> list[dict[str, Any]]:
-        return self._historical.get_historical(symbol, exchange, timeframe, interval, from_date, to_date)
-
-    def get_intraday(
-        self,
-        symbol: str,
-        exchange: str = "NSE",
-        interval: int = 5,
-        from_date: str | None = None,
-        to_date: str | None = None,
-    ) -> list[dict[str, Any]]:
-        return self._historical.get_intraday(symbol, exchange, interval, from_date, to_date)
-
-    def get_daily(
-        self,
-        symbol: str,
-        exchange: str = "NSE",
-        from_date: str | None = None,
-        to_date: str | None = None,
-    ) -> list[dict[str, Any]]:
-        return self._historical.get_daily(symbol, exchange, from_date, to_date)
-
-    # ── Option chain ───────────────────────────────────────────────────
-
-    def get_option_chain(
-        self,
-        symbol: str,
-        exchange: str = "NSE",
-        expiry: str | None = None,
-    ) -> dict[str, Any]:
-        return self._option_chain.get_option_chain(symbol, exchange, expiry=expiry)
-
-    def get_expiry_list(self, symbol: str, exchange: str = "NSE") -> list[str]:
-        return self._option_chain.get_expiry_list(symbol, exchange)
-
-    def atm_strike(self, symbol: str, expiry_idx: int = 0, exchange: str = "NSE") -> tuple[str, str, float]:
-        return self._option_chain.atm_strike_selection(symbol, expiry_idx=expiry_idx, exchange=exchange)
-
-    def otm_strike(
-        self, symbol: str, expiry_idx: int = 0, count: int = 1, exchange: str = "NSE",
-    ) -> tuple[str, str, float, float]:
-        return self._option_chain.otm_strike_selection(symbol, expiry_idx=expiry_idx, count=count, exchange=exchange)
-
-    def itm_strike(
-        self, symbol: str, expiry_idx: int = 0, count: int = 1, exchange: str = "NSE",
-    ) -> tuple[str, str, float, float]:
-        return self._option_chain.itm_strike_selection(symbol, expiry_idx=expiry_idx, count=count, exchange=exchange)
-
-    def get_greeks(
-        self,
-        symbol: str,
-        expiry: str,
-        strike: float,
-        option_type: str,
-        exchange: str = "NSE",
-    ) -> dict | None:
-        """Calculate options greeks for a contract using the local Black-Scholes model.
-
-        Args:
-            symbol: Underlying symbol (e.g. "NIFTY").
-            expiry: Expiry date (ISO format, e.g. "2024-12-26").
-            strike: Strike price.
-            option_type: "CE" or "PE".
-            exchange: Exchange (e.g. "NSE", "MCX").
-
-        """
-        return self._greeks.calculate_from_chain(symbol, expiry, strike, option_type, exchange=exchange)
-
-    # ── Helpers ────────────────────────────────────────────────────────
+    def get_greeks(self, *args, **kwargs) -> dict | pd.DataFrame | None:
+        return self._market_data_client.get_greeks(*args, **kwargs)
 
     @staticmethod
-    def _instrument_id_to_symbol_exchange(instrument_id: InstrumentId) -> tuple[str, str]:
-        if isinstance(instrument_id, SimpleInstrumentId):
-            return instrument_id.symbol, instrument_id.exchange.value
-        if isinstance(instrument_id, DerivativeInstrumentId):
-            return instrument_id.underlying, instrument_id.exchange.value
-        raise TypeError(f"Unsupported InstrumentId type: {type(instrument_id).__name__}")
+    def resample_timeframe(*args, **kwargs) -> pd.DataFrame:
+        return MarketDataClient.resample_timeframe(*args, **kwargs)
+
+    @staticmethod
+    def renko_bricks(*args, **kwargs) -> pd.DataFrame:
+        return MarketDataClient.renko_bricks(*args, **kwargs)
+
+    @staticmethod
+    def heikin_ashi(*args, **kwargs) -> pd.DataFrame:
+        return MarketDataClient.heikin_ashi(*args, **kwargs)
+
+    # ── Delegated: PortfolioClient ─────────────────────────────────────
+
+    def get_positions(self, *args, **kwargs) -> list[Position] | pd.DataFrame:
+        return self._portfolio_client.get_positions(*args, **kwargs)
+
+    def get_holdings(self, *args, **kwargs) -> dict[str, Any] | pd.DataFrame:
+        return self._portfolio_client.get_holdings(*args, **kwargs)
+
+    def get_funds(self, *args, **kwargs) -> dict[str, Any] | pd.DataFrame:
+        return self._portfolio_client.get_funds(*args, **kwargs)
+
+    def margin_calculator(self, *args, **kwargs) -> dict[str, Any]:
+        return self._portfolio_client.margin_calculator(*args, **kwargs)
+
+    def get_expired_option_data(self, *args, **kwargs) -> dict[str, Any]:
+        return self._portfolio_client.get_expired_option_data(*args, **kwargs)
+
+    def get_live_pnl(self, *args, **kwargs) -> float:
+        return self._portfolio_client.get_live_pnl(*args, **kwargs)
+
+    def get_positions_summary(self, *args, **kwargs) -> dict[str, Any]:
+        return self._portfolio_client.get_positions_summary(*args, **kwargs)
+
+    def get_exchange_time(self, *args, **kwargs) -> str:
+        return self._portfolio_client.get_exchange_time(*args, **kwargs)

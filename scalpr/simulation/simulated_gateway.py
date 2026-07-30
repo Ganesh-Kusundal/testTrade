@@ -19,7 +19,6 @@ from datetime import date
 from decimal import Decimal
 from typing import Any
 
-from scalpr.brokers.broker_port import IBrokerGateway
 from scalpr.adapters.dhan._http import (
     PAPER_BUCKETS,
     RateLimiter,
@@ -40,7 +39,7 @@ logger = logging.getLogger(__name__)
 _ACQUIRE_TIMEOUT_S = 2.0
 
 
-class SimulatedGateway(IBrokerGateway):
+class SimulatedGateway:
     """In-process broker for paper trading, replay, and backtests.
 
     Orders fill immediately and fully against the last known price

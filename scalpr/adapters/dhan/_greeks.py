@@ -5,6 +5,7 @@ import logging
 from typing import Any
 
 import mibian
+import pandas as pd
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +42,8 @@ class GreeksCalculator:
         option_type: str,
         interest_rate: float = 0.1,
         volatility: float | None = None,
-    ) -> dict[str, float]:
+        as_df: bool = False,
+    ) -> dict[str, float] | pd.DataFrame:
         """Calculate options greeks using Black-Scholes.
 
         Args:
@@ -52,10 +54,12 @@ class GreeksCalculator:
             interest_rate: Risk-free rate as decimal (default 0.1 = 10%).
             volatility: Implied volatility as decimal (default 0.15 = 15%).
                         Pass ``None`` to use the default 15 %.
+            as_df: If True, return a single-row DataFrame instead of a dict.
 
         Returns:
             Dict with keys: delta, gamma, theta, vega, rho, iv,
             call_price, put_price.
+            If ``as_df=True``, returns a single-row DataFrame.
         """
         dte = max(int(days_to_expiry), 1)
         vol_dec = volatility if volatility is not None else 0.15
@@ -68,7 +72,7 @@ class GreeksCalculator:
 
         is_call = option_type.upper() in ("CE", "CALL", "C")
 
-        return {
+        result = {
             "delta": bs.callDelta if is_call else bs.putDelta,
             "gamma": bs.gamma,
             "theta": bs.callTheta if is_call else bs.putTheta,
@@ -79,6 +83,10 @@ class GreeksCalculator:
             "put_price": bs.putPrice,
         }
 
+        if as_df:
+            return pd.DataFrame([result])
+        return result
+
     def calculate_from_chain(
         self,
         symbol: str,
@@ -86,7 +94,8 @@ class GreeksCalculator:
         strike: float,
         option_type: str,
         exchange: str = "NSE",
-    ) -> dict[str, float] | None:
+        as_df: bool = False,
+    ) -> dict[str, float] | pd.DataFrame | None:
         """Calculate greeks using live data from the Dhan option chain.
 
         Fetches the option chain and underlying LTP, then computes
@@ -97,9 +106,11 @@ class GreeksCalculator:
             expiry: Expiry date string (ISO format, e.g. "2024-12-26").
             strike: Strike price to evaluate.
             option_type: "CE" or "PE".
+            as_df: If True, return a single-row DataFrame instead of a dict.
 
         Returns:
             Greeks dict, or ``None`` on any error.
+            If ``as_df=True``, returns a single-row DataFrame.
         """
         try:
             if self._option_chain is None:
@@ -126,6 +137,8 @@ class GreeksCalculator:
                             "source": "chain",
                         }
                         if all(chain_greeks[k] is not None for k in ("delta", "gamma", "theta", "vega", "iv")):
+                            if as_df:
+                                return pd.DataFrame([chain_greeks])
                             return chain_greeks
                     break
 
@@ -166,6 +179,7 @@ class GreeksCalculator:
                     days_to_expiry=days,
                     option_type=option_type,
                     volatility=(vol / 100) if vol is not None else None,
+                    as_df=as_df,
                 )
 
             return None

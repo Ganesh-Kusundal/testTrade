@@ -1,0 +1,18 @@
+{
+  "data": {
+    "MCX": [
+      {
+        "securityId": "10001",
+        "tradingSymbol": "CRUDEOIL29AUG2026FUT",
+        "lastTradedPrice": 6152.00,
+        "bidPrice": [6151.00, 6150.00, 6149.00, 6148.00, 6147.00],
+        "bidQuantity": [10, 8, 6, 4, 2],
+        "askPrice": [6153.00, 6154.00, 6155.00, 6156.00, 6157.00],
+        "askQuantity": [10, 8, 6, 4, 2],
+        "totalTradedVolume": 15200,
+        "oi": 187500,
+        "lastTradedTime": "2026-07-29T10:30:00"
+      }
+    ]
+  }
+}

@@ -20,7 +20,6 @@ console = Console()
 
 def _create_gateway(broker: str) -> Any:
     from scalpr.adapters.dhan.client import DhanClient
-    from scalpr.brokers.broker_gateway import DhanBrokerGateway
 
     client_id = os.environ.get("DHAN_CLIENT_ID", "")
     access_token = os.environ.get("DHAN_ACCESS_TOKEN", "")
@@ -33,9 +32,8 @@ def _create_gateway(broker: str) -> Any:
         "pin": os.environ.get("DHAN_PIN", "1111"),
         "csv_path": os.environ.get("DHAN_INSTRUMENT_CSV", "instrument.csv"),
     })
-    gateway = DhanBrokerGateway(client)
-    gateway.connect()
-    return gateway
+    client.start()
+    return client
 
 
 def _try_dhan_stream(
@@ -231,8 +229,18 @@ def stream(symbols: tuple[str], exchange: str, broker: str, duration: int) -> No
         return table
 
     try:
+        exchange_enum = Exchange[exchange.upper()]
+    except KeyError:
+        console.print(f"❌ Invalid exchange: {exchange}", style="bold red")
+        gw.stop()
+        return
+
+    try:
         console.print(f"\n📡 Subscribing to {', '.join(symbols)}...", style="bold cyan")
-        gw.stream(list(symbols), exchange=exchange, callback=on_tick)
+        for sym in symbols:
+            inst_id = SimpleInstrumentId(symbol=sym.upper(), exchange=exchange_enum)
+            gw.subscribe_quotes(inst_id)
+        gw._bus.subscribe("market.quote.dhan", on_tick)
         console.print("✅ Streaming started\n", style="bold green")
 
         if duration > 0:
@@ -262,5 +270,4 @@ def stream(symbols: tuple[str], exchange: str, broker: str, duration: int) -> No
         console.print(f"\n❌ Streaming error: {e}", style="bold red")
         raise
     finally:
-        gw.stop_stream()
-        gw.disconnect()
+        gw.stop()

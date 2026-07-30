@@ -10,6 +10,8 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
+import pandas as pd
+
 from scalpr.adapters.dhan._http import DhanHttpClient
 from scalpr.adapters.dhan._resolver import SymbolResolver
 
@@ -52,7 +54,10 @@ class OptionChainAdapter:
         symbol: str,
         exchange: str,
         expiry: str | None = None,
-    ) -> dict[str, Any]:
+        as_df: bool = False,
+        num_strikes: int = 0,
+        debug: bool = False,
+    ) -> dict[str, Any] | pd.DataFrame:
         """Fetch the option chain for an underlying symbol.
 
         Args:
@@ -60,10 +65,15 @@ class OptionChainAdapter:
             exchange: Exchange code (e.g. "NSE", "BSE", "MCX").
             expiry: Expiry date string (ISO format). If None, the nearest
                     expiry is resolved automatically.
+            as_df: If True, return a DataFrame instead of a dict.
+            num_strikes: If > 0, return only this many strikes above and
+                         below the ATM strike. 0 returns all.
+            debug: If True, log extra details about the chain fetch.
 
         Returns:
             Dict with keys: ``underlying``, ``exchange``, ``expiry``,
             ``strikes`` (list of strike dicts with ``ce`` and ``pe`` legs).
+            If ``as_df=True``, returns a DataFrame with flat columns.
         """
         security_id, segment = self._resolver.resolve_underlying_for_options(
             symbol, exchange
@@ -78,9 +88,44 @@ class OptionChainAdapter:
             "Expiry": expiry,
         }
 
+        if debug:
+            logger.info("get_option_chain: symbol=%s exchange=%s expiry=%s num_strikes=%d", symbol, exchange, expiry, num_strikes)
+
         raw = self._http.post("/optionchain", data=payload)
 
         chain = self._build_chain(raw, symbol, exchange)
+
+        if num_strikes > 0:
+            ltp = self._ltp_for(symbol, exchange)
+            sorted_entries = sorted(chain, key=lambda x: x["strike"])
+            strike_vals = [e["strike"] for e in sorted_entries]
+            atm_idx = min(range(len(strike_vals)), key=lambda i: abs(strike_vals[i] - ltp))
+            start = max(0, atm_idx - num_strikes)
+            end = min(len(sorted_entries), atm_idx + num_strikes + 1)
+            chain = sorted_entries[start:end]
+            if debug:
+                logger.info("num_strikes_filter: ltp=%s atm_idx=%s start=%s end=%s total_after=%s", ltp, atm_idx, start, end, len(chain))
+
+        if debug:
+            logger.info("get_option_chain_result: strikes=%d", len(chain))
+
+        if as_df:
+            cols = [
+                "strike",
+                "ce_ltp", "ce_bid", "ce_ask", "ce_iv",
+                "ce_delta", "ce_gamma", "ce_theta", "ce_vega",
+                "pe_ltp", "pe_bid", "pe_ask", "pe_iv",
+                "pe_delta", "pe_gamma", "pe_theta", "pe_vega",
+            ]
+            rows = []
+            for s in chain:
+                row = {"strike": s["strike"]}
+                for side, prefix in (("ce", "ce_"), ("pe", "pe_")):
+                    leg = s.get(side)
+                    for field in ("ltp", "bid", "ask", "iv", "delta", "gamma", "theta", "vega"):
+                        row[f"{prefix}{field}"] = leg.get(field) if leg else None
+                rows.append(row)
+            return pd.DataFrame(rows, columns=cols)
 
         return {
             "underlying": symbol,
@@ -89,12 +134,13 @@ class OptionChainAdapter:
             "strikes": chain,
         }
 
-    def get_expiry_list(self, symbol: str, exchange: str) -> list[str]:
+    def get_expiry_list(self, symbol: str, exchange: str, as_series: bool = False) -> list[str] | pd.Series:
         """Get list of available expiry dates for an option symbol.
 
         Args:
             symbol: Underlying symbol.
             exchange: Exchange code.
+            as_series: If True, return a pandas Series instead of a list.
 
         Returns:
             List of ISO-formatted expiry date strings, sorted ascending.
@@ -109,7 +155,10 @@ class OptionChainAdapter:
         )
 
         expiries: list[str] = raw.get("data", [])
-        return sorted(expiries)
+        result = sorted(expiries)
+        if as_series:
+            return pd.Series(result)
+        return result
 
     def atm_strike_selection(
         self,

@@ -10,18 +10,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from scalpr.adapters.dhan._types import MarketDepthLevel, MarketDepthSnapshot
-from scalpr.adapters.dhan._ws import DhanWebSocket, WSState
+from scalpr.adapters.dhan._ws import DhanWebSocket
 
 # ── Helpers ──────────────────────────────────────────────────────────
 
 
-def _await_state(ws: DhanWebSocket, target: WSState, timeout: float = 3.0) -> None:
-    deadline = _time.monotonic() + timeout
-    while _time.monotonic() < deadline:
-        if ws.state == target:
-            return
-        _time.sleep(0.005)
-    raise AssertionError(f"State did not become {target} within {timeout}s (was {ws.state})")
+
 
 
 def _make_bid_levels(count: int = 5, base_price: float = 100.0) -> list[dict]:
@@ -162,13 +156,16 @@ class TestDepthSubscriptionSet:
 
 
 class TestDepthFeedLifecycle:
+    def _connect_sync(self, ws: DhanWebSocket, mock_sdk: list) -> None:
+        """Connect synchronously by running feed on test thread."""
+        ws._run_feed()
+        if mock_sdk:
+            mock_sdk[0].on_connect(mock_sdk[0])
+
     def test_subscribe_depth_starts_feed_when_connected(
         self, ws: DhanWebSocket, mock_sdk, mock_depth_sdk,
     ) -> None:
-        feeds = mock_sdk
-        ws.connect()
-        feeds[0].on_connect(feeds[0])
-        _await_state(ws, WSState.CONNECTED)
+        self._connect_sync(ws, mock_sdk)
         ws.subscribe_depth([("RELIANCE", "NSE_EQ")])
         assert ws._depth_feed is not None
         ws._stop_depth_feed()
@@ -176,10 +173,7 @@ class TestDepthFeedLifecycle:
     def test_subscribe_depth_queues_command_when_feed_running(
         self, ws: DhanWebSocket, mock_sdk, mock_depth_sdk,
     ) -> None:
-        feeds = mock_sdk
-        ws.connect()
-        feeds[0].on_connect(feeds[0])
-        _await_state(ws, WSState.CONNECTED)
+        self._connect_sync(ws, mock_sdk)
         ws.subscribe_depth([("A", "NSE_EQ")])
         qsize_before = ws._depth_cmd_queue.qsize()
         ws.subscribe_depth([("B", "NSE_EQ")])
@@ -189,10 +183,7 @@ class TestDepthFeedLifecycle:
     def test_unsubscribe_depth_queues_command_when_feed_running(
         self, ws: DhanWebSocket, mock_sdk, mock_depth_sdk,
     ) -> None:
-        feeds = mock_sdk
-        ws.connect()
-        feeds[0].on_connect(feeds[0])
-        _await_state(ws, WSState.CONNECTED)
+        self._connect_sync(ws, mock_sdk)
         ws.subscribe_depth([("A", "NSE_EQ")])
         ws._depth_cmd_queue.queue.clear()
         ws.unsubscribe_depth([("A", "NSE_EQ")])
@@ -227,10 +218,7 @@ class TestDepthFeedLifecycle:
     def test_disconnect_stops_depth_feed(
         self, ws: DhanWebSocket, mock_sdk, mock_depth_sdk,
     ) -> None:
-        feeds = mock_sdk
-        ws.connect()
-        feeds[0].on_connect(feeds[0])
-        _await_state(ws, WSState.CONNECTED)
+        self._connect_sync(ws, mock_sdk)
         ws.subscribe_depth([("RELIANCE", "NSE_EQ")])
         assert ws._depth_feed is not None
         ws.disconnect()
@@ -240,10 +228,7 @@ class TestDepthFeedLifecycle:
         self, ws: DhanWebSocket, mock_sdk, mock_depth_sdk,
     ) -> None:
         ws.subscribe_depth([("RELIANCE", "NSE_EQ")])
-        feeds = mock_sdk
-        ws.connect()
-        feeds[0].on_connect(feeds[0])
-        _await_state(ws, WSState.CONNECTED)
+        self._connect_sync(ws, mock_sdk)
         assert ws._depth_feed is not None
         ws._stop_depth_feed()
 

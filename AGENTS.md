@@ -8,14 +8,33 @@ Read this file at session start, before any other tool call.
 1. **Run `python3 .qoder/skills/kanban.cli/scripts/kanban.py status`**
    to see the agent-facing digest — what's in flight, blocked, broken.
    If `BOARD.md` exists, you can also read it directly.
-2. **Run `python3 .qoder/skills/kanban.cli/scripts/kanban.py scan`**
+2. **Read the Runbook section** in the status output or board —
+   these are operational procedures written by previous sessions.
+   Use `python3 .qoder/skills/kanban.cli/scripts/kanban.py runbook show <id>`
+   for detailed steps and code examples.
+3. **Run `python3 .qoder/skills/kanban.cli/scripts/kanban.py scan`**
    before any planning or module modification so facts, drift, tests,
    imports, and graphify staleness are current.
-3. **If kanban reports graphify STALE** (in `status` or `stale` output),
+4. **If kanban reports graphify STALE** (in `status` or `stale` output),
    auto-run `/graphify update` to refresh the knowledge graph before
    continuing.
-4. **After any code change or commit**, re-run `scan` so the digest
+5. **After any code change or commit**, re-run `scan` so the digest
    does not silently go stale.
+
+## Session-end / after operational tasks
+
+After completing any task that involved *learning how to use* part of the
+system (e.g. how to call an API, which files are involved, what the flow
+is), add or update a runbook entry so the next session benefits:
+
+```
+python3 .qoder/skills/kanban.cli/scripts/kanban.py runbook add "intent" \
+  --api "Class.method()" \
+  --steps "step 1; step 2" \
+  --example "code example" \
+  --files "file1.py,file2.py" \
+  --tags "tag1,tag2"
+```
 
 ## Staging discipline
 

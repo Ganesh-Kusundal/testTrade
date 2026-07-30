@@ -1,0 +1,18 @@
+{
+  "data": {
+    "NSE": [
+      {
+        "securityId": "11536",
+        "tradingSymbol": "RELIANCE",
+        "lastTradedPrice": 2850.75,
+        "bidPrice": [2850.00, 2849.95, 2849.90, 2849.85, 2849.80],
+        "bidQuantity": [750, 500, 300, 150, 100],
+        "askPrice": [2850.80, 2850.85, 2850.90, 2850.95, 2851.00],
+        "askQuantity": [400, 250, 200, 100, 50],
+        "totalTradedVolume": 3892500,
+        "oi": 45231000,
+        "lastTradedTime": "2026-07-29T10:30:00"
+      }
+    ]
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "dhanClientId": "CLIENT001",
+  "availabelBalance": 528000.00,
+  "sodLimit": 1000000.00,
+  "withdrawableBalance": 425000.00,
+  "fixedDepositBalance": 0.00,
+  "directStockBalance": 75000.00,
+  "mutualFundBalance": 120000.00,
+  "insuranceBalance": 0.00,
+  "totalInvestment": 195000.00,
+  "openingBalance": 950000.00,
+  "openingBalanceAsOn": "2026-07-29",
+  "collateralBalance": 250000.00,
+  "receivedFunds": 0.00
+}

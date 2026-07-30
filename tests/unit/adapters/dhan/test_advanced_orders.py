@@ -710,7 +710,6 @@ class TestDhanClientPlaceConditionalTrigger:
             patch("scalpr.adapters.dhan.client.RateLimiter"),
             patch("scalpr.adapters.dhan.client.DhanWebSocket"),
             patch("scalpr.adapters.dhan.client.SymbolResolver"),
-            patch("scalpr.adapters.dhan.client.conditional_trigger_to_dhan_request") as mock_mapper,
         ):
             from scalpr.adapters.dhan.client import DhanClient
             from scalpr.engine.clock import StaticClock
@@ -724,61 +723,104 @@ class TestDhanClientPlaceConditionalTrigger:
             c._rate_limiter = MagicMock()
             c._token_manager = MagicMock()
             c._http_client = MagicMock()
-            c._mock_mapper = mock_mapper
             yield c
 
-    def test_calls_mapper(self, client):
-        client._mock_mapper.return_value = {"securityId": "12345"}
-        client._http_client.post.return_value = {"triggerId": "TG-1"}
-        client.place_conditional_trigger("12345", "NSE_EQ", "BUY", 10, 150.0, 155.0)
-        client._mock_mapper.assert_called_once()
-
     def test_posts_to_triggers_endpoint(self, client):
-        client._mock_mapper.return_value = {"securityId": "12345"}
         client._http_client.post.return_value = {"triggerId": "TG-1"}
         client.place_conditional_trigger("12345", "NSE_EQ", "BUY", 10, 150.0, 155.0)
-        client._http_client.post.assert_called_once_with(
-            "/triggers", data=client._mock_mapper.return_value,
-        )
+        args, kwargs = client._http_client.post.call_args
+        assert args[0] == "/triggers"
+        assert kwargs.get("bucket") == "orders"
 
     def test_acquires_rate_limit(self, client):
-        client._mock_mapper.return_value = {"securityId": "12345"}
         client._http_client.post.return_value = {"triggerId": "TG-1"}
         client.place_conditional_trigger("12345", "NSE_EQ", "BUY", 10, 150.0, 155.0)
 
     def test_gets_token(self, client):
-        client._mock_mapper.return_value = {"securityId": "12345"}
         client._http_client.post.return_value = {"triggerId": "TG-1"}
         client.place_conditional_trigger("12345", "NSE_EQ", "BUY", 10, 150.0, 155.0)
         client._token_manager.get_token.assert_called_once_with()
 
     def test_returns_trigger_id(self, client):
-        client._mock_mapper.return_value = {"securityId": "12345"}
         client._http_client.post.return_value = {"triggerId": "TG-1"}
         result = client.place_conditional_trigger("12345", "NSE_EQ", "BUY", 10, 150.0, 155.0)
         assert result == "TG-1"
 
     def test_empty_response_returns_empty_string(self, client):
-        client._mock_mapper.return_value = {"securityId": "12345"}
         client._http_client.post.return_value = {}
         result = client.place_conditional_trigger("12345", "NSE_EQ", "BUY", 10, 150.0, 155.0)
         assert result == ""
 
-    def test_passes_all_kwargs_to_mapper(self, client):
-        client._mock_mapper.return_value = {"securityId": "12345"}
+    def test_sends_core_params_in_payload(self, client):
+        client._http_client.post.return_value = {"triggerId": "TG-1"}
+        client.place_conditional_trigger("12345", "NSE_EQ", "BUY", 10, 150.0, 155.0)
+        payload = client._http_client.post.call_args[1]["data"]
+        assert payload["securityId"] == "12345"
+        assert payload["exchangeSegment"] == "NSE_EQ"
+        assert payload["transactionType"] == "BUY"
+        assert payload["quantity"] == 10
+        assert payload["price"] == 150.0
+        assert payload["triggerPrice"] == 155.0
+        assert payload["orderType"] == "LIMIT"
+        assert payload["productType"] == "INTRADAY"
+        assert payload["triggerType"] == "PRICE_TRIGGER"
+        assert payload["validity"] == "DAY"
+        assert payload["disclosedQuantity"] == 0
+
+    def test_place_conditional_trigger_all_params(self, client):
         client._http_client.post.return_value = {"triggerId": "TG-1"}
         client.place_conditional_trigger(
             "12345", "NSE_EQ", "BUY", 10, 150.0, 155.0,
             order_type="MARKET", product_type="CNC",
             trigger_type="PERCENTAGE_TRIGGER", validity="GTD",
             disclosed_quantity=5, tag="my-trigger",
+            comparison_type="VALUE", operator="GT",
+            time_frame="WEEK", comparing_value=200.0,
+            indicator_name="SMA", comparing_indicator_name="EMA",
+            frequency="DAILY", exp_date="2025-12-31", user_note="test note",
         )
-        client._mock_mapper.assert_called_once_with(
+        payload = client._http_client.post.call_args[1]["data"]
+        assert payload["comparisonType"] == "VALUE"
+        assert payload["operator"] == "GT"
+        assert payload["timeFrame"] == "WEEK"
+        assert payload["comparingValue"] == 200.0
+        assert payload["indicatorName"] == "SMA"
+        assert payload["comparingIndicatorName"] == "EMA"
+        assert payload["frequency"] == "DAILY"
+        assert payload["expDate"] == "2025-12-31"
+        assert payload["userNote"] == "test note"
+        assert payload["correlationId"] == "my-trigger"
+
+    def test_place_conditional_trigger_defaults(self, client):
+        client._http_client.post.return_value = {"triggerId": "TG-1"}
+        client.place_conditional_trigger("12345", "NSE_EQ", "BUY", 10, 150.0, 155.0)
+        payload = client._http_client.post.call_args[1]["data"]
+        assert payload["comparisonType"] == "PRICE_WITH_VALUE"
+        assert payload["timeFrame"] == "DAY"
+        assert payload["frequency"] == "ONCE"
+        assert payload["userNote"] == ""
+        assert "correlationId" not in payload
+        assert "operator" not in payload
+        assert "comparingValue" not in payload
+        assert "indicatorName" not in payload
+        assert "comparingIndicatorName" not in payload
+        assert "expDate" not in payload
+
+    def test_place_conditional_trigger_with_none_fields_omitted(self, client):
+        client._http_client.post.return_value = {"triggerId": "TG-1"}
+        client.place_conditional_trigger(
             "12345", "NSE_EQ", "BUY", 10, 150.0, 155.0,
-            "MARKET", "CNC",
-            trigger_type="PERCENTAGE_TRIGGER", validity="GTD",
-            disclosed_quantity=5, tag="my-trigger",
+            operator=None, comparing_value=None,
+            indicator_name=None, comparing_indicator_name=None,
+            exp_date=None, tag=None,
         )
+        payload = client._http_client.post.call_args[1]["data"]
+        assert "operator" not in payload
+        assert "comparingValue" not in payload
+        assert "indicatorName" not in payload
+        assert "comparingIndicatorName" not in payload
+        assert "expDate" not in payload
+        assert "correlationId" not in payload
 
 
 # =========================================================================

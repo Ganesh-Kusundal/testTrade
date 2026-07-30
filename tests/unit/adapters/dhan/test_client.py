@@ -654,5 +654,110 @@ class TestDhanClientOnWsTick(unittest.TestCase):
         self.assertIs(events[0].payload, tick)
 
 
+class TestDhanClientOptionChain(unittest.TestCase):
+    def setUp(self):
+        self.bus = RecordingBus()
+        self.clock = StaticClock(datetime(2024, 6, 15, 10, 30))
+        self.config = {"client_id": "c1", "access_token": "tok", "totp_secret": "sec"}
+
+        self._patchers = [
+            patch("scalpr.adapters.dhan.client.TokenManager"),
+            patch("scalpr.adapters.dhan.client.DhanHttpClient"),
+            patch("scalpr.adapters.dhan.client.RateLimiter"),
+            patch("scalpr.adapters.dhan.client.DhanWebSocket"),
+            patch("scalpr.adapters.dhan.client.SymbolResolver"),
+        ]
+        self.mocks = [p.start() for p in self._patchers]
+        self.addCleanup(lambda: [p.stop() for p in self._patchers])
+
+        self.client = DhanClient(self.bus, self.clock, self.config)
+        self.mock_option_chain = MagicMock()
+        self.client._option_chain = self.mock_option_chain
+
+    def test_get_option_chain_passes_num_strikes_and_debug(self):
+        self.client.get_option_chain("NIFTY", "NSE", expiry="2026-08-06", num_strikes=2, debug=True)
+        self.mock_option_chain.get_option_chain.assert_called_once_with(
+            "NIFTY", "NSE", expiry="2026-08-06", as_df=False, num_strikes=2, debug=True,
+        )
+
+    def test_get_option_chain_passes_num_strikes_default(self):
+        self.client.get_option_chain("NIFTY", "NSE")
+        self.mock_option_chain.get_option_chain.assert_called_once_with(
+            "NIFTY", "NSE", expiry=None, as_df=False, num_strikes=0, debug=False,
+        )
+
+    def test_get_expiry_list_debug_does_not_crash(self):
+        self.mock_option_chain.get_expiry_list.return_value = ["2026-08-06"]
+        result = self.client.get_expiry_list("NIFTY", "NSE", debug=True)
+        self.assertEqual(result, ["2026-08-06"])
+
+
+class TestDhanClientDebugParams(unittest.TestCase):
+    def setUp(self):
+        self.bus = RecordingBus()
+        self.clock = StaticClock(datetime(2024, 6, 15, 10, 30))
+        self.config = {"client_id": "c1", "access_token": "tok", "totp_secret": "sec"}
+
+        self._patchers = [
+            patch("scalpr.adapters.dhan.client.TokenManager"),
+            patch("scalpr.adapters.dhan.client.DhanHttpClient"),
+            patch("scalpr.adapters.dhan.client.RateLimiter"),
+            patch("scalpr.adapters.dhan.client.DhanWebSocket"),
+            patch("scalpr.adapters.dhan.client.SymbolResolver"),
+        ]
+        self.mocks = [p.start() for p in self._patchers]
+        self.addCleanup(lambda: [p.stop() for p in self._patchers])
+
+        self.client = DhanClient(self.bus, self.clock, self.config)
+
+    def test_get_positions_debug_does_not_crash(self):
+        self.mocks[1].return_value.get.return_value = []
+        result = self.client.get_positions(debug=True)
+        self.assertIsInstance(result, list)
+
+    def test_get_holdings_debug_does_not_crash(self):
+        self.mocks[1].return_value.get.return_value = {}
+        result = self.client.get_holdings(debug=True)
+        self.assertIsInstance(result, dict)
+
+    def test_get_funds_debug_does_not_crash(self):
+        self.mocks[1].return_value.get.return_value = {}
+        result = self.client.get_funds(debug=True)
+        self.assertIsInstance(result, dict)
+
+    def test_get_trade_book_debug_does_not_crash(self):
+        self.mocks[1].return_value.get.return_value = []
+        result = self.client.get_trade_book(debug=True)
+        self.assertIsInstance(result, list)
+
+    def test_get_order_detail_debug_does_not_crash(self):
+        self.mocks[1].return_value.get.return_value = {}
+        result = self.client.get_order_detail("ord-1", debug=True)
+        self.assertIsInstance(result, dict)
+
+    def test_order_report_debug_does_not_crash(self):
+        self.mocks[1].return_value.get.return_value = {}
+        result = self.client.order_report("ord-1", debug=True)
+        self.assertIsInstance(result, dict)
+
+    def test_get_historical_debug_does_not_crash(self):
+        self.client._historical = MagicMock()
+        self.client._historical.get_historical.return_value = []
+        result = self.client.get_historical("RELIANCE", debug=True)
+        self.assertIsInstance(result, list)
+
+    def test_get_intraday_debug_does_not_crash(self):
+        self.client._historical = MagicMock()
+        self.client._historical.get_intraday.return_value = []
+        result = self.client.get_intraday("RELIANCE", debug=True)
+        self.assertIsInstance(result, list)
+
+    def test_get_daily_debug_does_not_crash(self):
+        self.client._historical = MagicMock()
+        self.client._historical.get_daily.return_value = []
+        result = self.client.get_daily("RELIANCE", debug=True)
+        self.assertIsInstance(result, list)
+
+
 if __name__ == "__main__":
     unittest.main()

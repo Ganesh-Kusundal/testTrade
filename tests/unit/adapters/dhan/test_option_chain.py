@@ -5,6 +5,7 @@ from __future__ import annotations
 from decimal import Decimal
 from unittest.mock import MagicMock
 
+import pandas as pd
 import pytest
 
 from scalpr.adapters.dhan._option_chain import (
@@ -229,6 +230,35 @@ class TestGetExpiryList:
         result = adapter.get_expiry_list("NIFTY", "NSE")
         assert result == []
 
+    def test_as_series_returns_series(
+        self,
+        adapter: OptionChainAdapter,
+        mock_http: MagicMock,
+        mock_resolver: MagicMock,
+        expiry_list_response: dict,
+    ) -> None:
+        mock_resolver.resolve_underlying_for_options.return_value = (12345, "NSE_FNO")
+        mock_http.post.return_value = expiry_list_response
+
+        result = adapter.get_expiry_list("NIFTY", "NSE", as_series=True)
+
+        assert isinstance(result, pd.Series)
+        assert list(result) == ["2026-08-06", "2026-08-13", "2026-08-20"]
+
+    def test_as_series_empty_list(
+        self,
+        adapter: OptionChainAdapter,
+        mock_http: MagicMock,
+        mock_resolver: MagicMock,
+    ) -> None:
+        mock_resolver.resolve_underlying_for_options.return_value = (12345, "NSE_FNO")
+        mock_http.post.return_value = {"data": []}
+
+        result = adapter.get_expiry_list("NIFTY", "NSE", as_series=True)
+
+        assert isinstance(result, pd.Series)
+        assert len(result) == 0
+
 
 # ============================================================================
 # get_option_chain
@@ -394,6 +424,120 @@ class TestGetOptionChain:
 
         result = adapter.get_option_chain("NIFTY", "NSE", expiry="2026-08-06")
         assert result["strikes"] == []
+
+    def test_as_df_returns_dataframe(
+        self,
+        adapter: OptionChainAdapter,
+        mock_http: MagicMock,
+        mock_resolver: MagicMock,
+        nifty_option_chain_response: dict,
+    ) -> None:
+        mock_resolver.resolve_underlying_for_options.return_value = (12345, "NSE_FNO")
+        mock_http.post.return_value = nifty_option_chain_response
+
+        result = adapter.get_option_chain("NIFTY", "NSE", expiry="2026-08-06", as_df=True)
+
+        assert isinstance(result, pd.DataFrame)
+        assert len(result) == 2
+
+    def test_as_df_has_expected_columns(
+        self,
+        adapter: OptionChainAdapter,
+        mock_http: MagicMock,
+        mock_resolver: MagicMock,
+        nifty_option_chain_response: dict,
+    ) -> None:
+        mock_resolver.resolve_underlying_for_options.return_value = (12345, "NSE_FNO")
+        mock_http.post.return_value = nifty_option_chain_response
+
+        result = adapter.get_option_chain("NIFTY", "NSE", expiry="2026-08-06", as_df=True)
+
+        expected = [
+            "strike",
+            "ce_ltp", "ce_bid", "ce_ask", "ce_iv",
+            "ce_delta", "ce_gamma", "ce_theta", "ce_vega",
+            "pe_ltp", "pe_bid", "pe_ask", "pe_iv",
+            "pe_delta", "pe_gamma", "pe_theta", "pe_vega",
+        ]
+        assert list(result.columns) == expected
+
+    def test_as_df_values_match_source(
+        self,
+        adapter: OptionChainAdapter,
+        mock_http: MagicMock,
+        mock_resolver: MagicMock,
+        nifty_option_chain_response: dict,
+    ) -> None:
+        mock_resolver.resolve_underlying_for_options.return_value = (12345, "NSE_FNO")
+        mock_http.post.return_value = nifty_option_chain_response
+
+        df = adapter.get_option_chain("NIFTY", "NSE", expiry="2026-08-06", as_df=True)
+        row = df.iloc[0]
+
+        assert row["strike"] == 24500.0
+        assert row["ce_ltp"] == 150.0
+        assert row["ce_bid"] == 148.0
+        assert row["ce_ask"] == 152.0
+        assert row["ce_iv"] == 0.15
+        assert row["ce_delta"] == 0.5
+        assert row["ce_gamma"] == 0.002
+        assert row["ce_theta"] == -0.3
+        assert row["ce_vega"] == 0.8
+        assert row["pe_ltp"] == 120.0
+        assert row["pe_bid"] == 118.0
+        assert row["pe_ask"] == 122.0
+        assert row["pe_iv"] == 0.16
+        assert row["pe_delta"] == -0.5
+        assert row["pe_gamma"] == 0.002
+        assert row["pe_theta"] == -0.2
+        assert row["pe_vega"] == 0.7
+
+    def test_as_df_empty_chain(
+        self,
+        adapter: OptionChainAdapter,
+        mock_http: MagicMock,
+        mock_resolver: MagicMock,
+    ) -> None:
+        mock_resolver.resolve_underlying_for_options.return_value = (12345, "NSE_FNO")
+        mock_http.post.return_value = {"data": {"oc": {}}}
+
+        result = adapter.get_option_chain("NIFTY", "NSE", expiry="2026-08-06", as_df=True)
+
+        assert isinstance(result, pd.DataFrame)
+        assert len(result) == 0
+
+    def test_as_df_missing_leg_columns_are_nan(
+        self,
+        adapter: OptionChainAdapter,
+        mock_http: MagicMock,
+        mock_resolver: MagicMock,
+    ) -> None:
+        mock_resolver.resolve_underlying_for_options.return_value = (12345, "NSE_FNO")
+        mock_http.post.return_value = {
+            "data": {
+                "oc": {
+                    "24500": {
+                        "ce": {
+                            "security_id": "1001",
+                            "last_price": 150.0,
+                            "top_bid_price": 148.0,
+                            "top_ask_price": 152.0,
+                            "oi": 50000,
+                            "volume": 1000,
+                            "implied_volatility": 0.15,
+                            "greeks": {"delta": 0.5, "gamma": 0.002, "theta": -0.3, "vega": 0.8},
+                        },
+                    },
+                }
+            }
+        }
+
+        result = adapter.get_option_chain("NIFTY", "NSE", expiry="2026-08-06", as_df=True)
+
+        assert len(result) == 1
+        assert result.iloc[0]["strike"] == 24500.0
+        assert result.iloc[0]["ce_ltp"] == 150.0
+        assert pd.isna(result.iloc[0]["pe_ltp"])
 
 
 # ============================================================================
@@ -1018,6 +1162,155 @@ class TestErrorTypes:
     def test_strike_not_found_message(self) -> None:
         err = StrikeNotFoundError("Strike 99999 not found")
         assert "99999" in str(err)
+
+
+# ============================================================================
+# num_strikes filter
+# ============================================================================
+
+
+class TestGetOptionChainNumStrikes:
+    @pytest.fixture
+    def multi_strike_chain(self) -> dict:
+        oc = {}
+        for strike in range(24000, 25100, 50):
+            s = str(strike)
+            oc[s] = {
+                "ce": {"security_id": s, "last_price": 100, "top_bid_price": 99, "top_ask_price": 101, "oi": 1000, "volume": 500, "implied_volatility": 0.2, "greeks": {"delta": 0.5, "gamma": 0.002, "theta": -0.3, "vega": 0.8}},
+                "pe": {"security_id": str(strike + 10000), "last_price": 100, "top_bid_price": 99, "top_ask_price": 101, "oi": 1000, "volume": 500, "implied_volatility": 0.2, "greeks": {"delta": -0.5, "gamma": 0.002, "theta": -0.3, "vega": 0.8}},
+            }
+        return {"data": {"oc": oc}}
+
+    def test_get_option_chain_with_num_strikes_returns_limited_results(
+        self,
+        adapter: OptionChainAdapter,
+        mock_http: MagicMock,
+        mock_resolver: MagicMock,
+        nifty_resolved: ResolvedInstrument,
+        multi_strike_chain: dict,
+    ) -> None:
+        mock_resolver.resolve_underlying_for_options.return_value = (12345, "NSE_FNO")
+        mock_resolver.resolve_full.return_value = nifty_resolved
+        mock_http.post.side_effect = [
+            multi_strike_chain,
+            {"last_price": "24520"},
+        ]
+
+        result = adapter.get_option_chain("NIFTY", "NSE", expiry="2026-08-06", num_strikes=1)
+
+        strikes = [s["strike"] for s in result["strikes"]]
+        assert len(strikes) == 3
+        assert 24450.0 in strikes
+        assert 24500.0 in strikes
+        assert 24550.0 in strikes
+
+    def test_get_option_chain_with_num_strikes_two(
+        self,
+        adapter: OptionChainAdapter,
+        mock_http: MagicMock,
+        mock_resolver: MagicMock,
+        nifty_resolved: ResolvedInstrument,
+        multi_strike_chain: dict,
+    ) -> None:
+        mock_resolver.resolve_underlying_for_options.return_value = (12345, "NSE_FNO")
+        mock_resolver.resolve_full.return_value = nifty_resolved
+        mock_http.post.side_effect = [
+            multi_strike_chain,
+            {"last_price": "24520"},
+        ]
+
+        result = adapter.get_option_chain("NIFTY", "NSE", expiry="2026-08-06", num_strikes=2)
+
+        strikes = [s["strike"] for s in result["strikes"]]
+        assert len(strikes) == 5
+        assert 24400.0 in strikes
+        assert 24450.0 in strikes
+        assert 24500.0 in strikes
+        assert 24550.0 in strikes
+        assert 24600.0 in strikes
+
+    def test_get_option_chain_with_num_strikes_zero_returns_all(
+        self,
+        adapter: OptionChainAdapter,
+        mock_http: MagicMock,
+        mock_resolver: MagicMock,
+        multi_strike_chain: dict,
+    ) -> None:
+        mock_resolver.resolve_underlying_for_options.return_value = (12345, "NSE_FNO")
+        mock_http.post.side_effect = [multi_strike_chain]
+
+        result = adapter.get_option_chain("NIFTY", "NSE", expiry="2026-08-06", num_strikes=0)
+
+        strikes = [s["strike"] for s in result["strikes"]]
+        assert len(strikes) == 22
+
+    def test_get_option_chain_default_num_strikes_returns_all(
+        self,
+        adapter: OptionChainAdapter,
+        mock_http: MagicMock,
+        mock_resolver: MagicMock,
+        multi_strike_chain: dict,
+    ) -> None:
+        mock_resolver.resolve_underlying_for_options.return_value = (12345, "NSE_FNO")
+        mock_http.post.side_effect = [multi_strike_chain]
+
+        result = adapter.get_option_chain("NIFTY", "NSE", expiry="2026-08-06")
+
+        assert len(result["strikes"]) == 22
+
+    def test_get_option_chain_with_num_strikes_as_df(
+        self,
+        adapter: OptionChainAdapter,
+        mock_http: MagicMock,
+        mock_resolver: MagicMock,
+        nifty_resolved: ResolvedInstrument,
+        multi_strike_chain: dict,
+    ) -> None:
+        mock_resolver.resolve_underlying_for_options.return_value = (12345, "NSE_FNO")
+        mock_resolver.resolve_full.return_value = nifty_resolved
+        mock_http.post.side_effect = [
+            multi_strike_chain,
+            {"last_price": "24520"},
+        ]
+
+        result = adapter.get_option_chain("NIFTY", "NSE", expiry="2026-08-06", as_df=True, num_strikes=1)
+
+        assert isinstance(result, pd.DataFrame)
+        assert len(result) == 3
+
+    def test_debug_param_does_not_crash(
+        self,
+        adapter: OptionChainAdapter,
+        mock_http: MagicMock,
+        mock_resolver: MagicMock,
+        nifty_option_chain_response: dict,
+    ) -> None:
+        mock_resolver.resolve_underlying_for_options.return_value = (12345, "NSE_FNO")
+        mock_http.post.return_value = nifty_option_chain_response
+
+        result = adapter.get_option_chain("NIFTY", "NSE", expiry="2026-08-06", debug=True)
+
+        assert result["underlying"] == "NIFTY"
+        assert len(result["strikes"]) == 2
+
+    def test_debug_param_with_num_strikes(
+        self,
+        adapter: OptionChainAdapter,
+        mock_http: MagicMock,
+        mock_resolver: MagicMock,
+        nifty_resolved: ResolvedInstrument,
+        nifty_option_chain_response: dict,
+    ) -> None:
+        mock_resolver.resolve_underlying_for_options.return_value = (12345, "NSE_FNO")
+        mock_resolver.resolve_full.return_value = nifty_resolved
+        mock_http.post.side_effect = [
+            nifty_option_chain_response,
+            {"last_price": "24520"},
+        ]
+
+        result = adapter.get_option_chain("NIFTY", "NSE", expiry="2026-08-06", num_strikes=1, debug=True)
+
+        assert len(result["strikes"]) == 2  # both strikes, ATM=24500 with num_strikes=1 covers 24500-24550
 
 
 # ============================================================================

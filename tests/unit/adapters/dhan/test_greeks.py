@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from unittest.mock import MagicMock
+
+import pandas as pd
 import pytest
 
 mibian = pytest.importorskip("mibian")
@@ -300,3 +303,90 @@ class TestPriceConsistency:
         call = r["call_price"]
         put = r["put_price"]
         assert abs((call - put) - (100 - 100)) < 5
+
+
+# ============================================================================
+# calculate_greeks — DataFrame output
+# ============================================================================
+
+
+class TestCalculateGreeksAsDf:
+    def test_returns_dataframe(
+        self, calculator: GreeksCalculator
+    ) -> None:
+        result = calculator.calculate_greeks(100, 100, 30, "CE", 0.1, 0.15, as_df=True)
+        assert isinstance(result, pd.DataFrame)
+
+    def test_single_row(
+        self, calculator: GreeksCalculator
+    ) -> None:
+        result = calculator.calculate_greeks(100, 100, 30, "CE", 0.1, 0.15, as_df=True)
+        assert result.shape[0] == 1
+
+    def test_columns_match_dict_keys(
+        self, calculator: GreeksCalculator
+    ) -> None:
+        result = calculator.calculate_greeks(100, 100, 30, "CE", 0.1, 0.15, as_df=True)
+        d = calculator.calculate_greeks(100, 100, 30, "CE", 0.1, 0.15)
+        assert list(result.columns) == list(d.keys())
+
+    def test_values_match_dict(
+        self, calculator: GreeksCalculator
+    ) -> None:
+        df = calculator.calculate_greeks(100, 100, 30, "CE", 0.1, 0.15, as_df=True)
+        d = calculator.calculate_greeks(100, 100, 30, "CE", 0.1, 0.15)
+        for col in d:
+            assert df.iloc[0][col] == d[col]
+
+
+# ============================================================================
+# calculate_from_chain — DataFrame output
+# ============================================================================
+
+
+class TestCalculateFromChainAsDf:
+    @pytest.fixture
+    def mock_option_chain(self) -> MagicMock:
+        return MagicMock()
+
+    @pytest.fixture
+    def calc_with_chain(self, mock_option_chain: MagicMock) -> GreeksCalculator:
+        return GreeksCalculator(option_chain=mock_option_chain)
+
+    def test_returns_dataframe_when_chain_has_greeks(
+        self,
+        calc_with_chain: GreeksCalculator,
+        mock_option_chain: MagicMock,
+    ) -> None:
+        mock_option_chain.get_option_chain.return_value = {
+            "strikes": [
+                {
+                    "strike": 24500.0,
+                    "ce": {
+                        "ltp": 150.0,
+                        "iv": 0.15,
+                        "delta": 0.5,
+                        "gamma": 0.002,
+                        "theta": -0.3,
+                        "vega": 0.8,
+                        "rho": 0.0,
+                    },
+                }
+            ]
+        }
+
+        result = calc_with_chain.calculate_from_chain(
+            "NIFTY", "2026-08-06", 24500.0, "CE", as_df=True
+        )
+
+        assert isinstance(result, pd.DataFrame)
+        assert result.shape[0] == 1
+        assert result.iloc[0]["delta"] == 0.5
+
+    def test_returns_none_when_no_chain(
+        self, calculator: GreeksCalculator
+    ) -> None:
+        result = calculator.calculate_from_chain(
+            "NIFTY", "2026-08-06", 24500.0, "CE", as_df=True
+        )
+        assert result is None

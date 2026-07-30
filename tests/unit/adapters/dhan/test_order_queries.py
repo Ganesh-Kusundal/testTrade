@@ -506,5 +506,131 @@ class TestTradeToDomain(unittest.TestCase):
         self.assertEqual(len(result), 8)
 
 
+# ── as_df option ──────────────────────────────────────────────────
+
+class TestGetTradeBookWithAsDf(unittest.TestCase):
+    def setUp(self):
+        self.client, self.mock_http, self.mock_rate, self._cleanup = _make_client()
+        self.addCleanup(self._cleanup)
+
+    def test_returns_dataframe_when_as_df_true(self):
+        self.mock_http.get.return_value = [
+            {"tradeId": "T1", "symbol": "RELIANCE", "quantity": 10},
+            {"tradeId": "T2", "symbol": "TCS", "quantity": 5},
+        ]
+        result = self.client.get_trade_book(as_df=True)
+        self.assertTrue(hasattr(result, "columns"))
+        self.assertEqual(len(result), 2)
+
+    def test_dataframe_has_expected_columns(self):
+        self.mock_http.get.return_value = [
+            {"tradeId": "T1", "symbol": "RELIANCE", "quantity": 10},
+        ]
+        result = self.client.get_trade_book(as_df=True)
+        self.assertIn("tradeId", result.columns)
+        self.assertIn("symbol", result.columns)
+
+
+class TestGetOrderDetailWithAsDf(unittest.TestCase):
+    def setUp(self):
+        self.client, self.mock_http, self.mock_rate, self._cleanup = _make_client()
+        self.addCleanup(self._cleanup)
+
+    def test_returns_dataframe_when_as_df_true(self):
+        self.mock_http.get.return_value = {"orderId": "ORD1", "status": "FILLED", "symbol": "RELIANCE"}
+        result = self.client.get_order_detail("ORD1", as_df=True)
+        self.assertTrue(hasattr(result, "columns"))
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result.iloc[0]["orderId"], "ORD1")
+
+
+class TestGetSuperOrdersWithAsDf(unittest.TestCase):
+    def setUp(self):
+        self.client, self.mock_http, self.mock_rate, self._cleanup = _make_client()
+        self.addCleanup(self._cleanup)
+
+    def test_returns_dataframe_when_as_df_true(self):
+        self.mock_http.get.return_value = [
+            {"orderId": "SO1", "status": "ACTIVE"},
+            {"orderId": "SO2", "status": "TRIGGERED"},
+        ]
+        result = self.client.get_super_orders(as_df=True)
+        self.assertTrue(hasattr(result, "columns"))
+        self.assertEqual(len(result), 2)
+
+    def test_dataframe_has_expected_columns(self):
+        self.mock_http.get.return_value = [
+            {"orderId": "SO1", "status": "ACTIVE"},
+        ]
+        result = self.client.get_super_orders(as_df=True)
+        self.assertIn("orderId", result.columns)
+        self.assertIn("status", result.columns)
+
+
+class TestGetMarketDepthDfWithAsDf(unittest.TestCase):
+    def setUp(self):
+        self.client, self.mock_http, self.mock_rate, self._cleanup = _make_client()
+        self.addCleanup(self._cleanup)
+
+    def test_returns_dataframe_when_as_df_true(self):
+        self.client.get_market_depth_snapshot = MagicMock(return_value={
+            "depth": {
+                "bid": [
+                    {"price": "100", "quantity": 10, "orders": 1},
+                    {"price": "99", "quantity": 20, "orders": 2},
+                ],
+                "ask": [
+                    {"price": "101", "quantity": 5, "orders": 1},
+                    {"price": "102", "quantity": 15, "orders": 3},
+                ],
+            },
+        })
+        result = self.client.get_market_depth_df("dummy_id", as_df=True)
+        self.assertTrue(hasattr(result, "columns"))
+        self.assertEqual(len(result), 2)
+
+    def test_dataframe_has_expected_columns(self):
+        self.client.get_market_depth_snapshot = MagicMock(return_value={
+            "depth": {
+                "bid": [{"price": "100", "quantity": 10, "orders": 1}],
+                "ask": [{"price": "101", "quantity": 5, "orders": 1}],
+            },
+        })
+        result = self.client.get_market_depth_df("dummy_id", as_df=True)
+        for col in ("level", "bid_price", "bid_qty", "bid_orders", "ask_price", "ask_qty", "ask_orders"):
+            self.assertIn(col, result.columns)
+
+
+class TestDefaultBehaviorUnchanged(unittest.TestCase):
+    def setUp(self):
+        self.client, self.mock_http, self.mock_rate, self._cleanup = _make_client()
+        self.addCleanup(self._cleanup)
+
+    def test_get_trade_book_default_returns_list(self):
+        self.mock_http.get.return_value = [{"tradeId": "T1"}]
+        result = self.client.get_trade_book()
+        self.assertIsInstance(result, list)
+
+    def test_get_order_detail_default_returns_dict(self):
+        self.mock_http.get.return_value = {"orderId": "ORD1"}
+        result = self.client.get_order_detail("ORD1")
+        self.assertIsInstance(result, dict)
+
+    def test_get_super_orders_default_returns_list(self):
+        self.mock_http.get.return_value = [{"orderId": "SO1"}]
+        result = self.client.get_super_orders()
+        self.assertIsInstance(result, list)
+
+    def test_get_market_depth_df_default_returns_list(self):
+        self.client.get_market_depth_snapshot = MagicMock(return_value={
+            "depth": {
+                "bid": [{"price": "100", "quantity": 10, "orders": 1}],
+                "ask": [{"price": "101", "quantity": 5, "orders": 1}],
+            },
+        })
+        result = self.client.get_market_depth_df("dummy_id")
+        self.assertIsInstance(result, list)
+
+
 if __name__ == "__main__":
     unittest.main()

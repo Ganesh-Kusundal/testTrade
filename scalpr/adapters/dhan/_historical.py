@@ -3,6 +3,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+import pandas as pd
+
 from scalpr.adapters.dhan._http import DhanHttpClient
 from scalpr.adapters.dhan._resolver import SymbolResolver
 
@@ -31,7 +33,8 @@ class HistoricalDataAdapter:
         interval: int = 5,
         from_date: str | None = None,
         to_date: str | None = None,
-    ) -> list[dict[str, Any]]:
+        as_df: bool = False,
+    ) -> list[dict[str, Any]] | pd.DataFrame:
         if interval not in _VALID_INTERVALS:
             raise InvalidTimeframeError(
                 f"Invalid interval: {interval!r}. Valid intervals: {sorted(_VALID_INTERVALS)}"
@@ -48,7 +51,10 @@ class HistoricalDataAdapter:
         if to_date:
             body["toDate"] = to_date
         data = self._http.post("/charts/intraday", data=body, bucket="history")
-        return self._parse_candle(data)
+        candles = self._parse_candle(data)
+        if as_df:
+            return self._to_df(candles)
+        return candles
 
     def get_daily(
         self,
@@ -56,7 +62,8 @@ class HistoricalDataAdapter:
         exchange: str,
         from_date: str | None = None,
         to_date: str | None = None,
-    ) -> list[dict[str, Any]]:
+        as_df: bool = False,
+    ) -> list[dict[str, Any]] | pd.DataFrame:
         security_id, segment, instrument, expiry_code = self._resolve_security(symbol, exchange)
         body: dict[str, Any] = {
             "securityId": security_id,
@@ -69,7 +76,10 @@ class HistoricalDataAdapter:
         if to_date:
             body["toDate"] = to_date
         data = self._http.post("/charts/historical", data=body, bucket="history")
-        return self._parse_candle(data)
+        candles = self._parse_candle(data)
+        if as_df:
+            return self._to_df(candles)
+        return candles
 
     def get_historical(
         self,
@@ -79,10 +89,40 @@ class HistoricalDataAdapter:
         interval: int = 5,
         from_date: str | None = None,
         to_date: str | None = None,
-    ) -> list[dict[str, Any]]:
+        as_df: bool = False,
+    ) -> list[dict[str, Any]] | pd.DataFrame:
         if timeframe == "DAY":
-            return self.get_daily(symbol, exchange, from_date, to_date)
-        return self.get_intraday(symbol, exchange, interval, from_date, to_date)
+            return self.get_daily(symbol, exchange, from_date, to_date, as_df=as_df)
+        return self.get_intraday(symbol, exchange, interval, from_date, to_date, as_df=as_df)
+
+    def get_historical_batch(
+        self,
+        symbols: list[tuple[str, str]],
+        timeframe: str = "DAY",
+        interval: int = 5,
+        from_date: str | None = None,
+        to_date: str | None = None,
+        max_workers: int = 5,
+    ) -> dict[str, pd.DataFrame | list[dict] | Exception]:
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        def _fetch_one(sym: str, exch: str) -> tuple[str, pd.DataFrame | list[dict]]:
+            key = f"{sym}:{exch}"
+            result = self.get_historical(sym, exch, timeframe, interval, from_date, to_date)
+            return key, result
+
+        results: dict[str, pd.DataFrame | list[dict] | Exception] = {}
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures = {pool.submit(_fetch_one, sym, exch): (sym, exch) for sym, exch in symbols}
+            for future in as_completed(futures):
+                sym, exch = futures[future]
+                key = f"{sym}:{exch}"
+                try:
+                    _, result = future.result()
+                    results[key] = result
+                except Exception as exc:
+                    results[key] = exc
+        return results
 
     def get_ltp(self, symbol: str, exchange: str) -> float:
         security_id, segment, _, _ = self._resolve_security(symbol, exchange)
@@ -92,6 +132,16 @@ class HistoricalDataAdapter:
             bucket="market_data",
         )
         return float(data.get("ltp") or data.get("last_price") or 0.0)
+
+    @staticmethod
+    def _to_df(data: list[dict[str, Any]]) -> pd.DataFrame:
+        if not data:
+            return pd.DataFrame()
+        df = pd.DataFrame(data)
+        if "start" in df.columns:
+            df.rename(columns={"start": "timestamp"}, inplace=True)
+        df["timestamp"] = pd.to_datetime(df["timestamp"])
+        return df
 
     def _resolve_security(self, symbol: str, exchange: str) -> tuple[str, str, str, int]:
         inst = self._resolver.resolve(symbol, exchange)

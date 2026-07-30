@@ -1,7 +1,5 @@
 """Bootstrap factory creates a properly wired FastAPI app."""
-from unittest.mock import MagicMock, create_autospec, patch
-
-from scalpr.brokers.broker_port import IBrokerGateway
+from unittest.mock import MagicMock, patch
 
 
 def _get_all_route_paths(app):
@@ -49,7 +47,7 @@ class TestWire:
     def test_wire_builds_connected_graph(self, tmp_path):
         from scalpr.api.bootstrap import wire
 
-        gw = create_autospec(IBrokerGateway, instance=True)
+        gw = MagicMock()
         ctx = wire(gw, ["RELIANCE", "TCS"], db_path=str(tmp_path / "oms.db"))
 
         # Router wired to the port and to persistence

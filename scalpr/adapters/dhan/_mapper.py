@@ -647,6 +647,15 @@ def conditional_trigger_to_dhan_request(
     validity: str = "DAY",
     disclosed_quantity: int = 0,
     tag: str | None = None,
+    comparison_type: str = "PRICE_WITH_VALUE",
+    operator: str | None = None,
+    time_frame: str = "DAY",
+    comparing_value: float | None = None,
+    indicator_name: str | None = None,
+    comparing_indicator_name: str | None = None,
+    frequency: str = "ONCE",
+    exp_date: str | None = None,
+    user_note: str = "",
 ) -> dict[str, Any]:
     if transaction_type.upper() not in ("BUY", "SELL"):
         raise InvalidValueError(f"transaction_type must be BUY or SELL, got {transaction_type!r}")
@@ -669,7 +678,21 @@ def conditional_trigger_to_dhan_request(
         "orderType": order_type.upper(),
         "productType": product_type.upper(),
         "validity": validity.upper(),
+        "comparisonType": comparison_type.upper(),
+        "timeFrame": time_frame.upper(),
+        "frequency": frequency.upper(),
+        "userNote": user_note,
     }
     if tag:
         payload["correlationId"] = tag
+    if operator:
+        payload["operator"] = operator
+    if comparing_value is not None:
+        payload["comparingValue"] = float(comparing_value)
+    if indicator_name:
+        payload["indicatorName"] = indicator_name
+    if comparing_indicator_name:
+        payload["comparingIndicatorName"] = comparing_indicator_name
+    if exp_date:
+        payload["expDate"] = exp_date
     return payload

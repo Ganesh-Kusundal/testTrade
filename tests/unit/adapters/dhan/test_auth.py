@@ -325,3 +325,38 @@ class TestEdgeCases:
         assert mgr._client_id == "x"
         assert mgr._totp_secret == "y"
         assert mgr._clock is clock
+
+
+class TestProactiveRefresh:
+    def test_refresh_threshold_is_80_percent(self):
+        from scalpr.adapters.dhan._auth import REFRESH_THRESHOLD
+        assert REFRESH_THRESHOLD == 0.8
+
+    def test_proactive_refresh_scheduled_after_mint(self, clock, tmp_cache):
+        from scalpr.adapters.dhan._auth import TokenManager as TM
+        clock2 = MagicMock()
+        clock2.utc_now.return_value = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        manager = TM(client_id="test_cid", totp_secret="JBSWY3DPEHPK3PXP", clock=clock2, cache_dir=tmp_cache)
+        token = _make_future_jwt()
+        with patch("scalpr.adapters.dhan._auth.requests.post", return_value=_auth_response(token)):
+            manager.get_token()
+        assert manager._refresh_timer is not None
+        assert manager._refresh_timer.is_alive()
+
+    def test_proactive_refresh_cancelled_on_stop(self, clock, tmp_cache):
+        from scalpr.adapters.dhan._auth import TokenManager as TM
+        clock2 = MagicMock()
+        clock2.utc_now.return_value = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        manager = TM(client_id="test_cid", totp_secret="JBSWY3DPEHPK3PXP", clock=clock2, cache_dir=tmp_cache)
+        token = _make_future_jwt()
+        with patch("scalpr.adapters.dhan._auth.requests.post", return_value=_auth_response(token)):
+            manager.get_token()
+        assert manager._refresh_timer is not None
+        manager.stop()
+        assert manager._refresh_timer is None
+
+    def test_proactive_refresh_not_scheduled_for_static_clock(self, manager, clock):
+        token = _make_future_jwt()
+        with patch("scalpr.adapters.dhan._auth.requests.post", return_value=_auth_response(token)):
+            manager.get_token()
+        assert getattr(manager, "_refresh_timer", None) is None

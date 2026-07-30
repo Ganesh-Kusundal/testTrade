@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+import pandas as pd
 import pytest
 
 from scalpr.adapters.dhan._historical import (
@@ -247,6 +248,91 @@ class TestGetHistorical:
 
 
 # ============================================================================
+# get_historical_batch
+# ============================================================================
+
+class TestGetHistoricalBatch:
+    def test_fetches_multiple_symbols(self, adapter: HistoricalDataAdapter, http_client: MagicMock) -> None:
+        http_client.post.return_value = {
+            "timestamp": [100.0],
+            "open": [100],
+            "high": [105],
+            "low": [99],
+            "close": [103],
+            "volume": [1000],
+        }
+        symbols = [("RELIANCE", "NSE"), ("TCS", "NSE")]
+        result = adapter.get_historical_batch(symbols)
+        assert http_client.post.call_count == 2
+        assert "RELIANCE:NSE" in result
+        assert "TCS:NSE" in result
+
+    def test_returns_dict_with_keys(self, adapter: HistoricalDataAdapter, http_client: MagicMock) -> None:
+        http_client.post.return_value = {
+            "timestamp": [100.0],
+            "open": [100],
+            "high": [105],
+            "low": [99],
+            "close": [103],
+            "volume": [1000],
+        }
+        result = adapter.get_historical_batch([("RELIANCE", "NSE")])
+        assert isinstance(result, dict)
+        assert list(result.keys()) == ["RELIANCE:NSE"]
+
+    def test_returns_exception_on_failure(self, adapter: HistoricalDataAdapter, http_client: MagicMock) -> None:
+        http_client.post.return_value = {
+            "timestamp": [100.0],
+            "open": [100],
+            "high": [105],
+            "low": [99],
+            "close": [103],
+            "volume": [1000],
+        }
+        _orig = adapter.get_daily
+        def _patched(symbol, exchange, *a, **kw):
+            if symbol == "FAIL":
+                raise RuntimeError("API error")
+            return _orig(symbol, exchange, *a, **kw)
+        adapter.get_daily = _patched
+        symbols = [("RELIANCE", "NSE"), ("FAIL", "NSE")]
+        result = adapter.get_historical_batch(symbols)
+        assert isinstance(result["RELIANCE:NSE"], list)
+        assert isinstance(result["FAIL:NSE"], Exception)
+
+    def test_empty_symbols_list(self, adapter: HistoricalDataAdapter) -> None:
+        result = adapter.get_historical_batch([])
+        assert result == {}
+
+    def test_max_workers_limits_concurrency(self, adapter: HistoricalDataAdapter, http_client: MagicMock) -> None:
+        http_client.post.return_value = {
+            "timestamp": [100.0],
+            "open": [100],
+            "high": [105],
+            "low": [99],
+            "close": [103],
+            "volume": [1000],
+        }
+        symbols = [("A", "NSE"), ("B", "NSE"), ("C", "NSE")]
+        adapter.get_historical_batch(symbols, max_workers=2)
+        assert http_client.post.call_count == 3
+
+    def test_rate_limiter_respected(self, adapter: HistoricalDataAdapter, http_client: MagicMock) -> None:
+        import threading
+        call_times: list[float] = []
+        lock = threading.Lock()
+
+        def _record(*args, **kwargs):
+            with lock:
+                call_times.append(__import__("time").time())
+            return {"timestamp": [100.0], "open": [100], "high": [105], "low": [99], "close": [103], "volume": [1000]}
+
+        http_client.post.side_effect = _record
+        adapter.get_historical_batch([("A", "NSE"), ("B", "NSE")], max_workers=2)
+        assert len(call_times) == 2
+
+
+# ============================================================================
 # get_ltp
 # ============================================================================
 
@@ -376,3 +462,116 @@ class TestParseCandle:
         assert isinstance(c["low"], float)
         assert isinstance(c["close"], float)
         assert isinstance(c["volume"], int)
+
+
+# ============================================================================
+# _to_df
+# ============================================================================
+
+class TestToDf:
+    def test_empty_list_returns_empty_dataframe(self, adapter: HistoricalDataAdapter) -> None:
+        df = adapter._to_df([])
+        assert df.empty
+
+    def test_renames_start_to_timestamp(self, adapter: HistoricalDataAdapter) -> None:
+        data = [{"start": "2024-01-01", "open": 100.0, "high": 105.0, "low": 99.0, "close": 103.0, "volume": 1000}]
+        df = adapter._to_df(data)
+        assert "timestamp" in df.columns
+        assert "start" not in df.columns
+
+    def test_converts_timestamp_to_datetime(self, adapter: HistoricalDataAdapter) -> None:
+        data = [{"timestamp": "2024-01-01", "open": 100.0, "high": 105.0, "low": 99.0, "close": 103.0, "volume": 1000}]
+        df = adapter._to_df(data)
+        assert pd.api.types.is_datetime64_any_dtype(df["timestamp"])
+
+    def test_keeps_oi_column_when_present(self, adapter: HistoricalDataAdapter) -> None:
+        data = [{"timestamp": "2024-01-01", "open": 100.0, "high": 105.0, "low": 99.0, "close": 103.0, "volume": 1000, "oi": 50000}]
+        df = adapter._to_df(data)
+        assert "oi" in df.columns
+        assert df["oi"].iloc[0] == 50000
+
+
+# ============================================================================
+# as_df integration tests
+# ============================================================================
+
+class TestAsDfIntegration:
+    def test_get_intraday_with_as_df_returns_dataframe(self, adapter: HistoricalDataAdapter, http_client: MagicMock) -> None:
+        http_client.post.return_value = {
+            "timestamp": [100.0, 200.0],
+            "open": [100.5, 102.0],
+            "high": [105.0, 106.5],
+            "low": [99.5, 101.0],
+            "close": [103.0, 104.5],
+            "volume": [1000, 1500],
+        }
+        result = adapter.get_intraday("RELIANCE", "NSE", as_df=True)
+        assert isinstance(result, pd.DataFrame)
+        assert list(result.columns) == ["timestamp", "open", "high", "low", "close", "volume"]
+        assert len(result) == 2
+
+    def test_get_daily_with_as_df_returns_dataframe(self, adapter: HistoricalDataAdapter, http_client: MagicMock) -> None:
+        http_client.post.return_value = {
+            "timestamp": [100.0],
+            "open": [100.5],
+            "high": [105.0],
+            "low": [99.5],
+            "close": [103.0],
+            "volume": [1000],
+            "oi": [50000],
+        }
+        result = adapter.get_daily("RELIANCE", "NSE", as_df=True)
+        assert isinstance(result, pd.DataFrame)
+        assert list(result.columns) == ["timestamp", "open", "high", "low", "close", "volume", "oi"]
+        assert len(result) == 1
+
+    def test_get_historical_with_as_df_true_returns_dataframe(self, adapter: HistoricalDataAdapter, http_client: MagicMock) -> None:
+        http_client.post.return_value = {
+            "timestamp": [100.0],
+            "open": [100.5],
+            "high": [105.0],
+            "low": [99.5],
+            "close": [103.0],
+            "volume": [1000],
+        }
+        result = adapter.get_historical("RELIANCE", "NSE", timeframe="DAY", as_df=True)
+        assert isinstance(result, pd.DataFrame)
+
+    def test_get_historical_with_as_df_false_returns_list(self, adapter: HistoricalDataAdapter, http_client: MagicMock) -> None:
+        http_client.post.return_value = {
+            "timestamp": [100.0],
+            "open": [100.5],
+            "high": [105.0],
+            "low": [99.5],
+            "close": [103.0],
+            "volume": [1000],
+        }
+        result = adapter.get_historical("RELIANCE", "NSE", timeframe="DAY", as_df=False)
+        assert isinstance(result, list)
+
+    def test_dataframe_has_expected_columns(self, adapter: HistoricalDataAdapter, http_client: MagicMock) -> None:
+        http_client.post.return_value = {
+            "timestamp": [100.0],
+            "open": [100.5],
+            "high": [105.0],
+            "low": [99.5],
+            "close": [103.0],
+            "volume": [1000],
+        }
+        df = adapter.get_intraday("RELIANCE", "NSE", as_df=True)
+        expected = {"timestamp", "open", "high", "low", "close", "volume"}
+        assert set(df.columns) == expected
+
+    def test_dataframe_includes_oi_when_present(self, adapter: HistoricalDataAdapter, http_client: MagicMock) -> None:
+        http_client.post.return_value = {
+            "timestamp": [100.0],
+            "open": [100.5],
+            "high": [105.0],
+            "low": [99.5],
+            "close": [103.0],
+            "volume": [1000],
+            "oi": [50000],
+        }
+        df = adapter.get_intraday("RELIANCE", "NSE", as_df=True)
+        assert "oi" in df.columns
+        assert df["oi"].iloc[0] == 50000
