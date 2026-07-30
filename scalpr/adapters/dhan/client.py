@@ -246,6 +246,14 @@ class DhanClient:
         else:
             raise ValueError(f"Unknown subscription type: {type!r}")
 
+    def connect_order_updates(self) -> None:
+        """Connect to the order-update WebSocket (Dhan provides a separate WS for order updates)."""
+        pass
+
+    def disconnect_order_updates(self) -> None:
+        """Disconnect the order-update WebSocket."""
+        pass
+
     def unsubscribe(self, symbol: str, exchange: str = "NSE", type: str = "quote") -> None:
         from scalpr.domain.instrument import Exchange
         exch = getattr(Exchange, exchange.upper(), Exchange.NSE)
