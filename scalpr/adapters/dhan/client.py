@@ -34,7 +34,9 @@ from scalpr.adapters.dhan._resolver import SymbolResolver
 from scalpr.adapters.dhan._ws import DhanWebSocket
 from scalpr.domain.contracts import MarketDepth
 from scalpr.domain.instrument import (
+    DerivativeInstrumentId,
     InstrumentId,
+    ResolvedInstrument,
     SimpleInstrumentId,
 )
 from scalpr.domain.position import Position
@@ -165,6 +167,20 @@ class DhanClient:
                     r = self._resolver.resolve_full(futs[0].symbol, exchange)
                     return r.security_id, r.wire_segment
             raise
+
+    def resolve_instrument(self, identifier: str | SimpleInstrumentId) -> ResolvedInstrument:
+        """Resolve a symbol string or InstrumentId to a ResolvedInstrument."""
+        if isinstance(identifier, SimpleInstrumentId):
+            symbol = identifier.symbol
+            exchange = identifier.exchange.value
+        elif isinstance(identifier, DerivativeInstrumentId):
+            symbol = identifier.trading_symbol or identifier.underlying
+            exchange = identifier.exchange.value
+        else:
+            parsed = SimpleInstrumentId.parse(str(identifier))
+            symbol = parsed.symbol
+            exchange = parsed.exchange.value
+        return self._resolver.resolve_full(symbol, exchange)
 
     # ── Bus handlers (stay on facade) ──────────────────────────────────
 
