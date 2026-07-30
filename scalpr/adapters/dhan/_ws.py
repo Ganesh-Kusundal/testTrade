@@ -18,6 +18,12 @@ logger = logging.getLogger(__name__)
 
 WS_URL = "wss://ws.dhan.co/marketfeed"
 
+DEPTH_20_LIMIT = 100
+DEPTH_200_LIMIT = 50
+DEPTH_WARN_THRESHOLD = 0.8
+_DEPTH_20_URL = "wss://depth-api-feed.dhan.co/twentydepth"
+_DEPTH_200_URL = "wss://full-depth-api.dhan.co/"
+
 _WIRE_SEGMENT_TO_EXCH_CODE: dict[str, int] = {
     "NSE_EQ": 1,
     "NSE_FNO": 2,
@@ -93,9 +99,10 @@ class _DhanContextShim:
 class DhanWebSocket:
     """WebSocket client for Dhan market data with FSM-based reconnection.
 
-    Manages two independent WebSocket feeds:
+    Manages three independent WebSocket feeds:
         - Quote/tick feed via ``dhanhq.marketfeed.MarketFeed``
-        - Market depth feed via ``dhanhq.fulldepth.FullDepth``
+        - 20-level depth feed via ``dhanhq.fulldepth.FullDepth``
+        - 200-level depth feed via ``dhanhq.fulldepth.FullDepth``
 
     FSM transitions (quote feed):
         DISCONNECTED -> connect() -> CONNECTING
@@ -109,6 +116,8 @@ class DhanWebSocket:
 
     BACKOFF: list[float] = [1.0, 2.0, 4.0, 8.0, 16.0, 30.0]
     MAX_RETRIES: int = 5
+    MAX_SUBSCRIBERS: int = 1000
+    _SUBSCRIBER_WARN_THRESHOLD: float = 0.85
     _DEPTH_RECV_TIMEOUT: float = 0.5
 
     def __init__(
@@ -133,13 +142,13 @@ class DhanWebSocket:
         self._stop = threading.Event()
         self._cumulative_vols: dict[str, int] = {}
 
-        self._depth_subscriptions: set[tuple[str, str]] = set()
-        self._depth_feed: Any = None
-        self._depth_thread: threading.Thread | None = None
-        self._depth_stop = threading.Event()
+        self._depth_subscriptions: dict[int, set[tuple[str, str]]] = {20: set(), 200: set()}
+        self._depth_feeds: dict[int, Any] = {}
+        self._depth_threads: dict[int, threading.Thread] = {}
+        self._depth_stops: dict[int, threading.Event] = {}
         self._on_depth_tick: Callable | None = None
-        self._depth_cmd_queue: queue.Queue = queue.Queue()
-        self._depth_feed_ready: threading.Event | None = None
+        self._depth_cmd_queues: dict[int, queue.Queue] = {20: queue.Queue(), 200: queue.Queue()}
+        self._depth_feed_readys: dict[int, threading.Event] = {}
 
     # ── Public API: quote/tick ──────────────────────────────────────
 
@@ -147,6 +156,26 @@ class DhanWebSocket:
     def state(self) -> WSState:
         with self._lock:
             return self._state
+
+    @property
+    def subscription_count(self) -> int:
+        return len(self._subscriptions)
+
+    @property
+    def subscription_capacity_remaining(self) -> int:
+        return self.MAX_SUBSCRIBERS - self.subscription_count
+
+    @property
+    def depth_subscription_count(self) -> int:
+        return sum(len(v) for v in self._depth_subscriptions.values())
+
+    @property
+    def depth_capacity_remaining_20(self) -> int:
+        return DEPTH_20_LIMIT - len(self._depth_subscriptions.get(20, set()))
+
+    @property
+    def depth_capacity_remaining_200(self) -> int:
+        return DEPTH_200_LIMIT - len(self._depth_subscriptions.get(200, set()))
 
     def set_tick_callback(self, callback: Callable) -> None:
         self._on_tick = callback
@@ -176,6 +205,12 @@ class DhanWebSocket:
                 pass
 
     def subscribe(self, security_ids: list[tuple[str, str]], mode: str = "quote") -> None:
+        new_count = len(self._subscriptions) + len(security_ids)
+        if new_count > self.MAX_SUBSCRIBERS:
+            raise ValueError(f"Cannot subscribe {new_count} instruments (max {self.MAX_SUBSCRIBERS})")
+        if len(self._subscriptions) >= self.MAX_SUBSCRIBERS * self._SUBSCRIBER_WARN_THRESHOLD:
+            logger.warning("subscription_count_approaching_limit: %d/%d", new_count, self.MAX_SUBSCRIBERS)
+
         with self._lock:
             self._subscriptions.update(security_ids)
 
@@ -202,26 +237,37 @@ class DhanWebSocket:
     def set_depth_callback(self, callback: Callable) -> None:
         self._on_depth_tick = callback
 
-    def subscribe_depth(self, security_ids: list[tuple[str, str]]) -> None:
+    def subscribe_depth(self, security_ids: list[tuple[str, str]], level: int = 20) -> None:
+        if level not in (20, 200):
+            raise ValueError(f"Depth level must be 20 or 200, got {level}")
+
+        current = len(self._depth_subscriptions[level])
+        limit = DEPTH_20_LIMIT if level == 20 else DEPTH_200_LIMIT
+        new_count = current + len(security_ids)
+        if new_count > limit:
+            raise ValueError(f"Cannot subscribe {new_count} instruments to {level}-depth (max {limit})")
+        if current >= limit * DEPTH_WARN_THRESHOLD:
+            logger.warning("depth_subscription_approaching_limit: level=%d %d/%d", level, current, limit)
+
         with self._lock:
-            self._depth_subscriptions.update(security_ids)
+            self._depth_subscriptions[level].update(security_ids)
 
-        if self._depth_feed is not None:
-            sdk_ids = self._to_depth_sdk_instruments(security_ids)
-            self._depth_cmd_queue.put({"action": "subscribe", "ids": sdk_ids})
-        else:
-            with self._lock:
-                state = self._state
-            if state == WSState.CONNECTED:
-                self._start_depth_feed()
+        feed = self._depth_feeds.get(level)
+        if feed is not None:
+            self._depth_cmd_queues[level].put({"action": "subscribe", "ids": security_ids})
+        elif self.state == WSState.CONNECTED:
+            self._start_depth_feed(level=level)
 
-    def unsubscribe_depth(self, security_ids: list[tuple[str, str]]) -> None:
+    def unsubscribe_depth(self, security_ids: list[tuple[str, str]], level: int = 20) -> None:
+        if level not in (20, 200):
+            raise ValueError(f"Depth level must be 20 or 200, got {level}")
+
         with self._lock:
-            self._depth_subscriptions.difference_update(security_ids)
+            self._depth_subscriptions[level].difference_update(security_ids)
 
-        if self._depth_feed is not None:
-            sdk_ids = self._to_depth_sdk_instruments(security_ids)
-            self._depth_cmd_queue.put({"action": "unsubscribe", "ids": sdk_ids})
+        feed = self._depth_feeds.get(level)
+        if feed is not None:
+            self._depth_cmd_queues[level].put({"action": "unsubscribe", "ids": security_ids})
 
     # ── Background thread (quote feed reconnect loop) ───────────────
 
@@ -292,10 +338,11 @@ class DhanWebSocket:
             self._state = WSState.CONNECTED
             self._retry_count = 0
         self._resubscribe(feed)
-        with self._lock:
-            has_depth_subs = bool(self._depth_subscriptions)
-        if has_depth_subs:
-            self._start_depth_feed()
+        for level in (20, 200):
+            with self._lock:
+                has_subs = bool(self._depth_subscriptions.get(level))
+            if has_subs:
+                self._start_depth_feed(level=level)
 
     def _on_message(self, feed: Any, data: dict[str, Any]) -> None:
         if not data:
@@ -382,88 +429,81 @@ class DhanWebSocket:
 
     # ── Depth feed lifecycle ─────────────────────────────────────────
 
-    def _start_depth_feed(self) -> None:
-        if self._depth_thread is not None and self._depth_thread.is_alive():
+    def _start_depth_feed(self, level: int = 20) -> None:
+        thread = self._depth_threads.get(level)
+        if thread is not None and thread.is_alive():
             return
         with self._lock:
-            if not self._depth_subscriptions:
+            if not self._depth_subscriptions.get(level):
                 return
-        self._depth_stop.clear()
-        self._depth_feed_ready = threading.Event()
-        self._depth_thread = threading.Thread(
-            target=self._run_depth_feed, daemon=True, name="dhan-depth",
+        stop_event = self._depth_stops.setdefault(level, threading.Event())
+        stop_event.clear()
+        ready = self._depth_feed_readys.setdefault(level, threading.Event())
+        ready.clear()
+        thread = threading.Thread(
+            target=self._run_depth_feed, args=(level,), daemon=True, name=f"dhan-depth-{level}",
         )
-        self._depth_thread.start()
-        if not self._depth_feed_ready.wait(timeout=5):
-            logger.warning("depth_feed_not_ready_within_timeout")
+        self._depth_threads[level] = thread
+        thread.start()
+        if not ready.wait(timeout=5):
+            logger.warning("depth_feed_not_ready: level=%d", level)
 
-    def _stop_depth_feed(self) -> None:
-        self._depth_stop.set()
-        if self._depth_feed is not None:
-            try:
-                self._depth_feed.close_connection()
-            except Exception:
-                pass
-            self._depth_feed = None
-        if self._depth_thread is not None:
-            self._depth_thread.join(timeout=3)
-            self._depth_thread = None
+    def _stop_depth_feed(self, level: int | None = None) -> None:
+        levels = [level] if level is not None else list(self._depth_feeds.keys())
+        for lvl in levels:
+            stop = self._depth_stops.get(lvl)
+            if stop:
+                stop.set()
+            feed = self._depth_feeds.pop(lvl, None)
+            if feed:
+                try:
+                    feed.close_connection()
+                except Exception:
+                    pass
+            thread = self._depth_threads.pop(lvl, None)
+            if thread:
+                thread.join(timeout=3)
 
-    def _run_depth_feed(self) -> None:
-        """Background thread for depth feed using FullDepth SDK."""
+    def _run_depth_feed(self, level: int = 20) -> None:
         from dhanhq.fulldepth import FullDepth
-
         try:
             with self._lock:
-                instruments = list(self._depth_subscriptions)
+                instruments = list(self._depth_subscriptions.get(level, set()))
             if not instruments:
                 return
-
             sdk_instruments = self._to_depth_sdk_instruments(instruments)
             context = _DhanContextShim(self._client_id, self._access_token)
-
             feed = FullDepth(
-                dhan_context=context, instruments=sdk_instruments, depth_level=20,
+                dhan_context=context, instruments=sdk_instruments, depth_level=level,
             )
-            self._depth_feed = feed
-            ready = self._depth_feed_ready
-            if ready is not None:
+            self._depth_feeds[level] = feed
+            ready = self._depth_feed_readys.get(level)
+            if ready:
                 ready.set()
-
             loop = feed.loop
             loop.run_until_complete(feed.connect())
-            loop.run_until_complete(self._depth_recv_loop(feed))
+            loop.run_until_complete(self._depth_recv_loop(feed, level=level))
         except BaseException:
-            logger.exception("depth_feed_crashed")
-            self._depth_feed = None
+            logger.exception("depth_feed_crashed: level=%d", level)
+            self._depth_feeds.pop(level, None)
             raise
         finally:
-            ready = self._depth_feed_ready
-            if ready is not None and not ready.is_set():
+            ready = self._depth_feed_readys.get(level)
+            if ready and not ready.is_set():
                 ready.set()
-            try:
-                if self._depth_feed is not None:
-                    self._depth_feed.close_connection()
-            except Exception:
-                pass
 
-    async def _depth_recv_loop(self, feed: Any) -> None:
-        """Async receive loop: reads binary depth data and combines bid/ask."""
-        self._process_depth_commands_sync(feed)
-
+    async def _depth_recv_loop(self, feed: Any, level: int = 20) -> None:
+        self._process_depth_commands_sync(feed, level=level)
         buffer: dict[str, dict[str, list[dict]]] = {}
-
-        while not self._depth_stop.is_set():
+        stop = self._depth_stops.get(level)
+        while stop is not None and not stop.is_set():
             try:
-                raw = await asyncio.wait_for(
-                    feed.ws.recv(), timeout=self._DEPTH_RECV_TIMEOUT,
-                )
+                raw = await asyncio.wait_for(feed.ws.recv(), timeout=self._DEPTH_RECV_TIMEOUT)
             except asyncio.TimeoutError:
-                self._process_depth_commands_sync(feed)
+                self._process_depth_commands_sync(feed, level=level)
                 continue
             except Exception:
                 break
-
             remaining = raw
             while remaining:
                 update = feed.process_data(remaining)
@@ -494,10 +534,13 @@ class DhanWebSocket:
                     logger.warning("depth_cb_error: %s", exc)
             buffer.pop(key, None)
 
-    def _process_depth_commands_sync(self, feed: Any) -> None:
-        while not self._depth_cmd_queue.empty():
+    def _process_depth_commands_sync(self, feed: Any, level: int = 20) -> None:
+        queue = self._depth_cmd_queues.get(level)
+        if queue is None:
+            return
+        while not queue.empty():
             try:
-                cmd = self._depth_cmd_queue.get_nowait()
+                cmd = queue.get_nowait()
                 if cmd["action"] == "subscribe":
                     feed.subscribe_symbols(cmd["ids"])
                 elif cmd["action"] == "unsubscribe":

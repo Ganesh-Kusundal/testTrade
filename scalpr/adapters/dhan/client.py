@@ -293,6 +293,14 @@ class DhanClient:
 
     # ── Delegated: MarketDataClient ────────────────────────────────────
 
+    @property
+    def ws_subscription_count(self):
+        return self._ws.subscription_count
+
+    @property
+    def ws_depth_subscription_count(self):
+        return self._ws.depth_subscription_count
+
     def subscribe_quotes(self, *args, **kwargs) -> None:
         return self._market_data_client.subscribe_quotes(*args, **kwargs)
 

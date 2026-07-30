@@ -15,9 +15,6 @@ from scalpr.adapters.dhan._ws import DhanWebSocket
 # ── Helpers ──────────────────────────────────────────────────────────
 
 
-
-
-
 def _make_bid_levels(count: int = 5, base_price: float = 100.0) -> list[dict]:
     return [
         {"price": base_price - i * 0.5, "quantity": 1000 - i * 100, "orders": 10 - i}
@@ -47,7 +44,6 @@ def mock_sdk():
         on_close=None,
         on_error=None,
     ):
-        feed_exit = threading.Event()
         feed = MagicMock()
         feed._dhan_context = dhan_context
         feed._instruments = instruments
@@ -55,9 +51,11 @@ def mock_sdk():
         feed.on_message = on_message
         feed.on_close = on_close
         feed.on_error = on_error
-        feed.run.side_effect = lambda: feed_exit.wait(timeout=10)
-        feed.close_connection.side_effect = lambda: feed_exit.set()
-        feed._exit_event = feed_exit
+        # Call on_connect synchronously so _run_feed completes immediately
+        if on_connect:
+            on_connect(feed)
+        feed.run.side_effect = lambda: None
+        feed.close_connection.side_effect = lambda: None
         feeds.append(feed)
         return feed
 
@@ -118,38 +116,38 @@ def ws(mock_sdk, mock_depth_sdk):
 class TestDepthSubscriptionSet:
     def test_subscribe_depth_adds_to_set(self, ws: DhanWebSocket) -> None:
         ws.subscribe_depth([("RELIANCE", "NSE_EQ")])
-        assert ("RELIANCE", "NSE_EQ") in ws._depth_subscriptions
+        assert ("RELIANCE", "NSE_EQ") in ws._depth_subscriptions[20]
 
     def test_subscribe_depth_multiple_adds_all(self, ws: DhanWebSocket) -> None:
         ids = [("A", "NSE_EQ"), ("B", "NSE_FNO"), ("C", "BSE_EQ")]
         ws.subscribe_depth(ids)
-        assert ws._depth_subscriptions == set(ids)
+        assert ws._depth_subscriptions[20] == set(ids)
 
     def test_subscribe_depth_empty_list_noop(self, ws: DhanWebSocket) -> None:
         ws.subscribe_depth([])
-        assert ws._depth_subscriptions == set()
+        assert ws._depth_subscriptions[20] == set()
 
     def test_subscribe_depth_duplicates_deduped(self, ws: DhanWebSocket) -> None:
         ws.subscribe_depth([("RELIANCE", "NSE_EQ")])
         ws.subscribe_depth([("RELIANCE", "NSE_EQ")])
-        assert ws._depth_subscriptions == {("RELIANCE", "NSE_EQ")}
+        assert ws._depth_subscriptions[20] == {("RELIANCE", "NSE_EQ")}
 
     def test_unsubscribe_depth_removes_from_set(self, ws: DhanWebSocket) -> None:
         ws.subscribe_depth([("RELIANCE", "NSE_EQ"), ("TCS", "NSE_EQ")])
         ws.unsubscribe_depth([("RELIANCE", "NSE_EQ")])
-        assert ("RELIANCE", "NSE_EQ") not in ws._depth_subscriptions
-        assert ("TCS", "NSE_EQ") in ws._depth_subscriptions
+        assert ("RELIANCE", "NSE_EQ") not in ws._depth_subscriptions[20]
+        assert ("TCS", "NSE_EQ") in ws._depth_subscriptions[20]
 
     def test_unsubscribe_depth_nonexistent_noop(self, ws: DhanWebSocket) -> None:
         ws.subscribe_depth([("RELIANCE", "NSE_EQ")])
         ws.unsubscribe_depth([("TCS", "NSE_EQ")])
-        assert ws._depth_subscriptions == {("RELIANCE", "NSE_EQ")}
+        assert ws._depth_subscriptions[20] == {("RELIANCE", "NSE_EQ")}
 
     def test_subscribe_depth_does_not_affect_quote_subs(self, ws: DhanWebSocket) -> None:
         ws.subscribe([("INFY", "NSE_EQ")])
         ws.subscribe_depth([("RELIANCE", "NSE_EQ")])
         assert ws._subscriptions == {("INFY", "NSE_EQ")}
-        assert ws._depth_subscriptions == {("RELIANCE", "NSE_EQ")}
+        assert ws._depth_subscriptions[20] == {("RELIANCE", "NSE_EQ")}
 
 
 # ── Depth feed lifecycle ────────────────────────────────────────────
@@ -157,17 +155,14 @@ class TestDepthSubscriptionSet:
 
 class TestDepthFeedLifecycle:
     def _connect_sync(self, ws: DhanWebSocket, mock_sdk: list) -> None:
-        """Connect synchronously by running feed on test thread."""
         ws._run_feed()
-        if mock_sdk:
-            mock_sdk[0].on_connect(mock_sdk[0])
 
     def test_subscribe_depth_starts_feed_when_connected(
         self, ws: DhanWebSocket, mock_sdk, mock_depth_sdk,
     ) -> None:
         self._connect_sync(ws, mock_sdk)
         ws.subscribe_depth([("RELIANCE", "NSE_EQ")])
-        assert ws._depth_feed is not None
+        assert ws._depth_feeds.get(20) is not None
         ws._stop_depth_feed()
 
     def test_subscribe_depth_queues_command_when_feed_running(
@@ -175,9 +170,9 @@ class TestDepthFeedLifecycle:
     ) -> None:
         self._connect_sync(ws, mock_sdk)
         ws.subscribe_depth([("A", "NSE_EQ")])
-        qsize_before = ws._depth_cmd_queue.qsize()
+        qsize_before = ws._depth_cmd_queues[20].qsize()
         ws.subscribe_depth([("B", "NSE_EQ")])
-        assert ws._depth_cmd_queue.qsize() == qsize_before + 1
+        assert ws._depth_cmd_queues[20].qsize() == qsize_before + 1
         ws._stop_depth_feed()
 
     def test_unsubscribe_depth_queues_command_when_feed_running(
@@ -185,10 +180,10 @@ class TestDepthFeedLifecycle:
     ) -> None:
         self._connect_sync(ws, mock_sdk)
         ws.subscribe_depth([("A", "NSE_EQ")])
-        ws._depth_cmd_queue.queue.clear()
+        ws._depth_cmd_queues[20].queue.clear()
         ws.unsubscribe_depth([("A", "NSE_EQ")])
-        assert ws._depth_cmd_queue.qsize() >= 1
-        cmd = ws._depth_cmd_queue.get_nowait()
+        assert ws._depth_cmd_queues[20].qsize() >= 1
+        cmd = ws._depth_cmd_queues[20].get_nowait()
         assert cmd["action"] == "unsubscribe"
         ws._stop_depth_feed()
 
@@ -196,47 +191,47 @@ class TestDepthFeedLifecycle:
         self, ws: DhanWebSocket,
     ) -> None:
         ws.subscribe_depth([("RELIANCE", "NSE_EQ")])
-        assert ws._depth_feed is None
-        assert ws._depth_thread is None
+        assert ws._depth_feeds.get(20) is None
+        assert ws._depth_threads.get(20) is None
 
     def test_start_depth_feed_sets_depth_feed(
         self, ws: DhanWebSocket, mock_depth_sdk,
     ) -> None:
-        ws._depth_subscriptions.update([("RELIANCE", "NSE_EQ")])
+        ws._depth_subscriptions[20].update([("RELIANCE", "NSE_EQ")])
         ws._start_depth_feed()
-        assert ws._depth_feed is not None
+        assert ws._depth_feeds.get(20) is not None
         ws._stop_depth_feed()
 
     def test_stop_depth_feed_cleans_up(
         self, ws: DhanWebSocket, mock_depth_sdk,
     ) -> None:
-        ws._depth_subscriptions.update([("RELIANCE", "NSE_EQ")])
+        ws._depth_subscriptions[20].update([("RELIANCE", "NSE_EQ")])
         ws._start_depth_feed()
         ws._stop_depth_feed()
-        assert ws._depth_feed is None
+        assert ws._depth_feeds.get(20) is None
 
     def test_disconnect_stops_depth_feed(
         self, ws: DhanWebSocket, mock_sdk, mock_depth_sdk,
     ) -> None:
         self._connect_sync(ws, mock_sdk)
         ws.subscribe_depth([("RELIANCE", "NSE_EQ")])
-        assert ws._depth_feed is not None
+        assert ws._depth_feeds.get(20) is not None
         ws.disconnect()
-        assert ws._depth_feed is None
+        assert ws._depth_feeds.get(20) is None
 
     def test_on_connect_starts_depth_feed_for_pending_subs(
         self, ws: DhanWebSocket, mock_sdk, mock_depth_sdk,
     ) -> None:
         ws.subscribe_depth([("RELIANCE", "NSE_EQ")])
         self._connect_sync(ws, mock_sdk)
-        assert ws._depth_feed is not None
+        assert ws._depth_feeds.get(20) is not None
         ws._stop_depth_feed()
 
     def test_start_depth_feed_noop_when_no_subscriptions(
         self, ws: DhanWebSocket, mock_depth_sdk,
     ) -> None:
         ws._start_depth_feed()
-        assert ws._depth_feed is None
+        assert ws._depth_feeds.get(20) is None
 
 
 # ── Depth SDK instrument conversion ─────────────────────────────────
@@ -511,13 +506,13 @@ class TestDepthThreadSafety:
 class TestDepthCommandQueue:
     def test_process_depth_commands_subscribe(self, ws: DhanWebSocket) -> None:
         feed = MagicMock()
-        ws._depth_cmd_queue.put({"action": "subscribe", "ids": [(1, "100")]})
+        ws._depth_cmd_queues[20].put({"action": "subscribe", "ids": [(1, "100")]})
         ws._process_depth_commands_sync(feed)
         feed.subscribe_symbols.assert_called_once_with([(1, "100")])
 
     def test_process_depth_commands_unsubscribe(self, ws: DhanWebSocket) -> None:
         feed = MagicMock()
-        ws._depth_cmd_queue.put({"action": "unsubscribe", "ids": [(1, "100")]})
+        ws._depth_cmd_queues[20].put({"action": "unsubscribe", "ids": [(1, "100")]})
         ws._process_depth_commands_sync(feed)
         feed.unsubscribe_symbols.assert_called_once_with([(1, "100")])
 
@@ -530,27 +525,27 @@ class TestDepthCommandQueue:
 
     def test_process_depth_commands_multiple(self, ws: DhanWebSocket) -> None:
         feed = MagicMock()
-        ws._depth_cmd_queue.put({"action": "subscribe", "ids": [(1, "100")]})
-        ws._depth_cmd_queue.put({"action": "subscribe", "ids": [(2, "200")]})
+        ws._depth_cmd_queues[20].put({"action": "subscribe", "ids": [(1, "100")]})
+        ws._depth_cmd_queues[20].put({"action": "subscribe", "ids": [(2, "200")]})
         ws._process_depth_commands_sync(feed)
         assert feed.subscribe_symbols.call_count == 2
 
     def test_subscribe_depth_queues_when_feed_running(self, ws: DhanWebSocket) -> None:
         feed = MagicMock()
-        ws._depth_feed = feed
+        ws._depth_feeds[20] = feed
         ws.subscribe_depth([("A", "NSE_EQ")])
-        assert ws._depth_cmd_queue.qsize() >= 1
-        cmd = ws._depth_cmd_queue.get_nowait()
+        assert ws._depth_cmd_queues[20].qsize() >= 1
+        cmd = ws._depth_cmd_queues[20].get_nowait()
         assert cmd["action"] == "subscribe"
 
     def test_unsubscribe_depth_queues_when_feed_running(self, ws: DhanWebSocket) -> None:
         feed = MagicMock()
-        ws._depth_feed = feed
+        ws._depth_feeds[20] = feed
         ws.subscribe_depth([("A", "NSE_EQ")])
-        ws._depth_cmd_queue.queue.clear()
+        ws._depth_cmd_queues[20].queue.clear()
         ws.unsubscribe_depth([("A", "NSE_EQ")])
-        assert ws._depth_cmd_queue.qsize() >= 1
-        cmd = ws._depth_cmd_queue.get_nowait()
+        assert ws._depth_cmd_queues[20].qsize() >= 1
+        cmd = ws._depth_cmd_queues[20].get_nowait()
         assert cmd["action"] == "unsubscribe"
 
 

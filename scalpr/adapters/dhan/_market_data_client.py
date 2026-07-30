@@ -104,15 +104,15 @@ class MarketDataClient:
 
     # ── Market depth ────────────────────────────────────────────────────
 
-    def subscribe_market_depth(self, instrument_id: InstrumentId) -> None:
+    def subscribe_market_depth(self, instrument_id: InstrumentId, level: int = 20) -> None:
         symbol, exchange = self._instrument_id_to_symbol_exchange(instrument_id)
         security_id, segment = self._resolve(symbol, exchange)
-        self._ws.subscribe_depth([(security_id, segment)])
+        self._ws.subscribe_depth([(security_id, segment)], level=level)
 
-    def unsubscribe_market_depth(self, instrument_id: InstrumentId) -> None:
+    def unsubscribe_market_depth(self, instrument_id: InstrumentId, level: int = 20) -> None:
         symbol, exchange = self._instrument_id_to_symbol_exchange(instrument_id)
         security_id, segment = self._resolve(symbol, exchange)
-        self._ws.unsubscribe_depth([(security_id, segment)])
+        self._ws.unsubscribe_depth([(security_id, segment)], level=level)
 
     def get_market_depth_snapshot(self, instrument_id: InstrumentId) -> dict:
         symbol, exchange = self._instrument_id_to_symbol_exchange(instrument_id)
