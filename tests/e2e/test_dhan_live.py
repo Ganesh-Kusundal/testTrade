@@ -9,6 +9,9 @@ from __future__ import annotations
 import os
 
 import pytest
+from dotenv import load_dotenv
+
+load_dotenv()
 
 pytestmark = pytest.mark.skipif(
     not os.environ.get("DHAN_CLIENT_ID"),
@@ -18,8 +21,6 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.fixture(scope="module")
 def client():
-    from dotenv import load_dotenv
-    load_dotenv()
     from scalpr.adapters.dhan.client import DhanClient
     from scalpr.engine.clock import LiveClock
     from scalpr.engine.message_bus import MessageBus
