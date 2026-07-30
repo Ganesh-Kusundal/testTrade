@@ -453,6 +453,9 @@ class DhanClient:
     ) -> dict[str, Any]:
         from scalpr.adapters.dhan._mapper_portfolio import margin_calc_to_dhan_request
 
+        # Normalize segment: API requires NSE_EQ not NSE for equity
+        if exchange_segment.upper() == "NSE":
+            exchange_segment = "NSE_EQ"
         req = margin_calc_to_dhan_request(
             security_id, exchange_segment, transaction_type,
             quantity, product_type, price, trigger_price,
@@ -495,9 +498,15 @@ class DhanClient:
         return self._portfolio.get_positions_summary()
 
     def get_exchange_time(self) -> str:
-        data = self._http_client.get("/exchange/time", bucket="portfolio")
-        if isinstance(data, str):
-            return data
-        if isinstance(data, dict):
-            return data.get("exchangeTime", data.get("time", data.get("dateTime", "")))
-        return str(data)
+        try:
+            data = self._http_client.get("/exchange/time", bucket="portfolio")
+            if isinstance(data, str):
+                return data
+            if isinstance(data, dict):
+                return data.get("exchangeTime", data.get("time", data.get("dateTime", "")))
+            return str(data)
+        except (ConnectionError, TimeoutError, OSError) as exc:
+            logger.warning("exchange_time_endpoint_unavailable: %s", exc)
+            from datetime import datetime, timezone, timedelta
+            ist = timezone(timedelta(hours=5, minutes=30))
+            return datetime.now(ist).strftime("%Y-%m-%d %H:%M:%S")

@@ -37,6 +37,13 @@ class OrderClient:
     def _token_manager(self):
         return self._token_provider()
 
+    def _unwrap_order_detail(self, order_id: str) -> dict:
+        """Fetch order detail and unwrap list responses to a single dict."""
+        detail = self._http.get(f"/orders/{order_id}", bucket="orders")
+        if isinstance(detail, list):
+            return detail[0] if detail else {}
+        return detail
+
     # ── Basic order CRUD ──────────────────────────────────────────────
 
     def place_order(
@@ -88,18 +95,16 @@ class OrderClient:
         return result
 
     def get_order_status(self, order_id: str) -> str:
-        detail = self._http.get(f"/orders/{order_id}", bucket="orders")
-        return detail.get("status", "")
+        return self._unwrap_order_detail(order_id).get("status", "")
 
     def get_executed_price(self, order_id: str) -> float:
-        detail = self._http.get(f"/orders/{order_id}", bucket="orders")
-        raw = detail.get("tradedPrice")
+        raw = self._unwrap_order_detail(order_id).get("tradedPrice")
         if raw is None:
             return 0.0
         return float(raw)
 
     def get_executed_price_and_time(self, order_id: str) -> tuple[float, str]:
-        detail = self._http.get(f"/orders/{order_id}", bucket="orders")
+        detail = self._unwrap_order_detail(order_id)
         raw = detail.get("tradedPrice")
         price = float(raw) if raw is not None else 0.0
         traded_at = detail.get("traded_at") or detail.get("tradedTime", "")
