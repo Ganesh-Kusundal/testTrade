@@ -6,6 +6,7 @@ from decimal import Decimal
 from unittest.mock import MagicMock, patch
 
 from scalpr.adapters.dhan.client import DhanClient
+from scalpr.domain.contracts import Quote
 from scalpr.domain.instrument import (
     Exchange,
     ResolvedInstrument,
@@ -504,7 +505,9 @@ class TestDhanClientGetQuote(unittest.TestCase):
 
     def test_resolves_symbol(self):
         self.client.get_quote(self.instrument_id)
-        self.mock_resolver.resolve_full.assert_called_once_with("RELIANCE", "NSE")
+        # resolve_full is called twice: once in DhanClient.get_quote for the
+        # ResolvedInstrument, and once inside _market_data_client.get_quote
+        self.mock_resolver.resolve_full.assert_called_with("RELIANCE", "NSE")
 
     def test_posts_to_marketfeed_quote_with_bucket(self):
         self.client.get_quote(self.instrument_id)
@@ -514,12 +517,12 @@ class TestDhanClientGetQuote(unittest.TestCase):
             bucket="market_data",
         )
 
-    def test_converts_via_to_quote(self):
+    def test_converts_to_domain_quote(self):
         result = self.client.get_quote(self.instrument_id)
-        self.mock_to_quote.assert_called_once_with(
-            {"last_price": "2505", "ohlc": {}}, self.instrument_id,
-        )
-        self.assertEqual(result, self.mock_to_quote.return_value)
+        self.assertIsInstance(result, Quote)
+        self.assertEqual(result.symbol, "RELIANCE")
+        self.assertEqual(result.exchange, "NSE")
+        self.assertEqual(result.ltp, Decimal("2505"))
 
 
 class TestDhanClientPortfolio(unittest.TestCase):

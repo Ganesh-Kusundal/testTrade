@@ -32,7 +32,7 @@ from scalpr.adapters.dhan._portfolio import PortfolioAdapter
 from scalpr.adapters.dhan._resolver import DhanInstrumentNotFoundError as InstrumentNotFoundError
 from scalpr.adapters.dhan._resolver import SymbolResolver
 from scalpr.adapters.dhan._ws import DhanWebSocket
-from scalpr.domain.contracts import MarketDepth
+from scalpr.domain.contracts import MarketDepth, Quote
 from scalpr.domain.instrument import (
     DerivativeInstrumentId,
     InstrumentId,
@@ -40,6 +40,7 @@ from scalpr.domain.instrument import (
     SimpleInstrumentId,
 )
 from scalpr.domain.position import Position
+from scalpr.domain.values import ZERO
 from scalpr.engine.clock import Clock
 from scalpr.engine.execution_engine import (
     CancelOrder,
@@ -367,8 +368,14 @@ class DhanClient:
     def unsubscribe_quotes(self, *args, **kwargs) -> None:
         return self._market_data_client.unsubscribe_quotes(*args, **kwargs)
 
-    def get_quote(self, *args, **kwargs) -> dict[str, Any]:
-        return self._market_data_client.get_quote(*args, **kwargs)
+    def get_quote(self, resolved: ResolvedInstrument | SimpleInstrumentId) -> Quote:
+        """Return canonical Quote domain object."""
+        if not isinstance(resolved, ResolvedInstrument):
+            resolved = self.resolve_instrument(resolved)
+        raw = self._market_data_client.get_quote(resolved.instrument_id)
+        if isinstance(raw, dict):
+            return _raw_to_domain_quote(raw, resolved)
+        return raw
 
     def on_ws_tick(self, *args, **kwargs) -> None:
         return self._market_data_client.on_ws_tick(*args, **kwargs)
@@ -560,3 +567,38 @@ class DhanClient:
             from datetime import datetime, timezone, timedelta
             ist = timezone(timedelta(hours=5, minutes=30))
             return datetime.now(ist).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _raw_to_domain_quote(raw: dict[str, Any], resolved: ResolvedInstrument) -> Quote:
+    """Convert a raw Dhan quote dict to the canonical domain Quote."""
+    from datetime import datetime, timezone
+    from decimal import Decimal
+
+    ohlc = raw.get("ohlc", {})
+    ltp = Decimal(str(raw.get("last_price", raw.get("ltp", 0))))
+    net_change = Decimal(str(raw.get("net_change", 0)))
+    close = Decimal(str(ohlc.get("close", raw.get("close", 0))))
+    change_percent = (net_change / close * 100) if close else ZERO
+
+    ts = raw.get("timestamp")
+    if isinstance(ts, (int, float)):
+        timestamp = datetime.fromtimestamp(float(ts), tz=timezone.utc)
+    elif isinstance(ts, datetime):
+        timestamp = ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
+    else:
+        timestamp = None
+
+    return Quote(
+        symbol=resolved.trading_symbol,
+        exchange=resolved.exchange.value,
+        ltp=ltp,
+        open=Decimal(str(ohlc.get("open", 0))),
+        high=Decimal(str(ohlc.get("high", 0))),
+        low=Decimal(str(ohlc.get("low", 0))),
+        close=close,
+        volume=int(raw.get("volume", 0)),
+        change=net_change,
+        change_percent=change_percent,
+        timestamp=timestamp,
+        oi=int(raw.get("oi", 0)),
+    )
