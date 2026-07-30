@@ -465,17 +465,23 @@ class DhanClient:
     def get_expired_option_data(
         self,
         security_id: str,
-        exchange_segment: str,
-        instrument_type: str,
-        expiry_flag: str,
-        expiry_code: int,
-        strike: str,
-        drv_option_type: str,
-        required_data: list[str],
-        from_date: str,
-        to_date: str,
+        exchange_segment: str = "NSE_FNO",
+        instrument_type: str = "OPT",
+        expiry_flag: str = "MONTH",
+        expiry_code: int = 1,
+        strike: str = "ATM",
+        drv_option_type: str = "CE",
+        required_data: list[str] | None = None,
+        from_date: str | None = None,
+        to_date: str | None = None,
         interval: int = 1,
     ) -> dict[str, Any]:
+        """Get expired option data with sensible defaults matching Tradehull.
+
+        Defaults: NSE_FNO, MONTH expiry, 1st expiry, ATM strike.
+        """
+        if required_data is None:
+            required_data = ["OPEN", "HIGH", "LOW", "CLOSE", "VOLUME", "OI"]
         payload = {
             "securityId": security_id,
             "exchangeSegment": exchange_segment,
@@ -485,8 +491,8 @@ class DhanClient:
             "strike": strike,
             "drvOptionType": drv_option_type,
             "requiredData": required_data,
-            "fromDate": from_date,
-            "toDate": to_date,
+            "fromDate": from_date or "",
+            "toDate": to_date or "",
             "interval": interval,
         }
         return self._http_client.post("/charts/rollingoption", data=payload, bucket="history")
@@ -496,6 +502,27 @@ class DhanClient:
 
     def get_positions_summary(self) -> dict[str, Any]:
         return self._portfolio.get_positions_summary()
+
+    def get_lot_size(self, symbol: str, exchange: str = "NSE") -> int:
+        """Get lot size for a symbol from the resolver."""
+        try:
+            r = self._resolver.resolve_full(symbol, exchange)
+            return r.lot_size if hasattr(r, "lot_size") else 1
+        except Exception:
+            return 1
+
+    def get_expiry_date(self, symbol: str, exchange: str = "NSE", instrument: str = "OPT") -> list[str]:
+        """Get sorted expiry dates for a symbol from the resolver."""
+        try:
+            return self._resolver.get_expiry_dates(symbol, exchange, instrument)
+        except Exception:
+            return []
+
+    def convert_epoch_to_ist(self, epoch: int | float) -> str:
+        """Convert Dhan epoch timestamp to IST datetime string."""
+        from datetime import datetime, timezone, timedelta
+        ist = timezone(timedelta(hours=5, minutes=30))
+        return datetime.fromtimestamp(epoch, tz=ist).strftime("%Y-%m-%d %H:%M:%S")
 
     def get_exchange_time(self) -> str:
         try:
