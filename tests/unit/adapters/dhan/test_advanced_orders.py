@@ -4,12 +4,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from scalpr.adapters.dhan._mapper_orders import InvalidValueError
 from scalpr.adapters.dhan._mapper_advanced_orders import (
     conditional_trigger_to_dhan_request,
     forever_order_to_dhan_request,
     super_order_to_dhan_request,
 )
+from scalpr.adapters.dhan._mapper_orders import InvalidValueError
 
 # =========================================================================
 # super_order_to_dhan_request — mapper
@@ -273,7 +273,7 @@ class TestDhanClientPlaceSuperOrder:
         client._http_client.post.return_value = {"orderIds": ["SO-1"]}
         client.place_super_order("12345", "NSE_EQ", "BUY", 10, 150.0)
         client._http_client.post.assert_called_once_with(
-            "/superorders", data=client._mock_mapper.return_value,
+            "/super/orders", data=client._mock_mapper.return_value,
         )
 
     def test_acquires_rate_limit(self, client):
@@ -352,7 +352,7 @@ class TestDhanClientModifySuperOrder:
         result = client.modify_super_order("SO-1")
         client._http_client.put.assert_called_once()
         args, _ = client._http_client.put.call_args
-        assert args[0] == "/superorders/SO-1"
+        assert args[0] == "/super/orders/SO-1"
         assert result is True
 
     def test_acquires_rate_limit(self, client):
@@ -408,7 +408,7 @@ class TestDhanClientCancelSuperOrder:
 
     def test_deletes_superorders_endpoint(self, client):
         result = client.cancel_super_order("SO-1")
-        client._http_client.delete.assert_called_once_with("/superorders/SO-1")
+        client._http_client.delete.assert_called_once_with("/super/orders/SO-1")
         assert result is True
 
     def test_acquires_rate_limit(self, client):
@@ -445,7 +445,7 @@ class TestDhanClientGetSuperOrders:
     def test_gets_superorders_endpoint(self, client):
         client._http_client.get.return_value = []
         client.get_super_orders()
-        client._http_client.get.assert_called_once_with("/superorders", bucket="orders")
+        client._http_client.get.assert_called_once_with("/super/orders", bucket="orders")
 
     def test_acquires_rate_limit(self, client):
         client._http_client.get.return_value = []
@@ -508,7 +508,7 @@ class TestDhanClientPlaceForeverOrder:
         client._http_client.post.return_value = {"orderId": "FO-1"}
         client.place_forever_order("12345", "NSE_EQ", "BUY", 10, 150.0, 0.0)
         client._http_client.post.assert_called_once_with(
-            "/foreverorders", data=client._mock_mapper.return_value,
+            "/forever/orders", data=client._mock_mapper.return_value,
         )
 
     def test_acquires_rate_limit(self, client):
@@ -584,7 +584,7 @@ class TestDhanClientModifyForeverOrder:
         result = client.modify_forever_order("FO-1")
         assert result is True
         args, _ = client._http_client.put.call_args
-        assert args[0] == "/foreverorders/FO-1"
+        assert args[0] == "/forever/orders/FO-1"
 
     def test_acquires_rate_limit(self, client):
         client.modify_forever_order("FO-1")
@@ -638,7 +638,7 @@ class TestDhanClientCancelForeverOrder:
 
     def test_deletes_foreverorders_endpoint(self, client):
         result = client.cancel_forever_order("FO-1")
-        client._http_client.delete.assert_called_once_with("/foreverorders/FO-1")
+        client._http_client.delete.assert_called_once_with("/forever/orders/FO-1")
         assert result is True
 
     def test_acquires_rate_limit(self, client):
@@ -675,7 +675,7 @@ class TestDhanClientGetForeverOrders:
     def test_gets_foreverorders_endpoint(self, client):
         client._http_client.get.return_value = []
         client.get_forever_orders()
-        client._http_client.get.assert_called_once_with("/foreverorders", bucket="orders")
+        client._http_client.get.assert_called_once_with("/forever/orders", bucket="orders")
 
     def test_acquires_rate_limit(self, client):
         client._http_client.get.return_value = []
@@ -726,10 +726,10 @@ class TestDhanClientPlaceConditionalTrigger:
             yield c
 
     def test_posts_to_triggers_endpoint(self, client):
-        client._http_client.post.return_value = {"triggerId": "TG-1"}
+        client._http_client.post.return_value = {"alertId": "TG-1"}
         client.place_conditional_trigger("12345", "NSE_EQ", "BUY", 10, 150.0, 155.0)
         args, kwargs = client._http_client.post.call_args
-        assert args[0] == "/triggers"
+        assert args[0] == "/alerts/orders"
         assert kwargs.get("bucket") == "orders"
 
     def test_acquires_rate_limit(self, client):
@@ -742,7 +742,7 @@ class TestDhanClientPlaceConditionalTrigger:
         client._token_manager.get_token.assert_called_once_with()
 
     def test_returns_trigger_id(self, client):
-        client._http_client.post.return_value = {"triggerId": "TG-1"}
+        client._http_client.post.return_value = {"alertId": "TG-1"}
         result = client.place_conditional_trigger("12345", "NSE_EQ", "BUY", 10, 150.0, 155.0)
         assert result == "TG-1"
 
@@ -752,7 +752,7 @@ class TestDhanClientPlaceConditionalTrigger:
         assert result == ""
 
     def test_sends_core_params_in_payload(self, client):
-        client._http_client.post.return_value = {"triggerId": "TG-1"}
+        client._http_client.post.return_value = {"alertId": "TG-1"}
         client.place_conditional_trigger("12345", "NSE_EQ", "BUY", 10, 150.0, 155.0)
         payload = client._http_client.post.call_args[1]["data"]
         assert payload["securityId"] == "12345"
@@ -768,7 +768,7 @@ class TestDhanClientPlaceConditionalTrigger:
         assert payload["disclosedQuantity"] == 0
 
     def test_place_conditional_trigger_all_params(self, client):
-        client._http_client.post.return_value = {"triggerId": "TG-1"}
+        client._http_client.post.return_value = {"alertId": "TG-1"}
         client.place_conditional_trigger(
             "12345", "NSE_EQ", "BUY", 10, 150.0, 155.0,
             order_type="MARKET", product_type="CNC",
@@ -792,7 +792,7 @@ class TestDhanClientPlaceConditionalTrigger:
         assert payload["correlationId"] == "my-trigger"
 
     def test_place_conditional_trigger_defaults(self, client):
-        client._http_client.post.return_value = {"triggerId": "TG-1"}
+        client._http_client.post.return_value = {"alertId": "TG-1"}
         client.place_conditional_trigger("12345", "NSE_EQ", "BUY", 10, 150.0, 155.0)
         payload = client._http_client.post.call_args[1]["data"]
         assert payload["comparisonType"] == "PRICE_WITH_VALUE"
@@ -807,7 +807,7 @@ class TestDhanClientPlaceConditionalTrigger:
         assert "expDate" not in payload
 
     def test_place_conditional_trigger_with_none_fields_omitted(self, client):
-        client._http_client.post.return_value = {"triggerId": "TG-1"}
+        client._http_client.post.return_value = {"alertId": "TG-1"}
         client.place_conditional_trigger(
             "12345", "NSE_EQ", "BUY", 10, 150.0, 155.0,
             operator=None, comparing_value=None,
@@ -852,7 +852,7 @@ class TestDhanClientDeleteConditionalTrigger:
 
     def test_deletes_triggers_endpoint(self, client):
         result = client.delete_conditional_trigger("TG-1")
-        client._http_client.delete.assert_called_once_with("/triggers/TG-1")
+        client._http_client.delete.assert_called_once_with("/v2/alerts/orders/TG-1")
         assert result is True
 
     def test_acquires_rate_limit(self, client):
@@ -889,7 +889,7 @@ class TestDhanClientGetAllConditionalTriggers:
     def test_gets_triggers_endpoint(self, client):
         client._http_client.get.return_value = []
         client.get_all_conditional_triggers()
-        client._http_client.get.assert_called_once_with("/triggers", bucket="orders")
+        client._http_client.get.assert_called_once_with("/alerts/orders", bucket="orders")
 
     def test_acquires_rate_limit(self, client):
         client._http_client.get.return_value = []
@@ -941,7 +941,7 @@ class TestDhanClientGetConditionalTriggerById:
     def test_gets_triggers_by_id_endpoint(self, client):
         client._http_client.get.return_value = {"triggerId": "TG-1"}
         result = client.get_conditional_trigger_by_id("TG-1")
-        client._http_client.get.assert_called_once_with("/triggers/TG-1", bucket="orders")
+        client._http_client.get.assert_called_once_with("/v2/alerts/orders/TG-1", bucket="orders")
         assert result == {"triggerId": "TG-1"}
 
     def test_acquires_rate_limit(self, client):

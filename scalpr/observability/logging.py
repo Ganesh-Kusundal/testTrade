@@ -75,8 +75,8 @@ class VerboseControlFilter(logging.Filter):
 
     # Loggers that produce high-volume output
     VERBOSE_LOGGERS: ClassVar[set[str]] = {
-        "scalpr.brokers.dhan.market_data",
-        "scalpr.brokers.dhan.ws_client",
+        "scalpr.adapters.dhan._market_data_client",
+        "scalpr.adapters.dhan._ws",
         "scalpr.scanner",
         "scalpr.strategy",
     }

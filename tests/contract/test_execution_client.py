@@ -20,7 +20,6 @@ from decimal import Decimal
 
 import pytest
 
-from scalpr.domain.fill import Fill
 from scalpr.domain.instrument import Exchange, SimpleInstrumentId
 from scalpr.domain.order import Order, OrderSide, OrderType
 from scalpr.domain.position import Position, PositionSide

@@ -333,7 +333,7 @@ class TestProactiveRefresh:
         assert REFRESH_THRESHOLD == 0.8
 
     def test_proactive_refresh_scheduled_after_mint(self, clock, tmp_cache):
-        from scalpr.adapters.dhan._auth import TokenManager as TM
+        from scalpr.adapters.dhan._auth import TokenManager as TM  # noqa: N817
         clock2 = MagicMock()
         clock2.utc_now.return_value = datetime(2025, 1, 1, tzinfo=timezone.utc)
         manager = TM(client_id="test_cid", totp_secret="JBSWY3DPEHPK3PXP", clock=clock2, cache_dir=tmp_cache)
@@ -344,7 +344,7 @@ class TestProactiveRefresh:
         assert manager._refresh_timer.is_alive()
 
     def test_proactive_refresh_cancelled_on_stop(self, clock, tmp_cache):
-        from scalpr.adapters.dhan._auth import TokenManager as TM
+        from scalpr.adapters.dhan._auth import TokenManager as TM  # noqa: N817
         clock2 = MagicMock()
         clock2.utc_now.return_value = datetime(2025, 1, 1, tzinfo=timezone.utc)
         manager = TM(client_id="test_cid", totp_secret="JBSWY3DPEHPK3PXP", clock=clock2, cache_dir=tmp_cache)

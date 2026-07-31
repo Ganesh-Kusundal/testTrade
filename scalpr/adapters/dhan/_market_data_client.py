@@ -188,14 +188,37 @@ class MarketDataClient:
         )
 
     def get_market_depth_snapshot(self, instrument_id: InstrumentId) -> dict:
+        """Return depth snapshot from the FullDepth WebSocket cache.
+
+        Dhan v2 removed the REST ``/marketfeed/depth`` endpoint (404).
+        Depth data now arrives exclusively via the FullDepth WebSocket.
+        This method ensures the instrument is subscribed to the depth feed
+        and returns the latest cached snapshot.
+        """
         symbol, exchange = self._instrument_id_to_symbol_exchange(instrument_id)
         security_id, segment = self._resolve(symbol, exchange)
-        data = self._http.post(
-            "/marketfeed/depth",
-            data={"security_ids": [security_id], "exchangeSegment": segment},
-            bucket="market_data",
-        )
-        return data
+        # Ensure depth subscription is active so the WS feed delivers data.
+        ws = self._ws
+        if not ws.is_depth_subscribed(security_id, segment):
+            ws.subscribe_depth([(security_id, segment)], level=20)
+        # Poll the WS depth cache for the latest snapshot.
+        snapshot = ws.get_depth_snapshot(security_id, segment)
+        if snapshot is not None:
+            # Convert MarketDepthSnapshot to the dict shape the rest of the code expects.
+            return {
+                "depth": {
+                    "bid": [
+                        {"price": str(lv.bid_price), "quantity": lv.bid_qty, "orders": lv.bid_orders}
+                        for lv in snapshot.levels
+                    ],
+                    "ask": [
+                        {"price": str(lv.ask_price), "quantity": lv.ask_qty, "orders": lv.ask_orders}
+                        for lv in snapshot.levels
+                    ],
+                },
+            }
+        # Fallback: return empty depth (no data yet from WS).
+        return {"depth": {"bid": [], "ask": []}}
 
     def get_market_depth_df(self, instrument_id: InstrumentId, as_df: bool = False) -> list[dict] | pd.DataFrame:
         return self._market_depth_df(self.get_market_depth_snapshot(instrument_id), as_df=as_df)

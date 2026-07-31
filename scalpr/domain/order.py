@@ -181,3 +181,37 @@ class ModifyOrderRequest:
     price: Decimal | None = None
     trigger_price: Decimal | None = None
     validity: Validity | None = None
+
+
+# ── Broker-agnostic status mapping ──────────────────────────────────────
+# Canonical mapping from broker status strings to OrderState.  Both the
+# gateway layer (order_service._safe_order_state) and the adapter layer
+# (mapper_orders.order_status_from_dhan) import this single source of
+# truth so status translations never drift.
+#
+# Broker-specific adapters translate their own status strings (e.g.
+# "PART_TRADED", "TRANSIT", "TRADED") into these generic keys before
+# they reach the gateway.
+
+BROKER_STATUS_TO_ORDER_STATE: dict[str, OrderState] = {
+    "PENDING": OrderState.PENDING,
+    "OPEN": OrderState.OPEN,
+    "TRIGGER PENDING": OrderState.PENDING,
+    "TRANSIT": OrderState.PENDING,
+    "PARTIALLY FILLED": OrderState.PARTIALLY_FILLED,
+    "PART_TRADED": OrderState.PARTIALLY_FILLED,
+    "FILLED": OrderState.FILLED,
+    "TRADED": OrderState.FILLED,
+    "CANCELLED": OrderState.CANCELLED,
+    "REJECTED": OrderState.REJECTED,
+    "EXPIRED": OrderState.EXPIRED,
+}
+
+
+def broker_status_to_order_state(raw: str) -> OrderState:
+    """Map a broker status string to an OrderState.
+
+    Returns OrderState.PENDING for unknown strings rather than raising,
+    so the Order constructor never blows up on an exotic status.
+    """
+    return BROKER_STATUS_TO_ORDER_STATE.get(raw.strip().upper(), OrderState.PENDING)

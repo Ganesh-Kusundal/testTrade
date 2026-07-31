@@ -1,20 +1,21 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 from decimal import Decimal
 from unittest.mock import MagicMock
 
-import pytest
-
 from scalpr.adapters.dhan.client import DhanClient
-from scalpr.domain.contracts import Quote
-from scalpr.domain.instrument import Exchange, ResolvedInstrument, Segment, SimpleInstrumentId
-from scalpr.domain.contracts import MarketDepth
-from scalpr.domain.tick import Candle, OHLC
-from scalpr.gateway.instrument import Instrument
+from scalpr.domain.contracts import MarketDepth, Quote
+from scalpr.domain.instrument import (
+    Exchange,
+    MarketFeed,
+    ResolvedInstrument,
+    Segment,
+    SimpleInstrumentId,
+)
+from scalpr.domain.tick import OHLC, Candle
 from scalpr.gateway.market_data_service import MarketDataService
 from scalpr.gateway.subscription import Subscription
-from scalpr.domain.instrument import MarketFeed
 
 
 def make_resolved(symbol: str = "TCS") -> ResolvedInstrument:
@@ -69,11 +70,12 @@ class TestMarketDataServiceQuote:
 class TestMarketDataServiceDepth:
     def test_depth_returns_market_depth(self):
         client = MagicMock(spec=DhanClient)
-        from scalpr.domain.contracts import MarketDepth as ContractsMarketDepth, DepthLevel as CDL
+        from scalpr.domain.contracts import DepthLevel
+        from scalpr.domain.contracts import MarketDepth as ContractsMarketDepth
         client.get_market_depth.return_value = ContractsMarketDepth(
             symbol="TCS", exchange="NSE",
-            bid_levels=[CDL(price=Decimal("99.95"), quantity=100, orders=5)],
-            ask_levels=[CDL(price=Decimal("100.05"), quantity=50, orders=3)],
+            bid_levels=[DepthLevel(price=Decimal("99.95"), quantity=100, orders=5)],
+            ask_levels=[DepthLevel(price=Decimal("100.05"), quantity=50, orders=3)],
             timestamp=None,
         )
         svc = MarketDataService(client)

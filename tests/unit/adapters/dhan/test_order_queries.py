@@ -160,7 +160,7 @@ class TestGetExecutedPriceAndTime(unittest.TestCase):
         result = self.client.get_executed_price_and_time("ORD1")
         self.assertEqual(result[1], "2024-06-15T12:00:00")
 
-    def test_falls_back_to_tradedTime(self):
+    def test_falls_back_to_tradedTime(self):  # noqa: N802
         self.mock_http.get.return_value = {
             "orderId": "ORD1", "tradedPrice": "300.00", "tradedTime": "2024-06-15T13:00:00",
         }
@@ -377,7 +377,7 @@ class TestGetExchangeTime(unittest.TestCase):
         result = self.client.get_exchange_time()
         self.assertEqual(result, "2024-06-15T11:00:00")
 
-    def test_falls_back_to_dateTime_key(self):
+    def test_falls_back_to_dateTime_key(self):  # noqa: N802
         self.mock_http.get.return_value = {"dateTime": "2024-06-15T12:00:00"}
         result = self.client.get_exchange_time()
         self.assertEqual(result, "2024-06-15T12:00:00")
@@ -448,12 +448,12 @@ class TestOrderReportToDict(unittest.TestCase):
         self.assertEqual(result["price"], "0")
         self.assertEqual(result["status"], "")
 
-    def test_uses_traded_at_over_tradedTime(self):
+    def test_uses_traded_at_over_tradedTime(self):  # noqa: N802
         resp = {"orderId": "O1", "traded_at": "alpha", "tradedTime": "beta"}
         result = order_report_to_dict(resp)
         self.assertEqual(result["traded_at"], "alpha")
 
-    def test_uses_createdAt_over_createAt(self):
+    def test_uses_createdAt_over_createAt(self):  # noqa: N802
         resp = {"orderId": "O1", "createdAt": "alpha", "createAt": "beta"}
         result = order_report_to_dict(resp)
         self.assertEqual(result["created_at"], "alpha")

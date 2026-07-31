@@ -22,8 +22,8 @@ def to_position(data: dict) -> Position:
     raw_qty = data.get("quantity", 0)
     try:
         quantity = int(raw_qty)
-    except (TypeError, ValueError):
-        raise InvalidValueError(f"Invalid quantity: {raw_qty}")
+    except (TypeError, ValueError) as exc:
+        raise InvalidValueError(f"Invalid quantity: {raw_qty}") from exc
 
     try:
         avg_price = Decimal(str(data.get("avgPrice", "0")))

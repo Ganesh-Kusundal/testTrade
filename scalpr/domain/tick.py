@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from scalpr.domain.instrument import Exchange, ResolvedInstrument
+from scalpr.domain.instrument import ResolvedInstrument
 
 
 @dataclass(slots=True, frozen=True)

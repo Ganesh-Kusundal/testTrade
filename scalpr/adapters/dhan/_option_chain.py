@@ -323,7 +323,7 @@ class OptionChainAdapter:
             if tick is not None:
                 return float(tick)
         except Exception:
-            pass
+            logger.debug("option_chain_fetch_failed", exc_info=True)
 
         return 5.0
 

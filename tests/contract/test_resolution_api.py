@@ -1,7 +1,7 @@
 """Contract tests for the instrument resolution API surface.
 
 Verifies that the public API of the unified resolution module
-(scalpr.brokers.dhan.resolution) remains stable.
+(stable public API: scalpr.adapters.dhan._resolver.SymbolResolver) remains stable.
 """
 from __future__ import annotations
 

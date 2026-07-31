@@ -1,8 +1,5 @@
 """Live integration tests for DhanClient instrument resolution and market data.
 
-S-5: previously these "tests" returned True/False (pytest treats a returning
-test as passing regardless), so failures were invisible. Now they assert.
-
 Gated: skipped unless DHAN_CLIENT_ID and DHAN_ACCESS_TOKEN are set.
 Read-only — no orders are placed.
 
@@ -17,7 +14,7 @@ import pandas as pd
 import pytest
 from dotenv import load_dotenv
 
-from scalpr.domain.instrument import Exchange
+from scalpr.domain.instrument import Exchange, SimpleInstrumentId
 
 load_dotenv()
 
@@ -34,9 +31,9 @@ pytestmark = [
 ]
 
 
-def _get_gateway():
+@pytest.fixture(scope="module")
+def client():
     from scalpr.adapters.dhan.client import DhanClient
-    from scalpr.brokers.broker_gateway import DhanBrokerGateway
     from scalpr.engine.clock import LiveClock
     from scalpr.engine.message_bus import MessageBus
 
@@ -49,17 +46,10 @@ def _get_gateway():
         "pin": os.environ.get("DHAN_PIN", "1111"),
         "csv_path": os.environ.get("DHAN_INSTRUMENT_CSV", "instrument.csv"),
     }
-    client = DhanClient(bus, clock, config)
-    gw = DhanBrokerGateway(client)
-    gw.connect()
-    return gw
-
-
-@pytest.fixture(scope="module")
-def gateway():
-    gw = _get_gateway()
-    yield gw
-    gw.disconnect()
+    c = DhanClient(bus, clock, config)
+    c.start()
+    yield c
+    c.stop()
 
 
 @pytest.fixture(autouse=True)
@@ -68,9 +58,8 @@ def _pace_dhan_rate_limit():
     time.sleep(1.1)
 
 
-def test_instrument_resolution(gateway):
-    resolver = gateway.adapters()["resolver"]
-    resolved = resolver.resolve_full("TCS", "NSE")
+def test_instrument_resolution(client):
+    resolved = client._resolver.resolve_full("TCS", "NSE")
     assert resolved.trading_symbol == "TCS"
     assert resolved.exchange == Exchange.NSE
     assert resolved.security_id is not None
@@ -78,23 +67,23 @@ def test_instrument_resolution(gateway):
     assert resolved.lot_size is not None and resolved.lot_size >= 1
 
 
-def test_ltp(gateway):
-    ltp = gateway.get_ltp("TCS", "NSE")
-    assert isinstance(ltp, Decimal)
+def test_ltp(client):
+    ltp = client._historical.get_ltp("TCS", "NSE")
+    assert isinstance(ltp, (int, float))
     assert ltp > 0
 
 
-def test_quote(gateway):
-    quote = gateway.get_quote("TCS", "NSE")
+def test_quote(client):
+    quote = client.get_quote(SimpleInstrumentId("TCS", Exchange.NSE))
     assert isinstance(quote, dict)
-    assert "ltp" in quote
+    assert quote.get("ltp") is not None
     assert Decimal(str(quote["ltp"])) > 0
 
 
-def test_historical(gateway):
+def test_historical(client):
     from_date = date.today() - timedelta(days=30)
     to_date = date.today()
-    candles = gateway.get_ohlcv("TCS", "NSE", "1D", from_date, to_date)
+    candles = client.get_daily("TCS", "NSE", from_date=from_date.isoformat(), to_date=to_date.isoformat())
     df = pd.DataFrame(candles)
     assert not df.empty
     for col in ("open", "high", "low", "close", "volume"):
@@ -106,17 +95,16 @@ def test_historical(gateway):
     ("RELIANCE", "NSE"),
     ("INFY", "NSE"),
 ])
-def test_multiple_instruments(gateway, symbol, exchange):
-    ltp = gateway.get_ltp(symbol, exchange)
-    assert isinstance(ltp, Decimal)
+def test_multiple_instruments(client, symbol, exchange):
+    ltp = client._historical.get_ltp(symbol, exchange)
+    assert isinstance(ltp, (int, float))
     assert ltp > 0
     time.sleep(1.1)
 
 
-def test_index_instrument(gateway):
-    resolver = gateway.adapters()["resolver"]
-    resolved = resolver.resolve_full("NIFTY 50", "NSE")
+def test_index_instrument(client):
+    resolved = client._resolver.resolve_full("NIFTY 50", "NSE")
     assert resolved.security_id is not None
-    ltp = gateway.get_ltp("NIFTY 50", "NSE")
-    assert isinstance(ltp, Decimal)
+    ltp = client._historical.get_ltp("NIFTY 50", "NSE")
+    assert isinstance(ltp, (int, float))
     assert ltp > 0

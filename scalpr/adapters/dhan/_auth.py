@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-TOKEN_URL = "https://auth.dhan.co/app/generateAccessToken"
+TOKEN_URL = "https://auth.dhan.co/app/generateAccessToken"  # noqa: S105
 PROFILE_URL = "https://api.dhan.co/v2/profile"
 REFRESH_THRESHOLD = 0.8
 
@@ -338,5 +338,5 @@ class TokenManager:
         return DhanAuthResponse(
             access_token=access_token,
             expires_at=body.get("expiryTime", ""),
-            token_type="Bearer",
+            token_type="Bearer",  # noqa: S106
         )

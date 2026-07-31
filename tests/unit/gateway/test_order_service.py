@@ -1,22 +1,17 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 from decimal import Decimal
 from unittest.mock import MagicMock
 
-import pytest
-
-from scalpr.adapters.dhan.client import DhanClient
+from scalpr.domain.contracts import BrokerClientProtocol
 from scalpr.domain.instrument import Exchange, ResolvedInstrument, Segment, SimpleInstrumentId
 from scalpr.domain.order import (
     Order,
+    OrderRequest,
     OrderSide,
     OrderState,
-    OrderType,
-    OrderRequest,
-    ProductType,
     Side,
-    Validity,
 )
 from scalpr.engine.clock import StaticClock
 from scalpr.engine.execution_engine import CancelOrder, ModifyOrder, SubmitOrder
@@ -45,7 +40,7 @@ class TestOrderServicePlace:
     def test_place_validates_and_publishes_submit(self):
         bus = RecordingBus()
         clock = StaticClock(datetime(2024, 6, 15, 10, 30))
-        client = MagicMock(spec=DhanClient)
+        client = MagicMock(spec=BrokerClientProtocol)
         client.broker = "dhan"
         client.resolve_instrument.return_value = make_resolved("TCS")
 
@@ -74,7 +69,7 @@ class TestOrderServicePlace:
     def test_place_without_risk_service_still_works(self):
         bus = RecordingBus()
         clock = StaticClock()
-        client = MagicMock(spec=DhanClient)
+        client = MagicMock(spec=BrokerClientProtocol)
         client.broker = "dhan"
         client.resolve_instrument.return_value = make_resolved("TCS")
 
@@ -86,7 +81,7 @@ class TestOrderServicePlace:
     def test_place_with_correlation_id_uses_it_as_order_id(self):
         bus = RecordingBus()
         clock = StaticClock()
-        client = MagicMock(spec=DhanClient)
+        client = MagicMock(spec=BrokerClientProtocol)
         client.broker = "dhan"
         client.resolve_instrument.return_value = make_resolved("TCS")
 
@@ -103,13 +98,13 @@ class TestOrderServiceCancel:
     def test_cancel_publishes_cancel_command(self):
         bus = RecordingBus()
         clock = StaticClock()
-        client = MagicMock(spec=DhanClient)
+        client = MagicMock(spec=BrokerClientProtocol)
         client.broker = "dhan"
 
         svc = OrderService(client=client, bus=bus, clock=clock)
-        order = svc.cancel("ord-1")
+        result = svc.cancel("ord-1")
 
-        assert order.state == OrderState.CANCELLED
+        assert result is None
         cancels = bus.filter("exec.command.cancel")
         assert len(cancels) == 1
         cmd = cancels[0].payload
@@ -122,15 +117,15 @@ class TestOrderServiceModify:
     def test_modify_publishes_modify_command(self):
         bus = RecordingBus()
         clock = StaticClock()
-        client = MagicMock(spec=DhanClient)
+        client = MagicMock(spec=BrokerClientProtocol)
         client.broker = "dhan"
 
         svc = OrderService(client=client, bus=bus, clock=clock)
         from scalpr.domain.order import ModifyOrderRequest
         mod = ModifyOrderRequest(quantity=20, price=Decimal("2600"))
-        order = svc.modify("ord-1", mod)
+        result = svc.modify("ord-1", mod)
 
-        assert order.state == OrderState.OPEN
+        assert result is None
         modifies = bus.filter("exec.command.modify")
         assert len(modifies) == 1
         cmd = modifies[0].payload

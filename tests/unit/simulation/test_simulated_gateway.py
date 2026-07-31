@@ -4,7 +4,6 @@ from decimal import Decimal
 
 import pytest
 
-from scalpr.adapters.dhan._http import RateLimiter
 from scalpr.domain.clock import SimulatedClock
 from scalpr.domain.instrument import Exchange
 from scalpr.domain.order import Order, OrderSide, OrderState, OrderType

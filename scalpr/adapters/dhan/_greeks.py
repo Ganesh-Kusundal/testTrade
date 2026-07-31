@@ -147,7 +147,7 @@ class GreeksCalculator:
             try:
                 underlying_price = self._option_chain._ltp_for(symbol, exchange)
             except Exception:
-                pass
+                logger.debug("greeks_underlying_price_lookup_failed", exc_info=True)
 
             if underlying_price is not None:
                 days = self._days_to_expiry(expiry)

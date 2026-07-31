@@ -124,7 +124,7 @@ class TestVerboseControlFilter:
         filter = VerboseControlFilter(verbose=False)
 
         record = logging.LogRecord(
-            name="scalpr.brokers.dhan.market_data",
+            name="scalpr.adapters.dhan._market_data_client",
             level=logging.WARNING, pathname="", lineno=0,
             msg="test", args=(), exc_info=None,
         )
@@ -135,7 +135,7 @@ class TestVerboseControlFilter:
         filter = VerboseControlFilter(verbose=False)
 
         record = logging.LogRecord(
-            name="scalpr.brokers.dhan.market_data",
+            name="scalpr.adapters.dhan._market_data_client",
             level=logging.INFO, pathname="", lineno=0,
             msg="test", args=(), exc_info=None,
         )
@@ -146,7 +146,7 @@ class TestVerboseControlFilter:
         filter = VerboseControlFilter(verbose=True)
 
         record = logging.LogRecord(
-            name="scalpr.brokers.dhan.market_data",
+            name="scalpr.adapters.dhan._market_data_client",
             level=logging.INFO, pathname="", lineno=0,
             msg="test", args=(), exc_info=None,
         )

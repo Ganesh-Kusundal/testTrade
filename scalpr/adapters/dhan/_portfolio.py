@@ -8,6 +8,7 @@ from typing import Any
 import pandas as pd
 
 from scalpr.adapters.dhan._http import DhanHttpClient
+from scalpr.adapters.dhan._mapper_portfolio import margin_calc_to_dhan_request, to_position
 from scalpr.domain.position import Position
 from scalpr.domain.values import ZERO
 
@@ -101,9 +102,103 @@ class PortfolioAdapter:
         }
         return pd.DataFrame([result]) if as_df else result
 
-    def get_funds(self, as_df: bool = False) -> dict[str, Any] | pd.DataFrame:
+    def get_funds(self, as_df: bool = False, debug: bool = False) -> dict[str, Any] | pd.DataFrame:
+        """Fetch fund limits from the broker."""
+        if debug:
+            logger.info("get_funds")
         data = self._http.get("/fundlimit", bucket="portfolio")
         return pd.DataFrame([data]) if as_df else data
+
+
+    def get_positions(self, as_df: bool = False, debug: bool = False) -> list[Position] | pd.DataFrame:
+        """Fetch current broker positions."""
+        if debug:
+            logger.info("get_positions")
+        data = self._http.get("/positions", bucket="portfolio")
+        if isinstance(data, list):
+            positions = [to_position(item) for item in data]
+        else:
+            positions = [to_position(data)]
+        return self._positions_to_df(positions) if as_df else positions
+
+    def get_holdings(self, as_df: bool = False, debug: bool = False) -> dict[str, Any] | pd.DataFrame:
+        """Fetch current broker holdings."""
+        if debug:
+            logger.info("get_holdings")
+        data = self._http.get("/holdings", bucket="portfolio")
+        if as_df:
+            if isinstance(data, list):
+                return pd.DataFrame(data)
+            if isinstance(data, dict):
+                return pd.DataFrame([data])
+        return data
+
+    def margin_calculator(
+        self,
+        security_id: str,
+        exchange_segment: str,
+        transaction_type: str,
+        quantity: int,
+        product_type: str,
+        price: float,
+        trigger_price: float = 0,
+    ) -> dict[str, Any]:
+        """Calculate margin requirements for an order."""
+        # Normalize segment: API requires NSE_EQ not NSE for equity
+        if exchange_segment.upper() == "NSE":
+            exchange_segment = "NSE_EQ"
+        req = margin_calc_to_dhan_request(
+            security_id, exchange_segment, transaction_type,
+            quantity, product_type, price, trigger_price,
+        )
+        return self._http.post("/margincalculator", data=req, bucket="portfolio")
+
+    def get_expired_option_data(
+        self,
+        security_id: str,
+        exchange_segment: str = "NSE_FNO",
+        instrument_type: str = "OPT",
+        expiry_flag: str = "MONTH",
+        expiry_code: int = 1,
+        strike: str = "ATM",
+        drv_option_type: str = "CE",
+        required_data: list[str] | None = None,
+        from_date: str | None = None,
+        to_date: str | None = None,
+        interval: int = 1,
+    ) -> dict[str, Any]:
+        """Get expired option data with sensible defaults."""
+        if required_data is None:
+            required_data = ["OPEN", "HIGH", "LOW", "CLOSE", "VOLUME", "OI"]
+        payload = {
+            "securityId": security_id,
+            "exchangeSegment": exchange_segment,
+            "instrument": instrument_type,
+            "expiryFlag": expiry_flag,
+            "expiryCode": expiry_code,
+            "strike": strike,
+            "drvOptionType": drv_option_type,
+            "requiredData": required_data,
+            "fromDate": from_date or "",
+            "toDate": to_date or "",
+            "interval": interval,
+        }
+        return self._http.post("/charts/rollingoption", data=payload, bucket="history")
+
+    def get_exchange_time(self) -> str:
+        """Fetch current exchange time."""
+        try:
+            data = self._http.get("/exchange/time", bucket="portfolio")
+            if isinstance(data, str):
+                return data
+            if isinstance(data, dict):
+                return data.get("exchangeTime", data.get("time", data.get("dateTime", "")))
+            return str(data)
+        except Exception as exc:
+            logger.warning("exchange_time_endpoint_unavailable: %s", exc)
+            from datetime import datetime, timedelta, timezone
+            ist = timezone(timedelta(hours=5, minutes=30))
+            return datetime.now(ist).strftime("%Y-%m-%d %H:%M:%S")
 
     def _fetch_raw_positions(self) -> list[dict[str, Any]]:
         data = self._http.get("/positions", bucket="portfolio")
@@ -203,7 +298,7 @@ class PortfolioAdapter:
                         try:
                             result[sid] = Decimal(str(raw))
                         except Exception:
-                            pass
+                            logger.debug("portfolio_op_failed", exc_info=True)
             return result
         records = resp.get("data") or resp.get("records") or resp
         if isinstance(records, dict):
@@ -219,7 +314,7 @@ class PortfolioAdapter:
                     try:
                         result[sid] = Decimal(str(raw))
                     except Exception:
-                        pass
+                        logger.debug("portfolio_op_failed", exc_info=True)
         elif isinstance(records, list):
             for item in records:
                 if isinstance(item, dict):
@@ -229,7 +324,7 @@ class PortfolioAdapter:
                         try:
                             result[sid] = Decimal(str(raw))
                         except Exception:
-                            pass
+                            logger.debug("portfolio_op_failed", exc_info=True)
         return result
 
     @staticmethod

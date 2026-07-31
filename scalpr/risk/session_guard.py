@@ -4,8 +4,8 @@ import logging
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
-from scalpr.adapters.dhan.client import DhanClient
-from scalpr.domain.order import Order, OrderSide, OrderType
+from scalpr.domain.contracts import ExecutionGatewayProtocol
+from scalpr.domain.order import Order, OrderSide
 from scalpr.domain.position import PositionSide
 
 logger = logging.getLogger(__name__)
@@ -15,7 +15,7 @@ IST = timezone(timedelta(hours=5, minutes=30))
 class SessionGuard:
     """Tracks consecutive session losses and manages IST intraday square-off times."""
 
-    def __init__(self, gateway: DhanClient, max_losses: int = 3) -> None:
+    def __init__(self, gateway: ExecutionGatewayProtocol, max_losses: int = 3) -> None:
         self._client = gateway
         self.max_losses = max_losses
         self.consecutive_losses = 0

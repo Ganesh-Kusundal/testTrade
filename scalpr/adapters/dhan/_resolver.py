@@ -30,7 +30,8 @@ class DhanInstrumentNotFoundError(InstrumentNotFound, Exception):
     """Instrument not found in the Dhan instrument master."""
 
 InstrumentNotFoundError = DhanInstrumentNotFoundError
-from scalpr.domain.instrument import (
+
+from scalpr.domain.instrument import (  # noqa: E402
     Exchange,
     Instrument,
     OptionType,

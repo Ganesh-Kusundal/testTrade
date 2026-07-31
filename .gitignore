@@ -55,3 +55,5 @@ Thumbs.db
 .idea/
 .vscode/
 *.swp
+
+.import_linter_cache/

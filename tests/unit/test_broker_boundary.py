@@ -11,7 +11,7 @@ from pathlib import Path
 SCALPR_ROOT = Path(__file__).resolve().parents[2] / "scalpr"
 
 # Files allowed to speak broker vocabulary
-_ALLOWED = ("scalpr/brokers/", "scalpr/adapters/dhan/", "scalpr/domain/instrument.py", "scalpr/domain/values.py")
+_ALLOWED = ("scalpr/adapters/dhan/", "scalpr/domain/instrument.py", "scalpr/domain/values.py")
 
 # Broker wire segments + security_id construction — must stay inside brokers
 _FORBIDDEN = (

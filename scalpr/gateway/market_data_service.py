@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from datetime import datetime
 from decimal import Decimal
-from typing import Any, Callable
+from typing import Any
 
-from scalpr.adapters.dhan.client import DhanClient
-from scalpr.domain.contracts import MarketDepth, Quote
-from scalpr.domain.instrument import Exchange, MarketFeed, ResolvedInstrument, Segment, SimpleInstrumentId
-from scalpr.domain.tick import Candle, OHLC, TickerEvent, QuoteEvent, FullEvent
+from scalpr.domain.contracts import BrokerClientProtocol, MarketDepth, Quote
+from scalpr.domain.instrument import (
+    MarketFeed,
+    ResolvedInstrument,
+)
+from scalpr.domain.tick import OHLC, Candle, FullEvent, QuoteEvent, TickerEvent
 from scalpr.gateway.subscription import Subscription
 
 logger = logging.getLogger(__name__)
@@ -19,7 +22,7 @@ class MarketDataService:
     into canonical domain objects (Quote, OHLC, MarketDepth, Candle, events).
     """
 
-    def __init__(self, client: DhanClient) -> None:
+    def __init__(self, client: BrokerClientProtocol) -> None:
         self._client = client
 
     def quote(self, resolved: ResolvedInstrument) -> Quote:
@@ -91,10 +94,7 @@ class MarketDataService:
 
         for i in range(0, len(resolved_list), 100):
             batch = resolved_list[i : i + 100]
-            if mode == MarketFeed.TICKER:
-                for r in batch:
-                    self._client.subscribe_quotes(r)
-            elif mode == MarketFeed.QUOTE:
+            if mode == MarketFeed.TICKER or mode == MarketFeed.QUOTE:
                 for r in batch:
                     self._client.subscribe_quotes(r)
             elif mode == MarketFeed.FULL:

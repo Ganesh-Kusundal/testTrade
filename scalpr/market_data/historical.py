@@ -2,14 +2,14 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from scalpr.adapters.dhan.client import DhanClient
+from scalpr.domain.contracts import HistoricalSourceProtocol
 from scalpr.domain.tick import OHLCV, Tick
 
 
 class HistoricalLoader:
     """Loads historical OHLCV candles from the broker."""
 
-    def __init__(self, client: DhanClient):
+    def __init__(self, client: HistoricalSourceProtocol):
         self.client = client
 
     def load_history(self, symbol: str, timeframe: str, lookback_days: int) -> list[OHLCV]:

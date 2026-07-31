@@ -17,7 +17,10 @@ from scalpr.engine.execution_engine import (
     ModifyOrder,
     OrderAccepted,
     OrderCancelled,
+    OrderCancelRejected,
     OrderFilled,
+    OrderModified,
+    OrderModifyRejected,
     OrderRejected,
     SubmitOrder,
 )
@@ -149,81 +152,6 @@ class TestExecutionEngineStart:
         engine = ExecutionEngine(bus, clock)
         engine.start()
         engine.stop()
-
-    def test_start_subscribes_and_routes_submit(self):
-        bus = MessageBus()
-        clock = StaticClock()
-        engine = ExecutionEngine(bus, clock)
-        engine.start()
-        routed = []
-
-        bus.subscribe("exec.command.submit.fake", lambda e: routed.append(e))
-        order = make_order()
-        cmd = SubmitOrder(order=order, broker="fake")
-        bus.publish("exec.command.submit", cmd)
-
-        assert len(routed) == 1
-        assert routed[0].order.order_id == "o1"
-
-    def test_start_subscribes_and_routes_cancel(self):
-        bus = MessageBus()
-        clock = StaticClock()
-        engine = ExecutionEngine(bus, clock)
-        engine.start()
-        routed = []
-
-        order = make_order(order_id="o1")
-        engine.cache.update(order)
-        bus.subscribe("exec.command.cancel.fake", lambda e: routed.append(e))
-        cmd = CancelOrder(order_id="o1", broker="fake")
-        bus.publish("exec.command.cancel", cmd)
-
-        assert len(routed) == 1
-        assert routed[0].order_id == "o1"
-
-    def test_start_subscribes_and_routes_modify(self):
-        bus = MessageBus()
-        clock = StaticClock()
-        engine = ExecutionEngine(bus, clock)
-        engine.start()
-        routed = []
-
-        order = make_order(order_id="o1")
-        engine.cache.update(order)
-        bus.subscribe("exec.command.modify.fake", lambda e: routed.append(e))
-        cmd = ModifyOrder(order_id="o1", updates={"price": Decimal("160.0")}, broker="fake")
-        bus.publish("exec.command.modify", cmd)
-
-        assert len(routed) == 1
-        assert routed[0].order_id == "o1"
-
-    def test_topic_routing_by_broker_suffix(self):
-        bus = MessageBus()
-        clock = StaticClock()
-        engine = ExecutionEngine(bus, clock)
-        engine.start()
-        dhan_routed = []
-        fake_routed = []
-
-        bus.subscribe("exec.command.submit.dhan", lambda e: dhan_routed.append(e))
-        bus.subscribe("exec.command.submit.fake", lambda e: fake_routed.append(e))
-
-        order_dhan = make_order(order_id="o1")
-        order_fake = make_order(order_id="o2")
-
-        bus.publish("exec.command.submit", SubmitOrder(order=order_dhan, broker="dhan"))
-        bus.publish("exec.command.submit", SubmitOrder(order=order_fake, broker="fake"))
-
-        assert len(dhan_routed) == 1
-        assert len(fake_routed) == 1
-
-    def test_stop_does_not_crash(self):
-        bus = MessageBus()
-        clock = StaticClock()
-        engine = ExecutionEngine(bus, clock)
-        engine.start()
-        engine.stop()
-
 
 class TestExecutionEngineFSM:
     def test_submit_transitions_to_pending_in_cache(self):
@@ -632,3 +560,162 @@ class TestExecutionEngineEdgeCases:
         engine.start()
 
         bus.publish("exec.event.accepted.dhan", OrderAccepted(order_id="nonexistent", timestamp=clock.utc_now()))
+
+
+class TestConfirmationDrivenLifecycle:
+    def _open_order(self, bus, clock, engine, order_id="o1"):
+        order = Order(
+            order_id=order_id, symbol="RELIANCE", exchange=Exchange.NSE,
+            side=OrderSide.BUY, order_type=OrderType.LIMIT,
+            quantity=10, price=Decimal("2500.00"),
+        )
+        bus.publish("exec.command.submit", SubmitOrder(order=order))
+        bus.publish(
+            "exec.event.accepted.dhan",
+            OrderAccepted(order_id=order_id, timestamp=clock.utc_now(), broker_order_id="ORD1"),
+        )
+        assert engine.cache.order(order_id).state == OrderState.OPEN
+        return order
+
+    def _engine(self):
+        bus = MessageBus()
+        clock = StaticClock()
+        engine = ExecutionEngine(bus, clock)
+        engine.start()
+        return bus, clock, engine
+
+    def test_cancel_command_does_not_transition_before_confirmation(self):
+        """Marking CANCELLED on intent means the local book says flat while the
+        broker still holds a live order."""
+        bus, clock, engine = self._engine()
+        self._open_order(bus, clock, engine)
+
+        bus.publish("exec.command.cancel", CancelOrder(order_id="o1"))
+
+        assert engine.cache.order("o1").state == OrderState.OPEN
+
+    def test_cancel_transitions_only_on_broker_confirmation(self):
+        bus, clock, engine = self._engine()
+        self._open_order(bus, clock, engine)
+        bus.publish("exec.command.cancel", CancelOrder(order_id="o1"))
+
+        bus.publish("exec.event.cancelled.dhan",
+                    OrderCancelled(order_id="o1", timestamp=clock.utc_now()))
+
+        assert engine.cache.order("o1").state == OrderState.CANCELLED
+
+    def test_cancel_rejected_leaves_order_open(self):
+        bus, clock, engine = self._engine()
+        self._open_order(bus, clock, engine)
+        bus.publish("exec.command.cancel", CancelOrder(order_id="o1"))
+
+        bus.publish("exec.event.cancel_rejected.dhan",
+                    OrderCancelRejected(order_id="o1", reason="DH-906",
+                                        timestamp=clock.utc_now()))
+
+        assert engine.cache.order("o1").state == OrderState.OPEN
+
+    def test_modify_command_does_not_mutate_before_confirmation(self):
+        bus, clock, engine = self._engine()
+        self._open_order(bus, clock, engine)
+
+        bus.publish("exec.command.modify",
+                    ModifyOrder(order_id="o1", updates={"price": Decimal("2600.00")}))
+
+        assert engine.cache.order("o1").price == Decimal("2500.00")
+
+    def test_modify_applies_on_confirmation(self):
+        bus, clock, engine = self._engine()
+        self._open_order(bus, clock, engine)
+        bus.publish("exec.command.modify",
+                    ModifyOrder(order_id="o1", updates={"price": Decimal("2600.00")}))
+
+        bus.publish("exec.event.modified.dhan",
+                    OrderModified(order_id="o1", updates={"price": Decimal("2600.00")},
+                                  timestamp=clock.utc_now()))
+
+        assert engine.cache.order("o1").price == Decimal("2600.00")
+
+    def test_modify_rejected_leaves_order_untouched(self):
+        bus, clock, engine = self._engine()
+        self._open_order(bus, clock, engine)
+        bus.publish("exec.command.modify",
+                    ModifyOrder(order_id="o1", updates={"price": Decimal("2600.00")}))
+
+        bus.publish("exec.event.modify_rejected.dhan",
+                    OrderModifyRejected(order_id="o1", reason="DH-905",
+                                        timestamp=clock.utc_now()))
+
+        assert engine.cache.order("o1").price == Decimal("2500.00")
+
+    def test_non_whitelisted_modify_field_is_refused(self):
+        """An arbitrary caller dict must not be able to rewrite the book of
+        record — only price, quantity and trigger_price are modifiable."""
+        bus, clock, engine = self._engine()
+        self._open_order(bus, clock, engine)
+
+        bus.publish("exec.command.modify",
+                    ModifyOrder(order_id="o1", updates={"state": OrderState.FILLED}))
+        bus.publish("exec.event.modified.dhan",
+                    OrderModified(order_id="o1", updates={"state": OrderState.FILLED},
+                                  timestamp=clock.utc_now()))
+
+        assert engine.cache.order("o1").state == OrderState.OPEN
+
+    def test_validity_is_whitelisted_and_applies_on_confirmation(self):
+        """OrderService.modify can send validity; the engine must apply it on
+        broker confirmation or the local book diverges from the broker."""
+        bus, clock, engine = self._engine()
+        self._open_order(bus, clock, engine)
+
+        bus.publish("exec.command.modify",
+                    ModifyOrder(order_id="o1", updates={"validity": "IOC"}))
+        bus.publish("exec.event.modified.dhan",
+                    OrderModified(order_id="o1", updates={"validity": "IOC"},
+                                  timestamp=clock.utc_now()))
+
+        assert engine.cache.order("o1").validity == "IOC"
+
+    def test_invalid_modify_value_is_refused_not_crashed(self):
+        """A whitelisted key with an unusable value (e.g. quantity=0) must
+        not blow up the bus publisher via an uncaught ValueError."""
+        bus, clock, engine = self._engine()
+        self._open_order(bus, clock, engine)
+
+        bus.publish("exec.command.modify",
+                    ModifyOrder(order_id="o1", updates={"quantity": 0}))
+        bus.publish("exec.event.modified.dhan",
+                    OrderModified(order_id="o1", updates={"quantity": 0},
+                                  timestamp=clock.utc_now()))
+
+        cached = engine.cache.order("o1")
+        assert cached.quantity == 10  # unchanged, no exception propagated
+
+    def test_fill_uses_weighted_average_price(self):
+        """avg_price drives cost basis and PnL; it must be a quantity-weighted
+        average of fills, not the last marginal fill price."""
+        bus, clock, engine = self._engine()
+        self._open_order(bus, clock, engine, order_id="wavg")
+
+        bus.publish(
+            "exec.event.filled.dhan",
+            OrderFilled(
+                order_id="wavg",
+                fill=make_fill(order_id="wavg", quantity=4, price=Decimal("100.00")),
+                timestamp=clock.utc_now(),
+            ),
+        )
+        bus.publish(
+            "exec.event.filled.dhan",
+            OrderFilled(
+                order_id="wavg",
+                fill=make_fill(order_id="wavg", quantity=6, price=Decimal("200.00")),
+                timestamp=clock.utc_now(),
+            ),
+        )
+
+        cached = engine.cache.order("wavg")
+        assert cached.state == OrderState.FILLED
+        assert cached.filled_quantity == 10
+        # (4*100 + 6*200) / 10 = 160.00
+        assert cached.avg_price == Decimal("160.00")

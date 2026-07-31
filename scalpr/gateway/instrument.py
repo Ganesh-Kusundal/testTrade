@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from datetime import date, datetime
-from decimal import Decimal
-from typing import Any, Callable
+from typing import Any
 
 from scalpr.domain.contracts import MarketDepth, Quote
 from scalpr.domain.instrument import ResolvedInstrument
-from scalpr.domain.tick import Candle, OHLC
+from scalpr.domain.tick import OHLC, Candle
 from scalpr.gateway.market_data_service import MarketDataService
 from scalpr.gateway.subscription import Subscription
 

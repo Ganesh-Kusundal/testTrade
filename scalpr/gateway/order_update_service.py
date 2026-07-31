@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from datetime import datetime
-from typing import Any, Callable
+from decimal import Decimal
+from typing import Any
 
-from scalpr.adapters.dhan.client import DhanClient
-from scalpr.domain.tick import TickerEvent, QuoteEvent, FullEvent
-from scalpr.gateway.subscription import Subscription
+from scalpr.domain.contracts import BrokerClientProtocol
 from scalpr.domain.instrument import MarketFeed
+from scalpr.gateway.subscription import Subscription
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +43,7 @@ class OrderUpdateService:
     The adapter must normalize Dhan order updates into OrderUpdate domain events.
     """
 
-    def __init__(self, client: DhanClient, bus: Any = None) -> None:
+    def __init__(self, client: BrokerClientProtocol, bus: Any = None) -> None:
         self._client = client
         self._bus = bus
         self._subscribers: list[Callable[[OrderUpdate], None]] = []

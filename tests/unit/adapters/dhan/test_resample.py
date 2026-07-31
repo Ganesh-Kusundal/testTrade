@@ -121,7 +121,7 @@ def test_resamples_to_15min() -> None:
     assert len(result) == 6
 
 
-def test_resamples_1H() -> None:
+def test_resamples_1H() -> None:  # noqa: N802
     rows = []
     base = datetime(2025, 7, 30, 9, 15)
     for i in range(76):
@@ -139,7 +139,7 @@ def test_resamples_1H() -> None:
     assert result.iloc[0]["open"] == 100.0
 
 
-def test_resamples_1D() -> None:
+def test_resamples_1D() -> None:  # noqa: N802
     rows = []
     for day in (28, 29):
         for hour in (9, 10, 11, 12):

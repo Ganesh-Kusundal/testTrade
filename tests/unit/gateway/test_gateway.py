@@ -3,8 +3,13 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 from scalpr.adapters.dhan.client import DhanClient
-from scalpr.domain.instrument import Exchange, ResolvedInstrument, Segment, SimpleInstrumentId, MarketFeed
-from scalpr.domain.tick import QuoteEvent
+from scalpr.domain.instrument import (
+    Exchange,
+    MarketFeed,
+    ResolvedInstrument,
+    Segment,
+    SimpleInstrumentId,
+)
 from scalpr.engine.clock import StaticClock
 from scalpr.engine.message_bus import RecordingBus
 from scalpr.gateway import Gateway

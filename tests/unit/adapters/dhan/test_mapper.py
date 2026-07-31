@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 
+from scalpr.adapters.dhan._mapper_market import to_quote
 from scalpr.adapters.dhan._mapper_orders import (
     InvalidValueError,
     MissingFieldError,
@@ -15,10 +16,9 @@ from scalpr.adapters.dhan._mapper_orders import (
     raw_order_to_order,
     raw_trade_to_fill,
     response_to_fill,
+    transaction_type_from_side,
 )
 from scalpr.adapters.dhan._mapper_portfolio import to_option_chain, to_position
-from scalpr.adapters.dhan._mapper_market import to_quote
-from scalpr.adapters.dhan._mapper_orders import transaction_type_from_side
 from scalpr.domain.instrument import Exchange, SimpleInstrumentId
 from scalpr.domain.order import Order, OrderSide, OrderState, OrderType
 from scalpr.domain.position import PositionSide, PositionState
@@ -253,7 +253,7 @@ class TestResponseToFill:
         assert fill.quantity == 3
         assert fill.price == Decimal("2490.00")
 
-    def test_fill_with_fillPrice_fallback(self):
+    def test_fill_with_fillPrice_fallback(self):  # noqa: N802
         order = self.make_order(filled_quantity=5)
         resp = {"orderId": "ORD789", "filledQuantity": 5, "fillPrice": "2520.75"}
         fill = response_to_fill(resp, order)

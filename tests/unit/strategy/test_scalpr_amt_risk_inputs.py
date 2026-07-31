@@ -12,7 +12,6 @@ import pytest
 
 from scalpr.domain.contracts import Funds
 from scalpr.domain.tick import Tick
-from scalpr.execution.order_router import OrderRouter
 from scalpr.signals.gate_fsm import GateFSM
 from scalpr.strategy.scalpr_amt import ScalprAmtStrategy
 

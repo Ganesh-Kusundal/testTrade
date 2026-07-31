@@ -7,8 +7,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from scalpr.adapters.dhan._mapper_orders import InvalidValueError, order_to_dhan_request_v2, product_type_from_domain
 from scalpr.adapters.dhan._mapper_advanced_orders import kill_switch_to_dhan
+from scalpr.adapters.dhan._mapper_orders import (
+    InvalidValueError,
+    order_to_dhan_request_v2,
+    product_type_from_domain,
+)
 from scalpr.domain.instrument import Exchange
 from scalpr.domain.order import Order, OrderSide, OrderType
 

@@ -1049,7 +1049,7 @@ class TestEdgeCases:
         resolver.load_from_rows(mcx_all_futures)
         stats = resolver.stats()
         assert stats["loaded"] is True
-        assert stats["total"] == 8  # 4 commodities × 2 futures each
+        assert stats["total"] == 8  # 4 commodities x 2 futures each
 
     def test_all_instruments_returns_list(
         self, mcx_all_futures: list[dict[str, str]]

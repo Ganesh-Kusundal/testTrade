@@ -435,9 +435,9 @@ class TestCombineDepthSnapshot:
 
 class TestMarketDepthDTOs:
     def test_market_depth_level_frozen(self) -> None:
-        l = MarketDepthLevel(100.0, 1000, 101.0, 800, 5, 3)
+        level = MarketDepthLevel(100.0, 1000, 101.0, 800, 5, 3)
         with pytest.raises(AttributeError):
-            l.bid_price = 99.0
+            level.bid_price = 99.0
 
     def test_market_depth_snapshot_frozen(self) -> None:
         levels = [MarketDepthLevel(100.0, 1000, 101.0, 800, 5, 3)]
@@ -590,16 +590,16 @@ class TestMarketDepthDf:
 
 class TestTypesConstruction:
     def test_market_depth_level_construction(self) -> None:
-        l = MarketDepthLevel(
+        level = MarketDepthLevel(
             bid_price=100.0, bid_qty=1000, ask_price=101.0,
             ask_qty=800, bid_orders=5, ask_orders=3,
         )
-        assert l.bid_price == 100.0
-        assert l.bid_qty == 1000
-        assert l.ask_price == 101.0
-        assert l.ask_qty == 800
-        assert l.bid_orders == 5
-        assert l.ask_orders == 3
+        assert level.bid_price == 100.0
+        assert level.bid_qty == 1000
+        assert level.ask_price == 101.0
+        assert level.ask_qty == 800
+        assert level.bid_orders == 5
+        assert level.ask_orders == 3
 
     def test_market_depth_snapshot_construction(self) -> None:
         levels = [MarketDepthLevel(100.0, 1000, 101.0, 800, 5, 3)]

@@ -1,17 +1,18 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
-from scalpr.adapters.dhan.client import DhanClient
+from scalpr.domain.contracts import BrokerClientProtocol
 from scalpr.domain.instrument import (
     Exchange,
+    MarketFeed,
     ResolvedInstrument,
     Segment,
     SimpleInstrumentId,
-    MarketFeed,
 )
-from scalpr.domain.tick import TickerEvent, QuoteEvent, FullEvent
+from scalpr.domain.tick import FullEvent, QuoteEvent, TickerEvent
 from scalpr.engine.clock import Clock, LiveClock
 from scalpr.engine.message_bus import MessageBus, RecordingBus
 from scalpr.gateway.account_service import AccountService
@@ -26,6 +27,45 @@ from scalpr.gateway.trader_control_service import TraderControlService
 
 logger = logging.getLogger(__name__)
 
+# ── Broker factory registry ─────────────────────────────────────────────
+# Maps broker names to factory functions.  Each factory receives a `config`
+# dict and returns a BrokerClientProtocol.  New brokers register here —
+# Gateway never imports a concrete adapter directly.
+
+_broker_factories: dict[str, Callable[[dict], BrokerClientProtocol]] = {}
+
+
+def register_broker(name: str, factory: Callable[[dict], BrokerClientProtocol]) -> None:
+    """Register a broker factory by name (e.g. 'dhan', 'upstox')."""
+    _broker_factories[name] = factory
+
+
+def create_broker_client(name: str, config: dict | None = None) -> BrokerClientProtocol:
+    """Create a broker client by registered name."""
+    if name not in _broker_factories:
+        raise ValueError(
+            f"Unknown broker {name!r}.  Registered: {list(_broker_factories)}"
+        )
+    return _broker_factories[name](config or {})
+
+
+def _create_dhan_client(config: dict) -> BrokerClientProtocol:
+    """Lazy factory for DhanClient — only imported when called.
+
+    ``config`` may contain: bus (MessageBus), clock (Clock),
+    and any DhanClient-specific keys (client_id, access_token, etc.).
+    bus/clock are extracted and the rest is passed to DhanClient.
+    """
+    from scalpr.adapters.dhan.client import DhanClient
+    bus = config.get("bus", RecordingBus())
+    clock = config.get("clock", LiveClock())
+    dhan_config = {k: v for k, v in config.items() if k not in ("bus", "clock")}
+    return DhanClient(bus=bus, clock=clock, config=dhan_config)
+
+
+# Register the default broker at import time (lazy import inside factory).
+register_broker("dhan", _create_dhan_client)
+
 
 class Gateway:
     """Application facade — single entry point for the application.
@@ -36,11 +76,20 @@ class Gateway:
 
     def __init__(
         self,
-        client: DhanClient | None = None,
+        client: BrokerClientProtocol | None = None,
         bus: MessageBus | None = None,
         clock: Clock | None = None,
+        broker: str | None = None,
+        broker_config: dict | None = None,
     ) -> None:
-        self._client = client or DhanClient()
+        if client is not None:
+            self._client = client
+        else:
+            _broker = broker or "dhan"
+            cfg = dict(broker_config or {})
+            cfg.setdefault("bus", bus or RecordingBus())
+            cfg.setdefault("clock", clock or LiveClock())
+            self._client = create_broker_client(_broker, cfg)
         self._bus = bus or RecordingBus()
         self._clock = clock or LiveClock()
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 from scalpr.adapters.dhan.client import DhanClient
-from scalpr.gateway.order_update_service import OrderUpdateService, OrderUpdate
+from scalpr.gateway.order_update_service import OrderUpdate, OrderUpdateService
 from scalpr.gateway.subscription import Subscription
 
 

@@ -28,7 +28,7 @@ jobs:
         run: ruff check scalpr tests
 
       - name: Architecture contracts (import-linter)
-        run: lint-imports --config pyproject.toml
+        run: lint-imports --config pyproject.toml --no-cache
 
       - name: Unit + contract tests with coverage gate
         run: >

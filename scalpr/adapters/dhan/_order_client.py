@@ -192,7 +192,7 @@ class OrderClient:
             trailing_jump=trailing_jump,
             tag=tag,
         )
-        resp = self._http.post("/superorders", data=req)
+        resp = self._http.post("/super/orders", data=req)
         raw = resp.get("orderIds", resp.get("orderId", ""))
         if isinstance(raw, list):
             return raw
@@ -219,15 +219,15 @@ class OrderClient:
             "stopLossPrice": float(stop_loss_price),
             "trailingJump": float(trailing_jump),
         }
-        self._http.put(f"/superorders/{order_id}", data=payload)
+        self._http.put(f"/super/orders/{order_id}", data=payload)
         return True
 
     def cancel_super_order(self, order_id: str) -> bool:
-        self._http.delete(f"/superorders/{order_id}")
+        self._http.delete(f"/super/orders/{order_id}")
         return True
 
     def get_super_orders(self, as_df: bool = False) -> list[dict] | pd.DataFrame:
-        resp = self._http.get("/superorders", bucket="orders")
+        resp = self._http.get("/super/orders", bucket="orders")
         if isinstance(resp, list):
             result = resp
         elif isinstance(resp, dict):
@@ -270,7 +270,7 @@ class OrderClient:
             price1=price1, trigger_price1=trigger_price1,
             quantity1=quantity1, tag=tag, symbol=symbol,
         )
-        resp = self._http.post("/foreverorders", data=req)
+        resp = self._http.post("/forever/orders", data=req)
         order_id: str = resp.get("orderId", "")
         return order_id
 
@@ -297,15 +297,15 @@ class OrderClient:
             "triggerPrice": float(trigger_price),
             "validity": validity.upper(),
         }
-        self._http.put(f"/foreverorders/{order_id}", data=payload)
+        self._http.put(f"/forever/orders/{order_id}", data=payload)
         return True
 
     def cancel_forever_order(self, order_id: str) -> bool:
-        self._http.delete(f"/foreverorders/{order_id}")
+        self._http.delete(f"/forever/orders/{order_id}")
         return True
 
     def get_forever_orders(self, as_df: bool = False) -> list[dict] | pd.DataFrame:
-        resp = self._http.get("/foreverorders", bucket="orders")
+        resp = self._http.get("/forever/orders", bucket="orders")
         if isinstance(resp, list):
             result = resp
         elif isinstance(resp, dict):
@@ -373,16 +373,16 @@ class OrderClient:
             payload["comparingIndicatorName"] = comparing_indicator_name
         if exp_date:
             payload["expDate"] = exp_date
-        resp = self._http.post("/triggers", data=payload, bucket="orders")
-        trigger_id: str = resp.get("triggerId", "")
+        resp = self._http.post("/alerts/orders", data=payload, bucket="orders")
+        trigger_id: str = resp.get("alertId", resp.get("triggerId", ""))
         return trigger_id
 
     def delete_conditional_trigger(self, trigger_id: str) -> bool:
-        self._http.delete(f"/triggers/{trigger_id}")
+        self._http.delete(f"/v2/alerts/orders/{trigger_id}")
         return True
 
     def get_all_conditional_triggers(self, as_df: bool = False) -> list[dict] | pd.DataFrame:
-        resp = self._http.get("/triggers", bucket="orders")
+        resp = self._http.get("/alerts/orders", bucket="orders")
         if isinstance(resp, list):
             result = resp
         elif isinstance(resp, dict):
@@ -394,7 +394,7 @@ class OrderClient:
         return result
 
     def get_conditional_trigger_by_id(self, trigger_id: str, as_df: bool = False) -> dict | pd.DataFrame:
-        resp = self._http.get(f"/triggers/{trigger_id}", bucket="orders")
+        resp = self._http.get(f"/v2/alerts/orders/{trigger_id}", bucket="orders")
         result = resp if isinstance(resp, dict) else {}
         if as_df:
             return pd.DataFrame([result])

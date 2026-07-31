@@ -88,7 +88,7 @@ class DhanWebSocket:
         DISCONNECTED_PERMANENT -> connect() -> DISCONNECTED -> CONNECTING
     """
 
-    BACKOFF: list[float] = [1.0, 2.0, 4.0, 8.0, 16.0, 30.0]
+    BACKOFF: list[float] = [1.0, 2.0, 4.0, 8.0, 16.0, 30.0]  # noqa: RUF012
     MAX_RETRIES: int = 5
     MAX_SUBSCRIBERS: int = 1000
     _SUBSCRIBER_WARN_THRESHOLD: float = 0.85
@@ -123,6 +123,7 @@ class DhanWebSocket:
         self._on_depth_tick: Callable | None = None
         self._depth_cmd_queues: dict[int, queue.Queue] = {20: queue.Queue(), 200: queue.Queue()}
         self._depth_feed_readys: dict[int, threading.Event] = {}
+        self._depth_cache: dict[str, Any] = {}  # latest depth snapshot per instrument
 
     # ── Public API: quote/tick ──────────────────────────────────────
 
@@ -184,7 +185,7 @@ class DhanWebSocket:
             try:
                 self._feed.close_connection()
             except Exception:
-                pass
+                logger.debug("ws_cleanup_failed", exc_info=True)
 
     def subscribe(self, security_ids: list[tuple[str, str]], mode: str = "quote") -> None:
         new_count = len(self._subscriptions) + len(security_ids)
@@ -447,7 +448,7 @@ class DhanWebSocket:
                 try:
                     feed.close_connection()
                 except Exception:
-                    pass
+                    logger.debug("ws_cleanup_failed", exc_info=True)
             thread = self._depth_threads.pop(lvl, None)
             if thread:
                 thread.join(timeout=3)
@@ -515,6 +516,8 @@ class DhanWebSocket:
             snapshot = self._combine_depth_snapshot(
                 sec_id, ex_seg, entry["bid"], entry["ask"],
             )
+            cache_key = f"{ex_seg}:{sec_id}"
+            self._depth_cache[cache_key] = snapshot
             if self._on_depth_tick:
                 try:
                     self._on_depth_tick(snapshot)
@@ -545,6 +548,15 @@ class DhanWebSocket:
         security_ids: list[tuple[str, str]],
     ) -> list[tuple[int, str]]:
         return full_depth_sdk_pairs(security_ids)
+
+    def get_depth_snapshot(self, security_id: str, exchange: str) -> Any | None:
+        """Return the latest cached depth snapshot for an instrument, or None."""
+        key = f"{exchange}:{security_id}"
+        return self._depth_cache.get(key)
+
+    def is_depth_subscribed(self, security_id: str, exchange: str) -> bool:
+        """Check if an instrument is subscribed to the depth feed."""
+        return (security_id, exchange) in self._depth_subscriptions.get(20, set())
 
     def _combine_depth_snapshot(
         self, security_id: str, exchange: str,

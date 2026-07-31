@@ -126,6 +126,7 @@ class TestDhanClientLifecycle(unittest.TestCase):
         self.mock_exists = self.mocks[5]
 
         self.client = DhanClient(self.bus, self.clock, self.config)
+        self.addCleanup(self.client.stop)
 
     def test_start_loads_resolver_connects_ws_subscribes(self):
         self.mock_exists.return_value = False
@@ -173,6 +174,19 @@ class TestDhanClientLifecycle(unittest.TestCase):
 
         self.mock_ws.disconnect.assert_called_once_with()
         self.assertEqual(len(self.client._subscriptions), 0)
+
+    def test_start_begins_order_watcher_heartbeat(self):
+        """The fill ingress must actually run in production: start() begins
+        the order-book polling loop and stop() halts it."""
+        self.mock_exists.return_value = False
+        self.client.start()
+        watcher_thread = self.client._watcher_thread
+        self.assertIsNotNone(watcher_thread)
+        self.assertTrue(watcher_thread.is_alive())
+
+        self.client.stop()
+        self.assertIsNone(self.client._watcher_thread)
+        self.assertFalse(watcher_thread.is_alive())
 
     def test_stop_idempotent(self):
         self.client.stop()
@@ -245,7 +259,7 @@ class TestDhanClientOnSubmit(unittest.TestCase):
             "triggerPrice": "0",
             "afterMarketOrder": False,
         }
-        self.mock_http_client.post.return_value = {"orderId": "ord-1", "filledQuantity": 10}
+        self.mock_http_client.post.return_value = {"orderId": "ORD123456", "orderStatus": "TRANSIT"}
 
     def test_acquires_rate_limit_bucket_orders(self):
         self.client._on_submit(self.msg)
@@ -270,6 +284,14 @@ class TestDhanClientOnSubmit(unittest.TestCase):
         self.mock_http_client.post.assert_called_once_with(
             "/orders", data=self.mock_order_to_dhan_v2.return_value,
         )
+
+    def test_sends_local_order_id_as_correlation_id(self):
+        """The broker echoes correlationId back in the order book; carrying
+        the local order id lets OrderWatcher re-attribute orders after a
+        restart or a lost submit response."""
+        self.client._on_submit(self.msg)
+        posted = self.mock_http_client.post.call_args.kwargs["data"]
+        self.assertEqual(posted["correlationId"], "ord-1")
 
     def test_does_not_convert_response_to_fill(self):
         """Phantom fill creation must be removed — response_to_fill should not be called."""
@@ -298,6 +320,33 @@ class TestDhanClientOnSubmit(unittest.TestCase):
         self.assertIsInstance(ev, OrderRejected)
         self.assertEqual(ev.order_id, "ord-1")
         self.assertIn("API down", ev.reason)
+
+    def test_submit_registers_broker_order_id(self):
+        """POST /orders returns the broker's orderId; it must be captured, not
+        discarded, otherwise cancel/modify can never address the real order."""
+        self.client._on_submit(self.msg)
+        self.assertEqual(self.client.registry.broker_id("ord-1"), "ORD123456")
+
+    def test_accepted_event_carries_broker_order_id(self):
+        self.client._on_submit(self.msg)
+        events = self.bus.filter("exec.event.accepted.dhan")
+        self.assertEqual(len(events), 1)
+        ev = events[0].payload
+        self.assertEqual(ev.order_id, "ord-1")
+        self.assertEqual(ev.broker_order_id, "ORD123456")
+
+    def test_missing_order_id_in_response_is_a_rejection(self):
+        """No orderId means we could never cancel it — treat as rejected rather
+        than pretending the order is live."""
+        self.mock_http_client.post.return_value = {"orderStatus": "TRANSIT"}
+
+        self.client._on_submit(self.msg)
+
+        self.assertIsNone(self.client.registry.broker_id("ord-1"))
+        self.assertEqual(len(self.bus.filter("exec.event.accepted.dhan")), 0)
+        events = self.bus.filter("exec.event.rejected.dhan")
+        self.assertEqual(len(events), 1)
+        self.assertIn("orderId", events[0].payload.reason)
 
     def test_does_not_publish_filled_on_error(self):
         self.mock_http_client.post.side_effect = RuntimeError("API down")
@@ -328,6 +377,7 @@ class TestDhanClientOnCancel(unittest.TestCase):
         self.mock_resolver = self.mocks[4].return_value
 
         self.client = DhanClient(self.bus, self.clock, self.config)
+        self.client.registry.register("ord-1", "ORD123456")
         self.msg = CancelOrder(order_id="ord-1")
 
     def test_acquires_rate_limit_bucket_orders(self):
@@ -335,7 +385,7 @@ class TestDhanClientOnCancel(unittest.TestCase):
 
     def test_sends_delete_request(self):
         self.client._on_cancel(self.msg)
-        self.mock_http_client.delete.assert_called_once_with("/orders/ord-1")
+        self.mock_http_client.delete.assert_called_once_with("/orders/ORD123456")
 
     def test_publishes_cancelled_event_on_success(self):
         self.client._on_cancel(self.msg)
@@ -348,6 +398,37 @@ class TestDhanClientOnCancel(unittest.TestCase):
     def test_handles_error_gracefully(self):
         self.mock_http_client.delete.side_effect = RuntimeError("conn lost")
         self.client._on_cancel(self.msg)  # should not raise
+
+    def test_cancel_of_unmapped_order_publishes_cancel_rejected(self):
+        """No mapping means we cannot address the broker. Say so loudly instead
+        of letting the engine believe the order is cancelled."""
+        self.client.registry.forget("ord-1")
+
+        self.client._on_cancel(self.msg)
+
+        self.mock_http_client.delete.assert_not_called()
+        events = self.bus.filter("exec.event.cancel_rejected.dhan")
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].payload.order_id, "ord-1")
+        self.assertIn("unknown", events[0].payload.reason.lower())
+
+    def test_cancel_http_failure_publishes_cancel_rejected(self):
+        """A broker-side cancel failure must reach the engine — the local book
+        must not silently diverge from a still-live broker order."""
+        self.mock_http_client.delete.side_effect = RuntimeError("DH-906 order not found")
+
+        self.client._on_cancel(self.msg)
+
+        self.assertEqual(len(self.bus.filter("exec.event.cancelled.dhan")), 0)
+        events = self.bus.filter("exec.event.cancel_rejected.dhan")
+        self.assertEqual(len(events), 1)
+        self.assertIn("DH-906", events[0].payload.reason)
+
+    def test_optimistic_cancel_marks_watcher_terminal(self):
+        """After a DELETE-200 cancel, the watcher must not re-publish
+        exec.event.cancelled.dhan when it later sees the CANCELLED row."""
+        self.client._on_cancel(self.msg)
+        self.assertIn("ORD123456", self.client._order_watcher._terminal)
 
 
 class TestDhanClientOnModify(unittest.TestCase):
@@ -373,20 +454,129 @@ class TestDhanClientOnModify(unittest.TestCase):
         self.mock_resolver = self.mocks[4].return_value
 
         self.client = DhanClient(self.bus, self.clock, self.config)
+        self.client.registry.register("ord-1", "ORD123456")
         self.msg = ModifyOrder(order_id="ord-1", updates={"quantity": 15})
+        # Default order-detail response so _build_modify_payload succeeds;
+        # individual tests override as needed.
+        self.mock_http_client.get.return_value = {
+            "orderType": "LIMIT",
+            "legName": "",
+            "quantity": 10,
+            "price": 2500.0,
+            "disclosedQuantity": 0,
+            "triggerPrice": 0.0,
+            "validity": "DAY",
+        }
 
     def test_acquires_rate_limit_bucket_orders(self):
         self.client._on_modify(self.msg)
 
     def test_sends_put_request(self):
+        self.mock_http_client.get.return_value = {
+            "orderType": "LIMIT",
+            "legName": "",
+            "quantity": 10,
+            "price": 2500.0,
+            "disclosedQuantity": 0,
+            "triggerPrice": 0.0,
+            "validity": "DAY",
+        }
         self.client._on_modify(self.msg)
         self.mock_http_client.put.assert_called_once_with(
-            "/orders/ord-1", data={"quantity": 15},
+            "/orders/ORD123456",
+            data={
+                "orderType": "LIMIT",
+                "legName": "",
+                "quantity": 15,
+                "price": 2500.0,
+                "disclosedQuantity": 0,
+                "triggerPrice": 0.0,
+                "validity": "DAY",
+            },
         )
+
+    def test_modify_maps_trigger_price_to_wire_name(self):
+        """Dhan expects triggerPrice in the modify body; the domain key is
+        trigger_price. Sending the raw domain dict would 400 against the real
+        API and the local book would diverge from the broker."""
+        self.mock_http_client.get.return_value = {
+            "orderType": "STOP_LOSS",
+            "legName": "",
+            "quantity": 10,
+            "price": 2500.0,
+            "disclosedQuantity": 0,
+            "triggerPrice": 2490.0,
+            "validity": "DAY",
+        }
+        self.msg = ModifyOrder(order_id="ord-1", updates={"trigger_price": 2495.0})
+        self.client._on_modify(self.msg)
+        payload = self.mock_http_client.put.call_args.kwargs["data"]
+        self.assertEqual(payload["triggerPrice"], 2495.0)
+        self.assertEqual(payload["orderType"], "STOP_LOSS")
 
     def test_handles_error_gracefully(self):
         self.mock_http_client.put.side_effect = RuntimeError("conn lost")
         self.client._on_modify(self.msg)  # should not raise
+
+    def test_modify_detail_fetch_failure_is_fail_closed(self):
+        """If the current order detail cannot be fetched, the modify must be
+        rejected — not guessed (e.g. defaulting a STOP_LOSS order to LIMIT)."""
+        self.mock_http_client.get.side_effect = RuntimeError("conn lost")
+
+        self.client._on_modify(self.msg)
+
+        self.mock_http_client.put.assert_not_called()
+        events = self.bus.filter("exec.event.modify_rejected.dhan")
+        self.assertEqual(len(events), 1)
+        self.assertIn("detail", events[0].payload.reason.lower())
+
+    def test_modify_detail_without_order_type_is_fail_closed(self):
+        self.mock_http_client.get.return_value = {"quantity": 10, "price": 2500.0}
+
+        self.client._on_modify(self.msg)
+
+        self.mock_http_client.put.assert_not_called()
+        events = self.bus.filter("exec.event.modify_rejected.dhan")
+        self.assertEqual(len(events), 1)
+
+    def test_modify_uses_broker_order_id_and_confirms(self):
+        self.client._on_modify(self.msg)
+
+        self.mock_http_client.put.assert_called_once()
+        self.assertEqual(self.mock_http_client.put.call_args.args[0], "/orders/ORD123456")
+        events = self.bus.filter("exec.event.modified.dhan")
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].payload.order_id, "ord-1")
+        self.assertEqual(events[0].payload.updates, {"quantity": 15})
+
+    def test_modify_of_unmapped_order_publishes_modify_rejected(self):
+        """Without a mapping the broker cannot be addressed. Announce it rather
+        than leaving the engine to assume the modify landed."""
+        self.client.registry.forget("ord-1")
+
+        self.client._on_modify(self.msg)
+
+        self.mock_http_client.put.assert_not_called()
+        events = self.bus.filter("exec.event.modify_rejected.dhan")
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].payload.order_id, "ord-1")
+        self.assertIn("unknown", events[0].payload.reason.lower())
+
+    def test_modify_http_failure_publishes_modify_rejected(self):
+        self.mock_http_client.put.side_effect = RuntimeError("DH-905 invalid price")
+
+        self.client._on_modify(self.msg)
+
+        self.assertEqual(len(self.bus.filter("exec.event.modified.dhan")), 0)
+        events = self.bus.filter("exec.event.modify_rejected.dhan")
+        self.assertEqual(len(events), 1)
+        self.assertIn("DH-905", events[0].payload.reason)
+
+    def test_optimistic_cancel_marks_watcher_terminal(self):
+        """After a DELETE-200 cancel, the watcher must not re-publish
+        exec.event.cancelled.dhan when it later sees the CANCELLED row."""
+        self.client._on_cancel(CancelOrder(order_id="ord-1"))
+        self.assertIn("ORD123456", self.client._order_watcher._terminal)
 
 
 class TestDhanClientSubscribeQuotes(unittest.TestCase):

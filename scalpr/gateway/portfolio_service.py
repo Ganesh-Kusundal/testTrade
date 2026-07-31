@@ -4,8 +4,7 @@ import logging
 from decimal import Decimal
 from typing import Any
 
-from scalpr.adapters.dhan.client import DhanClient
-from scalpr.domain.contracts import Funds, Holding
+from scalpr.domain.contracts import BrokerClientProtocol, Funds, Holding
 from scalpr.domain.position import Position
 
 logger = logging.getLogger(__name__)
@@ -14,7 +13,7 @@ logger = logging.getLogger(__name__)
 class PortfolioService:
     """Broker-agnostic portfolio service returning domain objects."""
 
-    def __init__(self, client: DhanClient) -> None:
+    def __init__(self, client: BrokerClientProtocol) -> None:
         self._client = client
 
     def holdings(self) -> list[Holding]:

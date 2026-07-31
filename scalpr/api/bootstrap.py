@@ -40,7 +40,6 @@ def _create_gateway() -> tuple[Any, str | None]:
     API still boots without broker credentials, returning 503 on broker
     endpoints.
     """
-    from config.secrets_manager import SecretsManager
     from scalpr.adapters.dhan.client import DhanClient
     from scalpr.engine.clock import LiveClock
     from scalpr.engine.message_bus import MessageBus
@@ -86,7 +85,6 @@ def _create_event_system(existing_client: Any = None) -> dict | None:
                     id(bus), id(engine), id(existing_client))
         return {"clock": clock, "bus": bus, "engine": engine, "client": existing_client}
 
-    from config.secrets_manager import SecretsManager
 
     sm = SecretsManager()
     client_id = sm.get_dhan_client_id()

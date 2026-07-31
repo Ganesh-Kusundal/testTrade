@@ -3,6 +3,8 @@ from __future__ import annotations
 import csv
 import logging
 import os
+import threading
+from decimal import Decimal
 from typing import Any
 
 import pandas as pd
@@ -12,22 +14,15 @@ from scalpr.adapters.dhan._greeks import GreeksCalculator
 from scalpr.adapters.dhan._historical import HistoricalDataAdapter
 from scalpr.adapters.dhan._http import DhanHttpClient, RateLimiter
 from scalpr.adapters.dhan._loader import InstrumentLoader
-from scalpr.adapters.dhan._mapper_advanced_orders import (
-    forever_order_to_dhan_request,
-    kill_switch_to_dhan,
-    super_order_to_dhan_request,
-)
+from scalpr.adapters.dhan._mapper_market import to_quote  # noqa: F401 — re-exported for test mocks
 from scalpr.adapters.dhan._mapper_orders import (
     order_to_dhan_request_v2,
 )
-from scalpr.adapters.dhan._mapper_portfolio import (
-    margin_calc_to_dhan_request,
-    to_position,
-)
-from scalpr.adapters.dhan._mapper_market import to_quote
 from scalpr.adapters.dhan._market_data_client import MarketDataClient
 from scalpr.adapters.dhan._option_chain import OptionChainAdapter
 from scalpr.adapters.dhan._order_client import OrderClient
+from scalpr.adapters.dhan._order_registry import OrderRegistry
+from scalpr.adapters.dhan._order_watcher import OrderWatcher
 from scalpr.adapters.dhan._portfolio import PortfolioAdapter
 from scalpr.adapters.dhan._resolver import DhanInstrumentNotFoundError as InstrumentNotFoundError
 from scalpr.adapters.dhan._resolver import SymbolResolver
@@ -47,6 +42,10 @@ from scalpr.engine.execution_engine import (
     ModifyOrder,
     OrderAccepted,
     OrderCancelled,
+    OrderCancelRejected,
+    OrderFilled,
+    OrderModified,
+    OrderModifyRejected,
     OrderRejected,
     SubmitOrder,
 )
@@ -91,7 +90,17 @@ class DhanClient:
         self._option_chain: OptionChainAdapter = OptionChainAdapter(self._http_client, self._resolver)
         self._greeks: GreeksCalculator = GreeksCalculator(self._http_client, self._option_chain)
         self._portfolio: PortfolioAdapter = PortfolioAdapter(self._http_client)
+        self._registry = OrderRegistry()
+        self._order_watcher = OrderWatcher(
+            http=self._http_client,
+            bus=self._bus,
+            clock=self._clock,
+            registry=self._registry,
+        )
+        self._watcher_stop = threading.Event()
+        self._watcher_thread: threading.Thread | None = None
         self._subscriptions: list[tuple[str, Any]] = []
+        self._order_update_feed: Any = None
 
         def hp():
             return self._http_client
@@ -117,6 +126,11 @@ class DhanClient:
 
     # ── Lifecycle ──────────────────────────────────────────────────────
 
+    @property
+    def registry(self) -> OrderRegistry:
+        """Local order id <-> Dhan orderId map for this client."""
+        return self._registry
+
     def start(self) -> None:
         try:
             csv_path = self._loader.ensure_loaded()
@@ -137,8 +151,10 @@ class DhanClient:
             ("exec.command.cancel.dhan", self._on_cancel),
             ("exec.command.modify.dhan", self._on_modify),
         ]
+        self.start_order_watcher()
 
     def stop(self) -> None:
+        self._stop_order_watcher()
         self._token_manager.stop()
         self._ws.disconnect()
         for topic, handler in self._subscriptions:
@@ -185,6 +201,37 @@ class DhanClient:
             exchange = parsed.exchange.value
         return self._resolver.resolve_full(symbol, exchange)
 
+    # ── Order-book watcher (fill ingress) ─────────────────────────────
+
+    def start_order_watcher(self, interval_seconds: float = 5.0) -> None:
+        """Start the order-book polling heartbeat. Idempotent."""
+        if self._watcher_thread is not None and self._watcher_thread.is_alive():
+            return
+        self._watcher_stop.clear()
+        self._watcher_interval = interval_seconds
+        self._watcher_thread = threading.Thread(
+            target=self._watcher_loop, name="dhan-order-watcher", daemon=True
+        )
+        self._watcher_thread.start()
+
+    def poll_order_book(self) -> None:
+        """Poll GET /orders once and publish any lifecycle changes."""
+        self._order_watcher.poll_once()
+
+    def _watcher_loop(self) -> None:
+        while not self._watcher_stop.wait(self._watcher_interval):
+            try:
+                self._order_watcher.poll_once()
+            except Exception as exc:
+                logger.error("order_watch_loop_crashed: %s", exc)
+
+    def _stop_order_watcher(self) -> None:
+        self._watcher_stop.set()
+        thread = self._watcher_thread
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=2.0)
+        self._watcher_thread = None
+
     # ── Bus handlers (stay on facade) ──────────────────────────────────
 
     def _on_submit(self, msg: SubmitOrder) -> None:
@@ -196,16 +243,25 @@ class DhanClient:
                 order, security_id, segment, self._client_id,
                 product_type=order.product_type,
             )
+            # The broker echoes correlationId back in the order book; carrying
+            # the local order id here lets OrderWatcher re-attribute orders on
+            # restart or after a lost submit response.
+            req["correlationId"] = order.order_id
             resp = self._http_client.post("/orders", data=req)
+            broker_order_id = str(resp.get("orderId") or "")
+            if not broker_order_id:
+                raise ValueError(f"broker response missing 'orderId': {resp!r}")
+            self._registry.register(order.order_id, broker_order_id)
             self._bus.publish(
                 "exec.event.accepted.dhan",
                 OrderAccepted(
                     order_id=order.order_id,
                     timestamp=self._clock.timestamp(),
+                    broker_order_id=broker_order_id,
                 ),
             )
         except Exception as exc:
-            logger.error("submit_failed: %s", exc)
+            logger.error("submit_failed: order_id=%s error=%s", order.order_id, exc)
             self._bus.publish(
                 "exec.event.rejected.dhan",
                 OrderRejected(
@@ -216,23 +272,115 @@ class DhanClient:
             )
 
     def _on_cancel(self, msg: CancelOrder) -> None:
-        try:
-            self._http_client.delete(f"/orders/{msg.order_id}")
+        broker_order_id = self._registry.broker_id(msg.order_id)
+        if broker_order_id is None:
+            logger.error("cancel_unmapped: order_id=%s", msg.order_id)
             self._bus.publish(
-                "exec.event.cancelled.dhan",
-                OrderCancelled(
+                "exec.event.cancel_rejected.dhan",
+                OrderCancelRejected(
                     order_id=msg.order_id,
+                    reason=f"unknown broker order id for {msg.order_id}",
                     timestamp=self._clock.timestamp(),
                 ),
             )
+            return
+        try:
+            self._http_client.delete(f"/orders/{broker_order_id}")
         except Exception as exc:
             logger.error("cancel_failed: order_id=%s error=%s", msg.order_id, exc)
+            self._bus.publish(
+                "exec.event.cancel_rejected.dhan",
+                OrderCancelRejected(
+                    order_id=msg.order_id,
+                    reason=str(exc),
+                    timestamp=self._clock.timestamp(),
+                ),
+            )
+            return
+        # Mark terminal FIRST: the watcher checks _terminal on every order-book
+        # row, so this closes the window where a concurrent poll sees the
+        # CANCELLED row and re-publishes a duplicate cancelled event. It also
+        # drops the registry mapping before subscribers see the event.
+        self._order_watcher.mark_terminal(broker_order_id, msg.order_id)
+        self._bus.publish(
+            "exec.event.cancelled.dhan",
+            OrderCancelled(
+                order_id=msg.order_id,
+                timestamp=self._clock.timestamp(),
+            ),
+        )
 
     def _on_modify(self, msg: ModifyOrder) -> None:
+        broker_order_id = self._registry.broker_id(msg.order_id)
+        if broker_order_id is None:
+            logger.error("modify_unmapped: order_id=%s", msg.order_id)
+            self._bus.publish(
+                "exec.event.modify_rejected.dhan",
+                OrderModifyRejected(
+                    order_id=msg.order_id,
+                    reason=f"unknown broker order id for {msg.order_id}",
+                    timestamp=self._clock.timestamp(),
+                ),
+            )
+            return
         try:
-            self._http_client.put(f"/orders/{msg.order_id}", data=msg.updates)
+            payload = self._build_modify_payload(broker_order_id, msg.updates)
+            self._http_client.put(f"/orders/{broker_order_id}", data=payload)
         except Exception as exc:
             logger.error("modify_failed: order_id=%s error=%s", msg.order_id, exc)
+            self._bus.publish(
+                "exec.event.modify_rejected.dhan",
+                OrderModifyRejected(
+                    order_id=msg.order_id,
+                    reason=str(exc),
+                    timestamp=self._clock.timestamp(),
+                ),
+            )
+            return
+        self._bus.publish(
+            "exec.event.modified.dhan",
+            OrderModified(
+                order_id=msg.order_id,
+                updates=dict(msg.updates),
+                timestamp=self._clock.timestamp(),
+            ),
+        )
+
+    def _build_modify_payload(self, broker_order_id: str, updates: dict) -> dict:
+        """Build a Dhan wire-format modify body from domain update keys.
+
+        The engine's ModifyOrder.updates uses domain field names
+        (price/quantity/trigger_price/validity); Dhan's PUT /orders/{id}
+        expects orderType/legName/quantity/price/disclosedQuantity/
+        triggerPrice/validity. The broker order book row supplies the fields
+        that are not being changed.
+
+        Fails closed: if the current order detail cannot be fetched, raise so
+        the caller publishes modify_rejected. Guessing orderType (e.g.
+        defaulting a STOP_LOSS order to LIMIT) would silently send a
+        semantically different order to the broker.
+        """
+        try:
+            detail = self._http_client.get(
+                f"/orders/{broker_order_id}", bucket="orders"
+            )
+        except Exception as exc:
+            raise ValueError(f"modify detail fetch failed: {exc}") from exc
+        if isinstance(detail, list):
+            detail = detail[0] if detail else {}
+        if not isinstance(detail, dict) or not detail.get("orderType"):
+            raise ValueError(f"modify detail unavailable for {broker_order_id}")
+
+        payload = {
+            "orderType": str(detail.get("orderType", "LIMIT")),
+            "legName": str(detail.get("legName", "")),
+            "quantity": int(updates.get("quantity", detail.get("quantity", 0))),
+            "price": float(updates.get("price", detail.get("price", 0))),
+            "disclosedQuantity": int(detail.get("disclosedQuantity", 0)),
+            "triggerPrice": float(updates.get("trigger_price", detail.get("triggerPrice", 0))),
+            "validity": str(updates.get("validity", detail.get("validity", "DAY"))),
+        }
+        return payload
 
     # ── High-level subscribe/unsubscribe API ────────────────────────────
 
@@ -249,11 +397,74 @@ class DhanClient:
 
     def connect_order_updates(self) -> None:
         """Connect to the order-update WebSocket (Dhan provides a separate WS for order updates)."""
-        pass
+        from scalpr.adapters.dhan._order_update_ws import OrderUpdateFeed
+        if self._order_update_feed is None:
+            self._order_update_feed = OrderUpdateFeed(
+                client_id=self._client_id,
+                access_token=self._http_client.access_token,
+                on_update=self._on_order_update_push,
+            )
+        self._order_update_feed.connect()
 
     def disconnect_order_updates(self) -> None:
         """Disconnect the order-update WebSocket."""
-        pass
+        if self._order_update_feed is not None:
+            self._order_update_feed.disconnect()
+
+    def _on_order_update_push(self, wire: dict) -> None:
+        """Handle a push-based order update from the WS feed.
+
+        Translates the wire dict into domain events and publishes to the bus,
+        complementing the polling OrderWatcher path.
+        """
+        from scalpr.domain.order import OrderState, broker_status_to_order_state
+        broker_order_id = str(wire.get("orderId", ""))
+        local_id = self._registry.local_id(broker_order_id)
+        status = wire.get("orderStatus", "")
+        if not broker_order_id:
+            return
+        order_state = broker_status_to_order_state(status)
+        if order_state == OrderState.FILLED:
+            from scalpr.domain.fill import Fill
+            from scalpr.domain.order import OrderSide
+            fill_id = f"ws-{broker_order_id}-{int(self._clock.timestamp().timestamp())}"
+            fill = Fill(
+                fill_id=fill_id,
+                order_id=local_id or broker_order_id,
+                symbol=wire.get("tradingSymbol", ""),
+                side=OrderSide.BUY if wire.get("transactionType") == "BUY" else OrderSide.SELL,
+                quantity=int(wire.get("filledQty", 0)),
+                price=Decimal(str(wire.get("avgPrice", 0))),
+                timestamp=self._clock.timestamp(),
+            )
+            self._bus.publish(
+                "exec.event.filled.dhan",
+                OrderFilled(
+                    order_id=local_id or broker_order_id,
+                    fill=fill,
+                    timestamp=self._clock.timestamp(),
+                ),
+            )
+        elif order_state == OrderState.REJECTED:
+            self._bus.publish(
+                "exec.event.rejected.dhan",
+                OrderRejected(
+                    order_id=local_id or broker_order_id,
+                    reason=wire.get("rejectReason", "rejected via WS"),
+                    timestamp=self._clock.timestamp(),
+                ),
+            )
+        elif order_state == OrderState.CANCELLED:
+            self._bus.publish(
+                "exec.event.cancelled.dhan",
+                OrderCancelled(
+                    order_id=local_id or broker_order_id,
+                    timestamp=self._clock.timestamp(),
+                ),
+            )
+        # Partial fills and terminal states for cancelled/rejected are already
+        # handled above. Other statuses (PENDING, OPEN) are informational —
+        # the OrderWatcher polls the order book for those.
 
     def unsubscribe(self, symbol: str, exchange: str = "NSE", type: str = "quote") -> None:
         from scalpr.domain.instrument import Exchange
@@ -440,36 +651,16 @@ class DhanClient:
     def heikin_ashi(*args, **kwargs) -> pd.DataFrame:
         return MarketDataClient.heikin_ashi(*args, **kwargs)
 
-    # ── Portfolio (inlined from _portfolio_client, REF-08) ─────────────
+    # ── Portfolio (delegated to PortfolioAdapter) ──────────────────────
 
     def get_positions(self, as_df: bool = False, debug: bool = False) -> list[Position] | pd.DataFrame:
-        from scalpr.adapters.dhan._mapper_portfolio import to_position
-
-        if debug:
-            logger.info("get_positions")
-        data = self._http_client.get("/positions", bucket="portfolio")
-        if isinstance(data, list):
-            positions = [to_position(item) for item in data]
-        else:
-            positions = [to_position(data)]
-        return self._portfolio._positions_to_df(positions) if as_df else positions
+        return self._portfolio.get_positions(as_df=as_df, debug=debug)
 
     def get_holdings(self, as_df: bool = False, debug: bool = False) -> dict[str, Any] | pd.DataFrame:
-        if debug:
-            logger.info("get_holdings")
-        data = self._http_client.get("/holdings", bucket="portfolio")
-        if as_df:
-            if isinstance(data, list):
-                return pd.DataFrame(data)
-            if isinstance(data, dict):
-                return pd.DataFrame([data])
-        return data
+        return self._portfolio.get_holdings(as_df=as_df, debug=debug)
 
     def get_funds(self, as_df: bool = False, debug: bool = False) -> dict[str, Any] | pd.DataFrame:
-        if debug:
-            logger.info("get_funds")
-        data = self._http_client.get("/fundlimit", bucket="portfolio")
-        return pd.DataFrame([data]) if as_df else data
+        return self._portfolio.get_funds(as_df=as_df, debug=debug)
 
     def margin_calculator(
         self,
@@ -481,16 +672,10 @@ class DhanClient:
         price: float,
         trigger_price: float = 0,
     ) -> dict[str, Any]:
-        from scalpr.adapters.dhan._mapper_portfolio import margin_calc_to_dhan_request
-
-        # Normalize segment: API requires NSE_EQ not NSE for equity
-        if exchange_segment.upper() == "NSE":
-            exchange_segment = "NSE_EQ"
-        req = margin_calc_to_dhan_request(
+        return self._portfolio.margin_calculator(
             security_id, exchange_segment, transaction_type,
             quantity, product_type, price, trigger_price,
         )
-        return self._http_client.post("/margincalculator", data=req, bucket="portfolio")
 
     def get_expired_option_data(
         self,
@@ -506,26 +691,11 @@ class DhanClient:
         to_date: str | None = None,
         interval: int = 1,
     ) -> dict[str, Any]:
-        """Get expired option data with sensible defaults matching Tradehull.
-
-        Defaults: NSE_FNO, MONTH expiry, 1st expiry, ATM strike.
-        """
-        if required_data is None:
-            required_data = ["OPEN", "HIGH", "LOW", "CLOSE", "VOLUME", "OI"]
-        payload = {
-            "securityId": security_id,
-            "exchangeSegment": exchange_segment,
-            "instrument": instrument_type,
-            "expiryFlag": expiry_flag,
-            "expiryCode": expiry_code,
-            "strike": strike,
-            "drvOptionType": drv_option_type,
-            "requiredData": required_data,
-            "fromDate": from_date or "",
-            "toDate": to_date or "",
-            "interval": interval,
-        }
-        return self._http_client.post("/charts/rollingoption", data=payload, bucket="history")
+        return self._portfolio.get_expired_option_data(
+            security_id, exchange_segment, instrument_type,
+            expiry_flag, expiry_code, strike, drv_option_type,
+            required_data, from_date, to_date, interval,
+        )
 
     def get_live_pnl(self) -> float:
         return self._portfolio.get_live_pnl()
@@ -550,23 +720,12 @@ class DhanClient:
 
     def convert_epoch_to_ist(self, epoch: int | float) -> str:
         """Convert Dhan epoch timestamp to IST datetime string."""
-        from datetime import datetime, timezone, timedelta
+        from datetime import datetime, timedelta, timezone
         ist = timezone(timedelta(hours=5, minutes=30))
         return datetime.fromtimestamp(epoch, tz=ist).strftime("%Y-%m-%d %H:%M:%S")
 
     def get_exchange_time(self) -> str:
-        try:
-            data = self._http_client.get("/exchange/time", bucket="portfolio")
-            if isinstance(data, str):
-                return data
-            if isinstance(data, dict):
-                return data.get("exchangeTime", data.get("time", data.get("dateTime", "")))
-            return str(data)
-        except Exception as exc:
-            logger.warning("exchange_time_endpoint_unavailable: %s", exc)
-            from datetime import datetime, timezone, timedelta
-            ist = timezone(timedelta(hours=5, minutes=30))
-            return datetime.now(ist).strftime("%Y-%m-%d %H:%M:%S")
+        return self._portfolio.get_exchange_time()
 
 
 def _raw_to_domain_quote(raw: dict[str, Any], resolved: ResolvedInstrument) -> Quote:

@@ -5,6 +5,10 @@ Read this file at session start, before any other tool call.
 
 ## Session-start protocol
 
+> **Plan mode?** Skip steps 1, 3, 5 — they write to `.kanban/state.json`
+> and will be denied. Use `Read` on `.kanban/BOARD.md` instead.
+> See [Permission & Sandbox Guidance](#permission--sandbox-guidance).
+
 1. **Run `python3 .qoder/skills/kanban.cli/scripts/kanban.py status`**
    to see the agent-facing digest — what's in flight, blocked, broken.
    If `BOARD.md` exists, you can also read it directly.
@@ -20,6 +24,61 @@ Read this file at session start, before any other tool call.
    continuing.
 5. **After any code change or commit**, re-run `scan` so the digest
    does not silently go stale.
+
+## Post-edit validation
+
+After **every material edit** to a core source file under `scalpr/**/*.py`,
+run the smallest relevant pytest suite before continuing to the next task.
+
+### Default command (full gate)
+
+```bash
+pytest tests/unit/ tests/contract/ -x --tb=short
+```
+
+### Narrowing to the changed module
+
+When the edit is confined to a single module, narrow the run to the
+corresponding test subtree so feedback is faster:
+
+| Changed source path            | Narrowed test path                        |
+|--------------------------------|-------------------------------------------|
+| `scalpr/domain/<mod>.py`       | `tests/unit/domain/`                      |
+| `scalpr/engine/<mod>.py`       | `tests/unit/engine/`                      |
+| `scalpr/adapters/dhan/<m>.py`  | `tests/unit/adapters/dhan/`               |
+| `scalpr/risk/<mod>.py`         | `tests/unit/risk/`                        |
+| `scalpr/oms/<mod>.py`          | `tests/unit/oms/`                         |
+| `scalpr/gateway/<mod>.py`      | `tests/unit/gateway/`                     |
+| `scalpr/signals/<mod>.py`      | `tests/unit/signals/`                     |
+| `scalpr/scanner/<mod>.py`      | `tests/unit/scanner/`                     |
+| `scalpr/strategy/<mod>.py`     | `tests/unit/strategy/`                    |
+| `scalpr/simulation/<mod>.py`   | `tests/unit/simulation/`                  |
+| `scalpr/market_data/<mod>.py`  | `tests/unit/market_data/`                 |
+| `scalpr/observability/<m>.py`  | `tests/unit/observability/`               |
+| `scalpr/api/<mod>.py`          | `tests/unit/api/`                         |
+| `scalpr/execution/<mod>.py`    | `tests/unit/execution/`                   |
+| `scalpr/portfolio/<mod>.py`    | `tests/unit/` (no dedicated subtree)      |
+
+**Narrowed example:**
+
+```bash
+# Edited scalpr/adapters/dhan/_mapper.py
+pytest tests/unit/adapters/dhan/ tests/contract/ -x --tb=short
+```
+
+### Rules
+
+1. **Always include `tests/contract/`** — contract tests prove cross-broker
+   interchangeability and must run even for narrow changes.
+2. **Fall back to the full gate** when the edit touches multiple modules,
+   cross-cutting concerns (e.g. `domain/events.py`), or when a narrowed run
+   itself fails.
+3. **Fix before continuing.** If the validation fails, resolve the failure
+   before editing the next file. Never accumulate test debt across edits.
+4. **Re-run after fix.** After a fix, re-run the same scope (narrowed or full)
+   to confirm green before moving on.
+5. **Non-source edits** (docs, comments-only, frontend, config) do not
+   trigger this step.
 
 ## Session-end / after operational tasks
 
@@ -42,6 +101,9 @@ python3 .qoder/skills/kanban.cli/scripts/kanban.py runbook add "intent" \
   `git commit` unless the user explicitly asks for it.
 - Keep the working tree committable at all times — every staged state
   must pass `pytest tests/unit/ tests/contract/` with 0 failures.
+- **Post-edit validation** (see above) is the per-edit enforcement;
+  this section is the per-commitment guarantee. Both use the same
+  command; the post-edit step catches regressions earlier.
 
 ## Audit and planning protocols
 
@@ -58,6 +120,71 @@ python3 .qoder/skills/kanban.cli/scripts/kanban.py runbook add "intent" \
 
 - **Dhan-only** for broker-specific audits unless explicitly widened.
 - **`/graphify` v2 only** — do not rebuild v1 artefacts.
+
+## Permission & Sandbox Guidance
+
+Pre-authorised safe operations — these commands are read-only or confined to
+project-local state and should never trigger a permission prompt:
+
+```bash
+# Kanban board status (read-only digest)
+python3 .qoder/skills/kanban.cli/scripts/kanban.py status
+
+# Kanban runbook lookup (read-only)
+python3 .qoder/skills/kanban.cli/scripts/kanban.py runbook show <id>
+
+# Kanban scan (reads project state, writes .kanban/ local cache)
+python3 .qoder/skills/kanban.cli/scripts/kanban.py scan
+
+# Test runs (read source, write nothing outside workspace)
+pytest tests/unit/ tests/contract/ -x --tb=short
+
+# Git status / diff (read-only)
+git status && git diff --stat
+```
+
+### Plan mode restrictions
+
+When the session is in **Plan mode**, only read-only shell commands are allowed.
+Write operations (file edits, `git add`, `pytest` that creates `.pytest_cache`,
+kanban `scan` that updates `.kanban/state.json`) are denied by the policy layer.
+
+**Supported route in Plan mode:**
+
+1. Use `Read`, `Grep`, `Glob`, `SearchCodebase`, `SearchSymbol` — these always
+   work regardless of mode.
+2. For Bash, restrict to truly read-only commands: `cat`, `ls`, `git log`,
+   `git diff`, `git status`, `find`, `wc`, `head`, `tail`.
+3. Do **not** attempt `pytest`, `kanban.py scan`, `git add`, or any command
+   that writes files — these will be denied and waste turns.
+4. If a write is needed, exit Plan mode first or ask the user to switch to
+   Agent mode.
+
+### Sandbox write boundary
+
+The sandbox restricts writes to the workspace directory. Commands that write
+outside the workspace (e.g. `/tmp`, `~/.config`, system paths) are denied.
+
+**Supported route:**
+
+- All project artefacts (`.kanban/`, `.qoder/`, `data/`, `runtime/`,
+  `runtime-dev/`) are inside the workspace — no permission issue.
+- If a tool needs a temporary file, write it inside the workspace:
+  use `/tmp` only when the command is read-only.
+- Never attempt to write to `~/.qoder/`, `~/.config/`, or system paths.
+
+### Credential safety
+
+Commands that may print secrets (JWT tokens, TOTP secrets, API keys, access
+_tokens) to stdout are denied by the classifier.
+
+**Supported route:**
+
+- Never `cat`, `echo`, or `print` credential files (`config/dhan-pin.txt`,
+  `config/dhan-totp-secret.txt`, `.env`) to stdout.
+- Use `config/secrets_manager.py` to load secrets programmatically.
+- If you need to verify a token exists, use `test -f <path>` instead of
+  reading its contents.
 
 ---
 

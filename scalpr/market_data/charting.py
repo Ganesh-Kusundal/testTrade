@@ -10,10 +10,7 @@ import pytz
 
 def resample_timeframe(data: list[dict] | pd.DataFrame, timeframe: str = "5T") -> pd.DataFrame:
     """Resample OHLCV data to a higher timeframe, respecting IST market hours."""
-    if isinstance(data, list):
-        df = pd.DataFrame(data)
-    else:
-        df = data.copy()
+    df = pd.DataFrame(data) if isinstance(data, list) else data.copy()
 
     if df.empty:
         return pd.DataFrame(columns=["timestamp", "open", "high", "low", "close", "volume"])
@@ -54,10 +51,7 @@ def resample_timeframe(data: list[dict] | pd.DataFrame, timeframe: str = "5T") -
 
 def renko_bricks(data: list[dict] | pd.DataFrame, box_size: int = 7) -> pd.DataFrame:
     """Generate Renko brick data from OHLCV."""
-    if isinstance(data, list):
-        df = pd.DataFrame(data)
-    else:
-        df = data.copy()
+    df = pd.DataFrame(data) if isinstance(data, list) else data.copy()
 
     if df.empty:
         return pd.DataFrame(columns=["date", "direction", "high", "low"])
@@ -100,10 +94,7 @@ def renko_bricks(data: list[dict] | pd.DataFrame, box_size: int = 7) -> pd.DataF
 
 def heikin_ashi(data: list[dict] | pd.DataFrame) -> pd.DataFrame:
     """Compute Heikin-Ashi candles from OHLCV."""
-    if isinstance(data, list):
-        df = pd.DataFrame(data)
-    else:
-        df = data.copy()
+    df = pd.DataFrame(data) if isinstance(data, list) else data.copy()
 
     if df.empty:
         return pd.DataFrame(columns=["timestamp", "open", "high", "low", "close"])
@@ -122,18 +113,15 @@ def heikin_ashi(data: list[dict] | pd.DataFrame) -> pd.DataFrame:
     for i in range(len(df)):
         o = float(df.loc[i, "open"])
         h = float(df.loc[i, "high"])
-        l = float(df.loc[i, "low"])
+        low = float(df.loc[i, "low"])
         c = float(df.loc[i, "close"])
 
-        ha_close = (o + h + l + c) / 4.0
+        ha_close = (o + h + low + c) / 4.0
 
-        if i == 0:
-            ha_open = o
-        else:
-            ha_open = (ha.loc[i - 1, "open"] + ha.loc[i - 1, "close"]) / 2.0
+        ha_open = o if i == 0 else (ha.loc[i - 1, "open"] + ha.loc[i - 1, "close"]) / 2.0
 
         ha_high = max(h, ha_open, ha_close)
-        ha_low = min(l, ha_open, ha_close)
+        ha_low = min(low, ha_open, ha_close)
 
         ha.loc[i, "open"] = ha_open
         ha.loc[i, "high"] = ha_high

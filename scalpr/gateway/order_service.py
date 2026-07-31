@@ -2,18 +2,34 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
 
-from scalpr.adapters.dhan.client import DhanClient
+from scalpr.domain.contracts import BrokerClientProtocol
 from scalpr.domain.instrument import Exchange, ResolvedInstrument
-from scalpr.domain.order import Order, OrderSide, OrderState, OrderType, OrderRequest, ModifyOrderRequest, ProductType, Validity
+from scalpr.domain.order import (
+    ModifyOrderRequest,
+    Order,
+    OrderRequest,
+    OrderSide,
+    OrderState,
+    OrderType,
+    broker_status_to_order_state,
+)
 from scalpr.engine.clock import Clock
 from scalpr.engine.execution_engine import CancelOrder, ModifyOrder, SubmitOrder
 from scalpr.engine.message_bus import MessageBus
 
 logger = logging.getLogger(__name__)
+
+
+def _safe_order_state(raw: str) -> OrderState:
+    """Map a broker status string to an OrderState, defaulting to PENDING.
+
+    Uses the canonical ``broker_status_to_order_state`` from the domain
+    layer — the single source of truth for status translations.
+    """
+    return broker_status_to_order_state(raw)
 
 
 class OrderService:
@@ -26,7 +42,7 @@ class OrderService:
 
     def __init__(
         self,
-        client: DhanClient,
+        client: BrokerClientProtocol,
         bus: MessageBus,
         clock: Clock,
         risk: Any = None,
@@ -93,8 +109,13 @@ class OrderService:
             remaining -= slice_qty
         return orders
 
-    def modify(self, order_id: str, request: ModifyOrderRequest) -> Order:
-        """Modify an existing order."""
+    def modify(self, order_id: str, request: ModifyOrderRequest) -> None:
+        """Modify an existing order.
+
+        Publishes a ModifyOrder command on the bus.  Returns None — the
+        real state lives in the ExecutionEngine cache and will be updated
+        when the broker confirms on exec.event.modified.<broker>.
+        """
         updates: dict[str, Any] = {}
         if request.quantity is not None:
             updates["quantity"] = request.quantity
@@ -109,36 +130,17 @@ class OrderService:
             "exec.command.modify",
             ModifyOrder(order_id=order_id, updates=updates, broker=self._client.broker),
         )
-        # Return a modified Order (state will be updated by engine when
-        # the broker confirms the modification)
-        return Order(
-            order_id=order_id,
-            symbol=order_id,
-            exchange=Exchange.NSE,
-            side=OrderSide.BUY,
-            order_type=OrderType.MARKET,
-            quantity=updates.get("quantity", 1),
-            price=Decimal("0"),
-            state=OrderState.OPEN,
-        )
 
-    def cancel(self, order_id: str) -> Order:
-        """Cancel an existing order."""
+    def cancel(self, order_id: str) -> None:
+        """Cancel an existing order.
+
+        Publishes a CancelOrder command on the bus.  Returns None — the
+        order stays in its current state in the engine cache until the
+        broker confirms on exec.event.cancelled.<broker>.
+        """
         self._bus.publish(
             "exec.command.cancel",
             CancelOrder(order_id=order_id, broker=self._client.broker),
-        )
-        # Return a placeholder Order — the engine will update state when
-        # the broker confirms cancellation
-        return Order(
-            order_id=order_id,
-            symbol=order_id,
-            exchange=Exchange.NSE,
-            side=OrderSide.BUY,
-            order_type=OrderType.MARKET,
-            quantity=1,
-            price=Decimal("0"),
-            state=OrderState.CANCELLED,
         )
 
     def get(self, order_id: str) -> Order | None:
@@ -148,8 +150,7 @@ class OrderService:
 
     def list(self) -> list[Order]:
         """Fetch all orders from the broker."""
-        # DhanClient doesn't have a direct order book method; use order_report
-        # for individual orders. For now, return empty list.
+        # TODO: implement order book listing via the bus or adapter
         return []
 
     def trades(self) -> list[Any]:
@@ -159,7 +160,9 @@ class OrderService:
     def trades_for_order(self, order_id: str) -> list[Any]:
         """Fetch trades for a specific order."""
         all_trades = self._client.get_trade_book()
-        return [t for t in all_trades if t.get("orderId") == order_id]
+        if isinstance(all_trades, list):
+            return [t for t in all_trades if t.get("orderId") == order_id]
+        return []
 
     def _resolve_instrument(self, request: OrderRequest) -> ResolvedInstrument:
         """Resolve the instrument from the request."""
@@ -168,18 +171,34 @@ class OrderService:
         return self._client.resolve_instrument(request.instrument)
 
     def _map_order_detail(self, detail: dict[str, Any]) -> Order | None:
-        """Map a raw Dhan order detail dict to a domain Order."""
+        """Map a raw order detail dict to a domain Order."""
         if not detail:
             return None
+        # Use the public resolve_instrument method rather than reaching into
+        # private adapter internals (_resolver).  The broker protocol exposes
+        # resolve_instrument() for exactly this purpose.
+        exchange = Exchange.NSE
+        try:
+            resolved = self._client.resolve_instrument(
+                detail.get("tradingSymbol", "")
+            )
+            if resolved is not None:
+                exchange = resolved.exchange
+        except (ValueError, KeyError, TypeError, AttributeError) as exc:
+            logger.warning(
+                "resolve_instrument_failed: symbol=%r error=%s",
+                detail.get("tradingSymbol"),
+                exc,
+            )
         return Order(
             order_id=detail.get("orderId", ""),
             symbol=detail.get("tradingSymbol", detail.get("symbol", "")),
-            exchange=self._client._resolver.resolve_full(detail.get("tradingSymbol", ""), "NSE").exchange,
+            exchange=exchange,
             side=OrderSide(detail.get("transactionType", "BUY")),
             order_type=OrderType(detail.get("orderType", "LIMIT")),
             quantity=int(detail.get("quantity", 0)),
             price=Decimal(str(detail.get("price", 0))),
-            state=OrderState(detail.get("status", "PENDING")),
+            state=_safe_order_state(detail.get("status", "PENDING")),
             product_type=detail.get("productType", "INTRADAY"),
             validity=detail.get("validity", "DAY"),
             trigger_price=Decimal(str(detail.get("triggerPrice", 0))),

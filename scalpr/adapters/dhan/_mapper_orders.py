@@ -6,7 +6,13 @@ from typing import Any
 
 from scalpr.domain.fill import Fill
 from scalpr.domain.instrument import Exchange
-from scalpr.domain.order import Order, OrderSide, OrderState, OrderType
+from scalpr.domain.order import (
+    BROKER_STATUS_TO_ORDER_STATE,
+    Order,
+    OrderSide,
+    OrderState,
+    OrderType,
+)
 
 
 class MappingError(Exception):
@@ -39,17 +45,9 @@ _DHAN_ORDER_TYPE_TO_DOMAIN: dict[str, OrderType] = {
     "STOP LOSS MARKET": OrderType.STOP_LOSS_MARKET,
 }
 
-_DHAN_STATUS_TO_STATE: dict[str, OrderState] = {
-    "PENDING": OrderState.PENDING,
-    "OPEN": OrderState.OPEN,
-    "PARTIALLY FILLED": OrderState.PARTIALLY_FILLED,
-    "FILLED": OrderState.FILLED,
-    "TRADED": OrderState.FILLED,
-    "CANCELLED": OrderState.CANCELLED,
-    "REJECTED": OrderState.REJECTED,
-    "EXPIRED": OrderState.EXPIRED,
-    "TRIGGER PENDING": OrderState.PENDING,
-}
+# Canonical status mapping lives in scalpr.domain.order.BROKER_STATUS_TO_ORDER_STATE.
+# This module re-exports it for backward compatibility.
+_DHAN_STATUS_TO_STATE = BROKER_STATUS_TO_ORDER_STATE
 
 
 # order_to_dhan_request v1 removed (REF-05 — dead code, superseded by v2)
@@ -99,11 +97,56 @@ def transaction_type_from_side(side: OrderSide) -> str:
     raise InvalidValueError(f"Unknown order side: {side}")
 
 
+def transaction_type_to_side(transaction_type: str) -> OrderSide:
+    value = transaction_type.strip().upper()
+    if value == "BUY":
+        return OrderSide.BUY
+    if value == "SELL":
+        return OrderSide.SELL
+    raise InvalidValueError(f"Unknown Dhan transactionType: {transaction_type!r}")
+
+
+def order_book_entry_to_fill(
+    entry: dict,
+    local_order_id: str,
+    delta_quantity: int,
+    timestamp: datetime | None = None,
+) -> Fill:
+    """Build a Fill for the newly-executed quantity of an order-book row.
+
+    `delta_quantity` is the increase since the last poll, not the cumulative
+    filled quantity — publishing the cumulative figure would double-count the
+    position on every poll.
+
+    Uses the real Dhan order-book field names: `filledQty` and
+    `averageTradedPrice` (with `tradedPrice` as a fallback for order-detail
+    responses). `timestamp` comes from the injected clock; `datetime.now` is
+    only a last-resort fallback for direct callers.
+    """
+    price_raw = entry.get("averageTradedPrice") or entry.get("tradedPrice")
+    if price_raw is None:
+        raise MissingFieldError("order book entry missing traded price")
+    broker_order_id = entry.get("orderId")
+    if not broker_order_id:
+        raise MissingFieldError("order book entry missing 'orderId'")
+    filled = entry.get("filledQty") or entry.get("filledQuantity") or 0
+    return Fill(
+        fill_id=f"f_{broker_order_id}_{filled}",
+        order_id=local_order_id,
+        symbol=str(entry.get("tradingSymbol", "")),
+        side=transaction_type_to_side(str(entry.get("transactionType", "BUY"))),
+        quantity=delta_quantity,
+        price=Decimal(str(price_raw)),
+        timestamp=timestamp or datetime.now(timezone.utc),
+        exchange=str(entry.get("exchangeSegment", "")),
+    )
+
+
 def order_type_from_domain(order_type: OrderType) -> str:
     try:
         return _ORDER_TYPE_TO_DHAN[order_type]
-    except KeyError:
-        raise InvalidValueError(f"Unknown order type: {order_type}")
+    except KeyError as exc:
+        raise InvalidValueError(f"Unknown order type: {order_type}") from exc
 
 
 def raw_order_to_order(raw: dict[str, Any]) -> Order:
@@ -183,8 +226,8 @@ _PRODUCT_TYPE_MAP: dict[str, str] = {
 def product_type_from_domain(product: str) -> str:
     try:
         return _PRODUCT_TYPE_MAP[product.upper()]
-    except KeyError:
-        raise InvalidValueError(f"Unknown product type: {product!r}")
+    except KeyError as exc:
+        raise InvalidValueError(f"Unknown product type: {product!r}") from exc
 
 
 def order_to_dhan_request_v2(
@@ -205,8 +248,8 @@ def order_to_dhan_request_v2(
 
     try:
         dhan_order_type = order_type_from_domain(order.order_type)
-    except InvalidValueError:
-        raise InvalidValueError(f"Unknown order type: {order.order_type}")
+    except InvalidValueError as exc:
+        raise InvalidValueError(f"Unknown order type: {order.order_type}") from exc
 
     if order.side not in (OrderSide.BUY, OrderSide.SELL):
         raise InvalidValueError(f"Unknown order side: {order.side}")

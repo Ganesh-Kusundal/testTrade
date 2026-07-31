@@ -12,7 +12,8 @@ from decimal import Decimal
 from typing import Any, Protocol, runtime_checkable
 
 from scalpr.domain.order import OrderSide
-from scalpr.domain.tick import DepthLevel, OHLC
+from scalpr.domain.position import Position
+from scalpr.domain.tick import DepthLevel
 from scalpr.domain.values import ZERO
 
 # ── Protocols for broker-specific adapters ─────────────────────────────
@@ -92,6 +93,114 @@ class ResolverProtocol(Protocol):
     def instrument_kind_of(self, symbol: str, exchange: str) -> str:
         """Get the instrument kind (EQ, FUT, OPT, etc.) for an instrument."""
         ...
+
+
+@runtime_checkable
+class ExecutionGatewayProtocol(Protocol):
+    """Outward port for order placement and position enquiry.
+
+    Consumers in risk/, oms/ and strategy/ depend on this, never on a
+    concrete broker adapter — the broker is a replaceable detail.
+    """
+
+    def get_positions(self) -> list[Any]:
+        """Return current broker positions."""
+        ...
+
+    def place_order(self, order: Any) -> str:
+        """Submit an order; return the broker's order id."""
+        ...
+
+
+@runtime_checkable
+class HistoricalSourceProtocol(Protocol):
+    """Outward port for historical candle retrieval."""
+
+    def get_historical(
+        self,
+        symbol: str,
+        exchange: str,
+        timeframe: str,
+        lookback_days: int,
+    ) -> list[dict[str, Any]]:
+        """Return raw historical candles for the given instrument."""
+        ...
+
+
+@runtime_checkable
+class BrokerClientProtocol(Protocol):
+    """Outward port covering every method the gateway layer uses on a broker client.
+
+    Every gateway service (orders, portfolio, market-data, risk, account,
+    trader-control, order-updates) depends on this protocol, never on a
+    concrete adapter class like DhanClient.  Adding a second broker means
+    implementing this protocol — zero changes to the gateway layer.
+
+    ``Any`` return types are intentional: the gateway services are the ones
+    that map raw dicts into domain objects, so the protocol only guarantees
+    that the method exists, not its shape.
+    """
+
+    broker: str
+
+    # ── lifecycle ─────────────────────────────────────────────────────
+    def start(self) -> None: ...
+    def stop(self) -> None: ...
+
+    # ── instrument resolution ─────────────────────────────────────────
+    def resolve_instrument(self, identifier: Any) -> Any: ...
+
+    # ── orders (bus-driven path lives in the adapter; these are the
+    #    query/CRUD helpers that gateway services call directly) ────────
+    def get_order_detail(self, order_id: str, **kw: Any) -> Any: ...
+    def get_trade_book(self, **kw: Any) -> Any: ...
+    def cancel_all_orders(self, symbol: str | None = None) -> int: ...
+
+    # ── portfolio ─────────────────────────────────────────────────────
+    def get_positions(self, **kw: Any) -> list[Position]: ...
+    def get_holdings(self, **kw: Any) -> Any: ...
+    def get_funds(self, **kw: Any) -> Any: ...
+    def margin_calculator(
+        self,
+        security_id: str,
+        exchange_segment: str,
+        transaction_type: str,
+        quantity: int,
+        product_type: str,
+        price: float,
+        trigger_price: float = 0,
+    ) -> Any: ...
+
+    # ── market data ───────────────────────────────────────────────────
+    def get_quote(self, resolved: Any) -> Any: ...
+    def get_market_depth(self, resolved: Any) -> Any: ...
+    def get_historical(
+        self,
+        symbol: str,
+        exchange: str,
+        timeframe: str = "DAY",
+        interval: int = 5,
+        from_date: str | None = None,
+        to_date: str | None = None,
+    ) -> Any: ...
+    def subscribe_quotes(self, resolved: Any) -> None: ...
+    def subscribe_market_depth(self, resolved: Any, level: int = 20) -> None: ...
+    def unsubscribe_quotes(self, resolved: Any) -> None: ...
+    def unsubscribe_market_depth(self, resolved: Any) -> None: ...
+
+    # ── trader control ────────────────────────────────────────────────
+    def kill_switch(self, action: str) -> str: ...
+    def status_kill_switch(self) -> str: ...
+
+    # ── order-update WebSocket (may be a no-op in adapters that use
+    #    polling instead) ──────────────────────────────────────────────
+    def connect_order_updates(self) -> None: ...
+    def disconnect_order_updates(self) -> None: ...
+
+    # ── auth / profile (used by Gateway facade only) ──────────────────
+    def get_profile(self) -> Any: ...
+    def renew_access_token(self) -> str: ...
+    def get_capabilities(self) -> Any: ...
 
 
 @dataclass(frozen=True)

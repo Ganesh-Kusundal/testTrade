@@ -8,7 +8,7 @@ import pytest
 from scalpr.adapters.dhan.client import DhanClient
 from scalpr.domain.errors import InvalidOrder
 from scalpr.domain.instrument import Exchange, ResolvedInstrument, Segment, SimpleInstrumentId
-from scalpr.domain.order import OrderRequest, ProductType, Side, Validity
+from scalpr.domain.order import OrderRequest, ProductType, Side
 from scalpr.gateway.risk_service import RiskService
 
 

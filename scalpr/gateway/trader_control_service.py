@@ -4,7 +4,7 @@ import logging
 from enum import Enum
 from typing import Any
 
-from scalpr.adapters.dhan.client import DhanClient
+from scalpr.domain.contracts import BrokerClientProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +32,7 @@ class TraderControlService:
     because they can materially alter live positions.
     """
 
-    def __init__(self, client: DhanClient) -> None:
+    def __init__(self, client: BrokerClientProtocol) -> None:
         self._client = client
 
     def kill_switch(self, action: KillSwitchAction) -> KillSwitchStatus:

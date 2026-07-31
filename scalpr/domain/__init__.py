@@ -27,10 +27,10 @@ from scalpr.domain.instrument import Exchange, Instrument, MarketFeed, OptionTyp
 from scalpr.domain.order import (
     ModifyOrderRequest,
     Order,
+    OrderRequest,
     OrderSide,
     OrderState,
     OrderType,
-    OrderRequest,
     ProductType,
     Side,
     Validity,
@@ -38,23 +38,23 @@ from scalpr.domain.order import (
 from scalpr.domain.position import Position, PositionSide, PositionState
 from scalpr.domain.signal import Gate, Signal, SignalType
 from scalpr.domain.tick import (
+    OHLC,
+    OHLCV,
     Candle,
     DepthLevel,
     FullEvent,
-    OHLC,
-    OHLCV,
     QuoteEvent,
     Tick,
     TickerEvent,
 )
 
 __all__ = [
-    "Candle",
-    "DepthLevel",
     "OHLC",
     "OHLCV",
     "BarClosed",
+    "Candle",
     "CircuitBreakerTripped",
+    "DepthLevel",
     "DomainEvent",
     "Exchange",
     "Fill",
@@ -74,10 +74,10 @@ __all__ = [
     "OrderModified",
     "OrderPlaced",
     "OrderRejected",
+    "OrderRequest",
     "OrderSide",
     "OrderState",
     "OrderType",
-    "OrderRequest",
     "OrderUpdated",
     "Position",
     "PositionClosed",
@@ -97,7 +97,7 @@ __all__ = [
     "SignalGenerated",
     "SignalType",
     "Tick",
-    "TickerEvent",
     "TickReceived",
+    "TickerEvent",
     "Validity",
 ]

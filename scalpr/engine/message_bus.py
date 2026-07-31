@@ -20,6 +20,12 @@ class TimeoutError(Exception):
 class MessageBus:
     def __init__(self) -> None:
         self._lock = threading.Lock()
+        # Serializes handler invocation so a background publisher (e.g. the
+        # Dhan order-book watcher heartbeat) can never run bus handlers
+        # concurrently with a foreground publish. Handlers like the engine's
+        # _on_fill mutate shared cache/event-store state; without this they
+        # race. RLock because handlers themselves publish (nested publish).
+        self._handler_lock = threading.RLock()
         self._subscribers: dict[str, list[Callable[[Any], None]]] = defaultdict(list)
         self._req_handlers: dict[str, Callable[[Any], Any]] = {}
         self._req_events: dict[str, threading.Event] = {}
@@ -40,8 +46,9 @@ class MessageBus:
     def publish(self, topic: str, event: Any) -> None:
         with self._lock:
             targets = list(self._subscribers.get(topic, []))
-        for handler in targets:
-            handler(event)
+        with self._handler_lock:
+            for handler in targets:
+                handler(event)
 
     # Req/Rep
 

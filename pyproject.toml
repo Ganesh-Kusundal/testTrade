@@ -42,7 +42,7 @@ dev = [
 tradex = "scalpr.cli.main:main"
 
 [project.entry-points."tradex.brokers"]
-dhan = "scalpr.brokers.dhan.gateway:DhanGateway"
+dhan = "scalpr.adapters.dhan.client:DhanClient"
 paper = "scalpr.oms.paper_oms:PaperOms"
 simulated = "scalpr.simulation.simulated_gateway:SimulatedGateway"
 
@@ -204,8 +204,8 @@ skip-magic-trailing-comma = false
 # See docs/CODING_STANDARDS.md for the full guide.
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
-"scalpr.brokers.dhan.Quote" = {msg = "Import Quote from scalpr.brokers.contracts, not from broker-specific packages"}
-"scalpr.brokers.dhan.Balance" = {msg = "Import Funds from scalpr.brokers.contracts"}
+"scalpr.adapters.dhan.Quote" = {msg = "Import Quote from scalpr.domain.contracts, not from broker-specific packages"}
+"scalpr.adapters.dhan.Balance" = {msg = "Import Funds from scalpr.domain.contracts"}
 
 # ─── Import Linter Contracts ──────────────────────────────
 # Enforce architectural layer boundaries (REF-012).
@@ -241,38 +241,17 @@ forbidden_modules = ["scalpr.api", "scalpr.cli"]
 [[tool.importlinter.contracts]]
 name = "Broker Dhan isolation"
 type = "forbidden"
-source_modules = ["scalpr.brokers.dhan"]
+source_modules = ["scalpr.adapters.dhan"]
 forbidden_modules = ["scalpr.api", "scalpr.cli"]
-
-[[tool.importlinter.contracts]]
-name = "Broker abstraction cannot import Dhan implementation"
-type = "forbidden"
-source_modules = [
-    "scalpr.brokers.broker_port",
-    "scalpr.brokers.capabilities",
-    "scalpr.brokers.contracts",
-    "scalpr.brokers.errors",
-    "scalpr.brokers.gateway",
-    "scalpr.brokers.instrument_handle",
-    "scalpr.brokers.rate_limit",
-]
-forbidden_modules = ["scalpr.brokers.dhan"]
-# Registry uses lazy imports inside functions for broker discovery
-ignore_imports = [
-    "scalpr.brokers.registry -> scalpr.brokers.dhan.gateway",
-    "scalpr.brokers.registry -> scalpr.brokers.dhan.auth",
-    "scalpr.brokers.registry -> scalpr.brokers.dhan.option_chain",
-    "scalpr.brokers.registry -> scalpr.brokers.dhan.ws_manager",
-]
 
 [[tool.importlinter.contracts]]
 name = "Risk cannot import Dhan implementation"
 type = "forbidden"
 source_modules = ["scalpr.risk"]
-forbidden_modules = ["scalpr.brokers.dhan"]
+forbidden_modules = ["scalpr.adapters.dhan"]
 
 [[tool.importlinter.contracts]]
 name = "Market data cannot import Dhan implementation"
 type = "forbidden"
 source_modules = ["scalpr.market_data"]
-forbidden_modules = ["scalpr.brokers.dhan"]
+forbidden_modules = ["scalpr.adapters.dhan"]
